@@ -305,7 +305,8 @@ function App() {
     addMidiRegion, setTrackInstrument, updateInstrumentParameter,
     isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
     savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
-    setTrackFrozen, unfreezeTrack, flattenTrack, updateRegionWarp
+    setTrackFrozen, unfreezeTrack, flattenTrack, updateRegionWarp,
+    punchInTime, punchOutTime, isPunchEnabled, togglePunch, setPunchRegion
   } = useDAWStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -525,6 +526,15 @@ function App() {
       const updatePlayhead = () => {
         const currentPos = audioContext.currentTime - playStartTimeRef.current;
         setLocalPlaybackPosition(currentPos);
+        // Punch recording: engage/disengage the record state at the punch points
+        const st = useDAWStore.getState();
+        if (st.isPunchEnabled) {
+          if (currentPos >= st.punchInTime && currentPos < st.punchOutTime) {
+            if (!st.isRecording) st.setRecording(true);
+          } else if (st.isRecording) {
+            st.setRecording(false);
+          }
+        }
         animationRef.current = requestAnimationFrame(updatePlayhead);
       };
       updatePlayhead();
@@ -926,6 +936,15 @@ function App() {
           <Sliders size={14} style={{ marginRight: '5px' }} /> Click
         </button>
 
+        {/* Punch In/Out */}
+        <button
+          className={`btn-metronome ${isPunchEnabled ? 'active punch-active' : ''}`}
+          onClick={togglePunch}
+          title={`Punch recording ${isPunchEnabled ? 'on' : 'off'}: auto record from ${punchInTime.toFixed(1)}s to ${punchOutTime.toFixed(1)}s (drag the red strip on the timeline to move)`}
+        >
+          PUNCH
+        </button>
+
         <div className="control-bpm">{bpm.toFixed(2)} BPM</div>
 
         <button className="btn-metronome" onClick={() => fileInputRef.current?.click()} title="Import Ableton Live Set (.als)">
@@ -1032,6 +1051,36 @@ function App() {
               {/* Arranger Track Grid (Moved to left) */}
               <div className="arranger-timeline" onClick={() => setSelectedRegionId(null)}>
                 <div className="arranger-grid" />
+                {/* Punch strip: drag to set the punch-in/out region */}
+                <div
+                  className="punch-strip"
+                  title="Drag to set punch-in/out region"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    const snap = 60 / bpm; // snap to beats
+                    const startT = Math.max(0, Math.round(((e.clientX - rect.left) / PIXELS_PER_SECOND) / snap) * snap);
+                    setPunchRegion(startT, startT + snap);
+                    const onMove = (me: MouseEvent) => {
+                      const endT = Math.max(startT + snap, Math.round(((me.clientX - rect.left) / PIXELS_PER_SECOND) / snap) * snap);
+                      setPunchRegion(startT, endT);
+                    };
+                    const onUp = () => {
+                      window.removeEventListener('mousemove', onMove);
+                      window.removeEventListener('mouseup', onUp);
+                    };
+                    window.addEventListener('mousemove', onMove);
+                    window.addEventListener('mouseup', onUp);
+                  }}
+                >
+                  <div
+                    className={`punch-region ${isPunchEnabled ? 'enabled' : ''}`}
+                    style={{
+                      left: `${punchInTime * PIXELS_PER_SECOND}px`,
+                      width: `${Math.max(2, (punchOutTime - punchInTime) * PIXELS_PER_SECOND)}px`
+                    }}
+                  />
+                </div>
                 <div className="playhead" style={{ left: `${localPlaybackPosition * PIXELS_PER_SECOND}px` }} />
                 
                 {visibleTracks.map((track: any) => (

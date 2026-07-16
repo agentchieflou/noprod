@@ -87,6 +87,11 @@ export const useDAWStore = create((set, get) => ({
   masterPan: 0.0, // -1 (left) to 1 (right)
   reverbReturnVolume: 0.5, // Return Track A volume
   isLimiterEnabled: true, // Master bus brickwall limiter
+
+  // Punch recording: auto start/stop recording at these timeline positions
+  punchInTime: 4,
+  punchOutTime: 8,
+  isPunchEnabled: false,
   
   // Custom VST Paths for local scanning (Antares, FabFilter)
   vstScanPaths: [
@@ -199,6 +204,10 @@ export const useDAWStore = create((set, get) => ({
   setMasterPan: (pan) => { get().record('master-pan'); set({ masterPan: pan }); },
   setReverbReturnVolume: (vol) => { get().record('reverb-return'); set({ reverbReturnVolume: vol }); },
   toggleLimiter: () => set((state) => ({ isLimiterEnabled: !state.isLimiterEnabled })),
+
+  setRecording: (isRecording) => set({ isRecording }),
+  togglePunch: () => set((state) => ({ isPunchEnabled: !state.isPunchEnabled })),
+  setPunchRegion: (punchInTime, punchOutTime) => set({ punchInTime, punchOutTime }),
 
   loadAbletonSet: (tempo, tracks, regions) => { get().record(); set({
     bpm: tempo,

@@ -1138,3 +1138,37 @@ body {
   align-items: center;
   gap: 8px;
 }
+
+/* Punch In/Out */
+.punch-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 14px;
+  background-color: rgba(0,0,0,0.35);
+  border-bottom: 1px solid var(--border-color);
+  cursor: ew-resize;
+  z-index: 6;
+}
+
+.punch-region {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  background-color: rgba(239, 68, 68, 0.25);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.punch-region.enabled {
+  background-color: rgba(239, 68, 68, 0.55);
+  border-color: var(--accent-red);
+  box-shadow: 0 0 5px rgba(239, 68, 68, 0.5);
+}
+
+.btn-metronome.punch-active {
+  background-color: var(--accent-red);
+  border-color: var(--accent-red);
+}
