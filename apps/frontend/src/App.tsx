@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState, DragEvent } from 'react';
-import { 
-  Play, Square, Plus, Settings2, Trash2, Mic, Circle, Volume2, 
-  Layers, FolderOpen, Radio, Music, ArrowRight, Settings, CheckSquare, Square as SquareIcon, Sliders
+import { useEffect, useRef, useState, type DragEvent } from 'react';
+import {
+  Play, Square, Plus, Trash2, Mic, Circle, Volume2,
+  Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders
 } from 'lucide-react';
 import { useDAWStore } from './store/useDAWStore';
 import './App.css';
 
 // Global AudioContext & Effects
-const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
 
 // Mock Reverb via Feedback Delay Network
 const reverbReturnNode = audioContext.createDelay(1.0);
@@ -145,7 +145,7 @@ function App() {
     tracks, regions, isPlaying, isRecording, isMetronomeEnabled, viewMode,
     selectedTrackId, selectedRegionId, masterVolume, reverbReturnVolume, sessionClips, vstScanPaths, bpm,
     togglePlayback, toggleRecording, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
-    addTrack, removeTrack, updateTrackRouting, addRegion, updateTrackColor, toggleArmTrack,
+    addTrack, removeTrack, addRegion, updateTrackColor, toggleArmTrack,
     updateTrackVolume, updateTrackPan, updateTrackSendReverb, toggleMuteTrack, toggleSoloTrack,
     setMasterVolume, setReverbReturnVolume, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet
@@ -154,7 +154,6 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggedOverTrack, setDraggedOverTrack] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'vst-paths'>('devices');
-  const [browserCategory, setBrowserCategory] = useState<'all' | 'plugins' | 'fx'>('all');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [newVstPathInput, setNewVstPathInput] = useState('');
@@ -197,7 +196,7 @@ function App() {
   }, [tracks]);
 
   // Playback & Playhead Engine
-  const animationRef = useRef<number>();
+  const animationRef = useRef<number | undefined>(undefined);
   const [localPlaybackPosition, setLocalPlaybackPosition] = useState(0);
   const playStartTimeRef = useRef(0);
   const pauseTimeRef = useRef(0);
