@@ -1,11 +1,16 @@
 #include <iostream>
 #include <JuceHeader.h>
 
+#include "HapAudioEngine.h"
+#include "HapWebSocketServer.h"
+
 // The Ghost DAW is a headless C++ application acting as the Audio Muscle.
 // It connects to the Orchestrator / Sequencer via WebSockets or UDP.
 // It hosts VST3 and CLAP plugins and renders audio in real-time.
 
 using namespace juce;
+
+constexpr int audioCoreWebSocketPort = 8082;
 
 class GhostDAWApplication : public JUCEApplication
 {
@@ -28,7 +33,7 @@ public:
         }
 
         // 2. Setup Plugin Format Manager
-        formatManager.addDefaultFormats();
+        addHeadlessDefaultFormatsToManager (formatManager);
         
         // 3. Scan for plugins (VST3 on Windows)
         // In a production app, we would cache this in a KnownPluginList XML file.
@@ -51,16 +56,24 @@ public:
         }
         
         std::cout << "Scan complete. Found " << knownPluginList.getNumTypes() << " plugins." << std::endl;
-        
-        // TODO: Initialize WebSocket client to connect to ws://localhost:8081 (Sequencer) or 8080 (Orchestrator)
-        // TODO: Start AudioProcessorGraph and handle 'Haps' -> MIDI mapping
-        
+
+        // 4. Start rendering audio from the Hap engine
+        deviceManager.addAudioCallback (&audioEngine);
+
+        // 5. Listen for the Orchestrator, which connects out to ws://localhost:8082
+        //    and forwards the Sequencer's HAP_STREAM messages here.
+        webSocketServer = std::make_unique<HapWebSocketServer> (audioCoreWebSocketPort,
+            [this] (const var& message) { handleMessage (message); });
+        webSocketServer->startThread();
+
         std::cout << "Running... Press Ctrl+C to exit." << std::endl;
     }
 
     void shutdown() override
     {
         std::cout << "Ghost DAW shutting down..." << std::endl;
+        webSocketServer.reset();
+        deviceManager.removeAudioCallback (&audioEngine);
         deviceManager.closeAudioDevice();
     }
     
@@ -70,9 +83,23 @@ public:
     }
 
 private:
+    void handleMessage (const var& message)
+    {
+        if (message["type"].toString() == "HAP_STREAM")
+        {
+            auto haps = message["haps"];
+            std::cout << "Received HAP_STREAM with "
+                       << (haps.getArray() != nullptr ? haps.getArray()->size() : 0)
+                       << " haps" << std::endl;
+            audioEngine.scheduleHaps (haps);
+        }
+    }
+
     AudioDeviceManager deviceManager;
     AudioPluginFormatManager formatManager;
     KnownPluginList knownPluginList;
+    HapAudioEngine audioEngine;
+    std::unique_ptr<HapWebSocketServer> webSocketServer;
 };
 
 // This macro generates the main() routine that launches the app.

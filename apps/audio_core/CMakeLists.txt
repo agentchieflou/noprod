@@ -8,6 +8,8 @@ juce_add_console_app(GhostDAW
     PRODUCT_NAME "GhostDAW"
     VERSION "1.0.0")
 
+juce_generate_juce_header(GhostDAW)
+
 target_sources(GhostDAW PRIVATE
     src/main.cpp
 )
