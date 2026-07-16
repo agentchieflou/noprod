@@ -800,3 +800,148 @@ body {
 .audition-key.black-key:active {
   background-color: var(--accent-green);
 }
+
+/* Piano Roll */
+.piano-roll {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.pr-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 4px 6px;
+  flex-shrink: 0;
+}
+
+.pr-scroll {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background-color: #161616;
+  min-height: 0;
+}
+
+.pr-body {
+  display: flex;
+  position: relative;
+}
+
+.pr-keys {
+  width: 44px;
+  flex-shrink: 0;
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background-color: #1d1d1d;
+  border-right: 1px solid var(--border-color);
+}
+
+.pr-key {
+  font-size: 8px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  cursor: pointer;
+  user-select: none;
+}
+
+.pr-key.black {
+  background-color: #141414;
+}
+
+.pr-key:hover {
+  color: var(--accent-green);
+}
+
+.pr-grid {
+  position: relative;
+  background-image:
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.14) 1px, transparent 1px);
+  cursor: crosshair;
+}
+
+.pr-row-shade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background-color: rgba(0,0,0,0.25);
+  pointer-events: none;
+}
+
+.pr-note {
+  position: absolute;
+  border-radius: 2px;
+  border: 1px solid rgba(255,255,255,0.4);
+  cursor: grab;
+  z-index: 2;
+}
+
+.pr-note.selected {
+  border-color: #fff;
+  box-shadow: 0 0 4px rgba(255,255,255,0.5);
+  z-index: 3;
+}
+
+.pr-note::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 7px;
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.pr-vel-wrap {
+  display: flex;
+  border-top: 1px solid var(--border-color);
+  background-color: #101010;
+}
+
+.pr-vel-label {
+  width: 44px;
+  flex-shrink: 0;
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background-color: #1d1d1d;
+  border-right: 1px solid var(--border-color);
+  font-size: 8px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pr-vel-lane {
+  position: relative;
+}
+
+.pr-vel-bar {
+  position: absolute;
+  bottom: 0;
+  width: 6px;
+  border-radius: 1px 1px 0 0;
+  opacity: 0.8;
+  cursor: ns-resize;
+}
+
+.pr-vel-bar.selected {
+  opacity: 1;
+  outline: 1px solid #fff;
+}
+
+.bottom-detail-panel.tall {
+  height: 380px;
+}

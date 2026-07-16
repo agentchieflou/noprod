@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
+import PianoRoll from './components/PianoRoll';
 import './App.css';
 
 // Global AudioContext & Effects
@@ -48,7 +49,7 @@ const BROWSER_PLUGINS = [
   { name: 'NoProd Delay', type: 'audio-fx', parameters: { 'Time': 0.25, 'Feedback': 40 } },
 ];
 
-const AudioRegionNode = ({ region, trackColor, isSelected, onClick }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void }) => {
+const AudioRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void, onOpenClip?: () => void }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { updateRegionPosition, updateRegionTrim } = useDAWStore();
 
@@ -120,10 +121,11 @@ const AudioRegionNode = ({ region, trackColor, isSelected, onClick }: { region: 
   };
 
   return (
-    <div 
+    <div
       className={`audio-region ${isSelected ? 'selected' : ''}`}
       onMouseDown={(e) => handleMouseDown(e, 'move')}
-      style={{ 
+      onDoubleClick={(e) => { e.stopPropagation(); onOpenClip?.(); }}
+      style={{
         width: `${region.duration * PIXELS_PER_SECOND}px`, 
         left: `${region.startTime * PIXELS_PER_SECOND}px`,
         borderColor: isSelected ? '#fff' : trackColor 
@@ -143,7 +145,7 @@ const AudioRegionNode = ({ region, trackColor, isSelected, onClick }: { region: 
   );
 };
 
-const MidiRegionNode = ({ region, trackColor, isSelected, onClick }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void }) => {
+const MidiRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void, onOpenClip?: () => void }) => {
   const { updateRegionPosition } = useDAWStore();
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -175,6 +177,7 @@ const MidiRegionNode = ({ region, trackColor, isSelected, onClick }: { region: a
     <div
       className={`audio-region midi-region ${isSelected ? 'selected' : ''}`}
       onMouseDown={handleMouseDown}
+      onDoubleClick={(e) => { e.stopPropagation(); onOpenClip?.(); }}
       style={{
         width: `${region.duration * PIXELS_PER_SECOND}px`,
         left: `${region.startTime * PIXELS_PER_SECOND}px`,
@@ -851,6 +854,7 @@ function App() {
                           trackColor={track.color}
                           isSelected={selectedRegionId === region.id}
                           onClick={() => setSelectedRegionId(region.id)}
+                          onOpenClip={() => { setSelectedRegionId(region.id); setActiveTab('clip'); }}
                         />
                       ) : (
                         <AudioRegionNode
@@ -859,6 +863,7 @@ function App() {
                           trackColor={track.color}
                           isSelected={selectedRegionId === region.id}
                           onClick={() => setSelectedRegionId(region.id)}
+                          onOpenClip={() => { setSelectedRegionId(region.id); setActiveTab('clip'); }}
                         />
                       )
                     ))}
@@ -1064,11 +1069,11 @@ function App() {
       </div>
 
       {/* Bottom Detail panel */}
-      <div className="bottom-detail-panel">
+      <div className={`bottom-detail-panel ${activeTab === 'clip' && selectedRegion?.type === 'midi' ? 'tall' : ''}`}>
         <div className="detail-tabs">
-          <button className="detail-tab active">Device Chain</button>
-          <button className="detail-tab">Clip View</button>
-          <button className="detail-tab" onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>
+          <button className={`detail-tab ${activeTab === 'devices' ? 'active' : ''}`} onClick={() => setActiveTab('devices')}>Device Chain</button>
+          <button className={`detail-tab ${activeTab === 'clip' ? 'active' : ''}`} onClick={() => setActiveTab('clip')}>Clip View</button>
+          <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>
           <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>
         </div>
         
@@ -1175,7 +1180,14 @@ function App() {
           
           {activeTab === 'clip' && (
             <div className="clip-properties-view">
-              {selectedRegion ? (
+              {selectedRegion && selectedRegion.type === 'midi' ? (
+                <PianoRoll
+                  region={selectedRegion}
+                  trackColor={tracks.find((t: any) => t.id === selectedRegion.trackId)?.color || 'var(--accent-green)'}
+                  bpm={bpm}
+                  onAudition={(pitch: number) => auditionNote(tracks.find((t: any) => t.id === selectedRegion.trackId), pitch)}
+                />
+              ) : selectedRegion ? (
                 <div style={{ display: 'flex', gap: '2rem' }}>
                   <div>
                     <h5>Selected Clip</h5>
