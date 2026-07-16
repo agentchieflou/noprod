@@ -4,8 +4,11 @@ import puppeteer from 'puppeteer';
 const wss = new WebSocketServer({ port: 8081 });
 console.log('Sequencer WebSocket Server listening on port 8081');
 
+const ENGINE_INIT_TIMEOUT_MS = 20000;
+
 let browser;
 let page;
+let engineReady = false;
 
 async function initPuppeteer() {
   console.log('Initializing Headless Strudel Engine...');
@@ -14,7 +17,7 @@ async function initPuppeteer() {
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
   page = await browser.newPage();
-  
+
   // Create a minimal HTML environment to load Strudel
   const html = `
     <!DOCTYPE html>
@@ -24,25 +27,31 @@ async function initPuppeteer() {
       </head>
       <body>
         <script>
-          window.strudelInit = new Promise((resolve) => {
-            window.addEventListener('load', () => {
-              // Assuming strudel is available globally
-              strudel.init(); // Initialize strudel if needed
-              resolve();
+          window.strudelReady = new Promise((resolve, reject) => {
+            window.addEventListener('load', async () => {
+              try {
+                await initStrudel();
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
             });
           });
         </script>
       </body>
     </html>
   `;
-  await page.setContent(html);
-  
-  // Wait for the script to load
-  await page.waitForFunction('typeof strudel !== "undefined"');
+  await page.setContent(html, { waitUntil: 'networkidle0', timeout: ENGINE_INIT_TIMEOUT_MS });
+  await page.waitForFunction('typeof initStrudel !== "undefined"', { timeout: ENGINE_INIT_TIMEOUT_MS });
+  await page.evaluate(() => window.strudelReady);
+
+  engineReady = true;
   console.log('Headless Strudel Engine Ready!');
 }
 
-initPuppeteer().catch(console.error);
+initPuppeteer().catch((err) => {
+  console.error('Headless Strudel Engine failed to initialize:', err.message);
+});
 
 wss.on('connection', (ws) => {
   console.log('Client connected to Sequencer');
@@ -52,30 +61,27 @@ wss.on('connection', (ws) => {
       const data = JSON.parse(message);
       if (data.type === 'EVAL') {
         console.log(`Evaluating Strudel code: ${data.code}`);
-        
-        if (!page) {
-          throw new Error('Puppeteer engine not ready yet.');
+
+        if (!engineReady) {
+          throw new Error('Headless Strudel engine not ready yet.');
         }
 
-        // Evaluate the code in the headless browser context
+        // Evaluate the code for real in the headless browser context and
+        // extract one cycle's worth of haps from the resulting pattern.
         const haps = await page.evaluate(async (code) => {
           try {
-            // Check if strudel is available globally
-            if (typeof strudel === 'undefined') {
-                return { error: 'Strudel not loaded in headless engine.' };
-            }
-            
-            // Wait for evaluation. We use the global repl function or core eval.
-            // Depending on the version of @strudel/web, `evalStrudel` or `evaluate` is exposed.
-            // For now, we mock the extracted events until the API is fully mapped.
-            console.log("Evaluating inside Puppeteer: " + code);
-            
-            // Example of what we aim to do:
-            // let pat = strudel.evaluate(code);
-            // let events = pat.queryArc(0, 1);
-            // return events.map(e => ({ time: e.time, value: e.value }));
-            
-            return [{ time: 0, note: 'C4', duration: 1, sourceCode: code, engine: 'puppeteer-strudel' }];
+            const pattern = await evaluate(code);
+            const result = pattern.queryArc(0, 1).map((hap) => ({
+              time: hap.whole ? hap.whole.begin.valueOf() : 0,
+              note: hap.value?.note ?? hap.value?.s ?? JSON.stringify(hap.value),
+              duration: hap.whole ? hap.whole.end.valueOf() - hap.whole.begin.valueOf() : 0,
+              sourceCode: code,
+              engine: 'strudel-web'
+            }));
+            // evaluate() starts the real-time scheduler (cyclist); stop it
+            // since we only want this cycle's data, not live playback.
+            hush();
+            return result;
           } catch (e) {
             return { error: e.message };
           }
