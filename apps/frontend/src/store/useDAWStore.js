@@ -513,6 +513,11 @@ export const useDAWStore = create((set, get) => ({
     regions: state.regions.map(r => r.id === id ? { ...r, startTime, duration, startOffset } : r)
   })); },
 
+  // Warp properties: { warpEnabled, warpMode, originalBpm, transients }
+  updateRegionWarp: (id, patch) => { get().record(`region-warp-${id}`); set((state) => ({
+    regions: state.regions.map(r => r.id === id ? { ...r, ...patch } : r)
+  })); },
+
   // Freeze & Flatten
   setTrackFrozen: (trackId, frozenBuffer, frozenDuration) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? { ...t, isFrozen: true, frozenBuffer, frozenDuration } : t)

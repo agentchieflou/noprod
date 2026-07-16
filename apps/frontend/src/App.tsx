@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
+import { detectTransients, estimateBpm, scheduleWarpedRegion } from './audio/warp';
 import PianoRoll from './components/PianoRoll';
 import RackDevice from './components/RackDevice';
 import './App.css';
@@ -70,7 +71,12 @@ const BROWSER_PLUGINS = [
 
 const AudioRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void, onOpenClip?: () => void }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { updateRegionPosition, updateRegionTrim } = useDAWStore();
+  const { updateRegionPosition, updateRegionTrim, bpm } = useDAWStore();
+
+  // Warped clips render at their tempo-stretched length
+  const stretchRatio = region.warpEnabled && region.originalBpm ? bpm / region.originalBpm : 1;
+  const displayDuration = region.duration / stretchRatio;
+  const displayWidth = displayDuration * PIXELS_PER_SECOND;
 
   useEffect(() => {
     if (!canvasRef.current || !region.audioBuffer) return;
@@ -145,17 +151,24 @@ const AudioRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }
       onMouseDown={(e) => handleMouseDown(e, 'move')}
       onDoubleClick={(e) => { e.stopPropagation(); onOpenClip?.(); }}
       style={{
-        width: `${region.duration * PIXELS_PER_SECOND}px`, 
+        width: `${displayWidth}px`,
         left: `${region.startTime * PIXELS_PER_SECOND}px`,
-        borderColor: isSelected ? '#fff' : trackColor 
+        borderColor: isSelected ? '#fff' : trackColor
       }}
     >
-      <div 
-        className="trim-handle left-handle" 
-        onMouseDown={(e) => handleMouseDown(e, 'trim-left')} 
+      <div
+        className="trim-handle left-handle"
+        onMouseDown={(e) => handleMouseDown(e, 'trim-left')}
       />
-      <canvas ref={canvasRef} width={region.duration * PIXELS_PER_SECOND} height={80} style={{ display: 'block', opacity: 0.8 }} />
-      <div style={{ position: 'absolute', top: 4, left: 12, color: '#fff', fontSize: '10px', textShadow: '0 0 4px #000', fontWeight: 'bold', pointerEvents: 'none' }}>{region.file}</div>
+      <canvas ref={canvasRef} width={displayWidth} height={80} style={{ display: 'block', opacity: 0.8 }} />
+      {region.warpEnabled && (region.transients || []).map((t: number, i: number) => {
+        const rel = (t - (region.startOffset || 0)) / region.duration;
+        if (rel < 0 || rel > 1) return null;
+        return <div key={i} className="warp-marker" style={{ left: `${rel * 100}%` }} />;
+      })}
+      <div style={{ position: 'absolute', top: 4, left: 12, color: '#fff', fontSize: '10px', textShadow: '0 0 4px #000', fontWeight: 'bold', pointerEvents: 'none' }}>
+        {region.warpEnabled ? '⇌ ' : ''}{region.file}
+      </div>
       <div 
         className="trim-handle right-handle" 
         onMouseDown={(e) => handleMouseDown(e, 'trim-right')} 
@@ -292,7 +305,7 @@ function App() {
     addMidiRegion, setTrackInstrument, updateInstrumentParameter,
     isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
     savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
-    setTrackFrozen, unfreezeTrack, flattenTrack
+    setTrackFrozen, unfreezeTrack, flattenTrack, updateRegionWarp
   } = useDAWStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -463,6 +476,28 @@ function App() {
       regions.forEach((region: any) => {
         const regionTrack = allTracks.find((t: any) => t.id === region.trackId);
         if (regionTrack?.isFrozen) return; // frozen buffer already covers this track
+
+        // Warped clips: granular time-stretch to follow the project tempo
+        if (region.warpEnabled && region.audioBuffer && region.originalBpm) {
+          const currentBpm = useDAWStore.getState().bpm;
+          const ratio = currentBpm / region.originalBpm;
+          const warpedDur = region.duration / ratio;
+          const outputOffset = Math.max(0, currentPlayheadTime - region.startTime);
+          if (outputOffset >= warpedDur) return;
+          const startDelay = Math.max(0, region.startTime - currentPlayheadTime);
+          const dests: AudioNode[] = [];
+          const tg = trackGainsRef.current[region.trackId];
+          const ts = trackSendsRef.current[region.trackId];
+          if (tg) dests.push(tg);
+          if (ts) dests.push(ts);
+          const grains = scheduleWarpedRegion(
+            audioContext, dests, region,
+            audioContext.currentTime + startDelay, outputOffset, ratio
+          );
+          activeSources.push(...grains);
+          return;
+        }
+
         if (region.audioBuffer) {
           const source = audioContext.createBufferSource();
           source.buffer = region.audioBuffer;
@@ -518,7 +553,7 @@ function App() {
       }
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [isPlaying, regions]);
+  }, [isPlaying, regions, bpm]); // bpm: warped clips must be re-stretched when tempo changes
 
   // Double stop to Return to Zero
   const handleStop = () => {
@@ -1452,6 +1487,56 @@ function App() {
                     <span className="clip-control-label">Loop</span>
                     <button className="btn-view active">ON</button>
                   </div>
+                  {selectedRegion.audioBuffer && (
+                    <div className="clip-control-box warp-box">
+                      <span className="clip-control-label">Warp</span>
+                      <button
+                        className={`btn-view ${selectedRegion.warpEnabled ? 'active' : ''}`}
+                        title="Warp: time-stretch this clip to follow the project tempo"
+                        onClick={() => {
+                          if (selectedRegion.warpEnabled) {
+                            updateRegionWarp(selectedRegion.id, { warpEnabled: false });
+                          } else {
+                            const transients = selectedRegion.transients || detectTransients(selectedRegion.audioBuffer);
+                            const originalBpm = selectedRegion.originalBpm || estimateBpm(transients, bpm);
+                            updateRegionWarp(selectedRegion.id, {
+                              warpEnabled: true,
+                              warpMode: selectedRegion.warpMode || 'beats',
+                              originalBpm,
+                              transients
+                            });
+                          }
+                        }}
+                      >
+                        {selectedRegion.warpEnabled ? 'ON' : 'OFF'}
+                      </button>
+                      {selectedRegion.warpEnabled && (
+                        <>
+                          <select
+                            className="rack-map-select"
+                            value={selectedRegion.warpMode || 'beats'}
+                            onChange={(e) => updateRegionWarp(selectedRegion.id, { warpMode: e.target.value })}
+                          >
+                            <option value="beats">Beats</option>
+                            <option value="tones">Tones</option>
+                            <option value="texture">Texture</option>
+                          </select>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>Orig BPM</span>
+                            <input
+                              type="number" min="40" max="240" step="0.1"
+                              className="clip-input"
+                              value={selectedRegion.originalBpm}
+                              onChange={(e) => updateRegionWarp(selectedRegion.id, { originalBpm: parseFloat(e.target.value) || 120 })}
+                            />
+                          </div>
+                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>
+                            {(selectedRegion.transients || []).length} transients · ×{(bpm / selectedRegion.originalBpm).toFixed(2)} stretch
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="detail-empty-message">No clip selected. Double click or click an audio block on the timeline to edit.</div>

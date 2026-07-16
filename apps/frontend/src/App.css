@@ -1122,3 +1122,19 @@ body {
   pointer-events: none;
   opacity: 0.5;
 }
+
+/* Warping */
+.warp-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: rgba(250, 204, 21, 0.7);
+  pointer-events: none;
+}
+
+.warp-box {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
