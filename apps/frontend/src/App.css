@@ -91,6 +91,13 @@ body {
 .btn-transport.recording {
   color: var(--accent-red);
 }
+.btn-transport:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.btn-transport:disabled:hover {
+  background: none;
+}
 
 .btn-metronome {
   background-color: #2e2e2e;
@@ -732,4 +739,436 @@ body {
   align-items: center;
   padding: 4px;
   border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+/* MIDI Regions & Instrument */
+.midi-region {
+  border: 1px solid;
+  border-radius: 3px;
+  height: 80px;
+  position: absolute;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.midi-note-bar {
+  position: absolute;
+  height: 6%;
+  min-height: 3px;
+  border-radius: 1px;
+  opacity: 0.95;
+  pointer-events: none;
+}
+
+.instrument-card {
+  border-left: 3px solid var(--accent-green);
+  min-width: 240px;
+}
+
+.audition-keys {
+  display: flex;
+  gap: 1px;
+  margin-top: 8px;
+  height: 42px;
+}
+
+.audition-key {
+  flex: 1;
+  background-color: #e5e5e5;
+  border: 1px solid #333;
+  border-radius: 0 0 3px 3px;
+  color: #222;
+  font-size: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 2px;
+}
+
+.audition-key:active {
+  background-color: var(--accent-green);
+}
+
+.audition-key.black-key {
+  background-color: #1a1a1a;
+  color: #eee;
+  flex: 0.7;
+  height: 65%;
+}
+
+.audition-key.black-key:active {
+  background-color: var(--accent-green);
+}
+
+/* Piano Roll */
+.piano-roll {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.pr-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 4px 6px;
+  flex-shrink: 0;
+}
+
+.pr-scroll {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background-color: #161616;
+  min-height: 0;
+}
+
+.pr-body {
+  display: flex;
+  position: relative;
+}
+
+.pr-keys {
+  width: 44px;
+  flex-shrink: 0;
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background-color: #1d1d1d;
+  border-right: 1px solid var(--border-color);
+}
+
+.pr-key {
+  font-size: 8px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  cursor: pointer;
+  user-select: none;
+}
+
+.pr-key.black {
+  background-color: #141414;
+}
+
+.pr-key:hover {
+  color: var(--accent-green);
+}
+
+.pr-grid {
+  position: relative;
+  background-image:
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.14) 1px, transparent 1px);
+  cursor: crosshair;
+}
+
+.pr-row-shade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background-color: rgba(0,0,0,0.25);
+  pointer-events: none;
+}
+
+.pr-note {
+  position: absolute;
+  border-radius: 2px;
+  border: 1px solid rgba(255,255,255,0.4);
+  cursor: grab;
+  z-index: 2;
+}
+
+.pr-note.selected {
+  border-color: #fff;
+  box-shadow: 0 0 4px rgba(255,255,255,0.5);
+  z-index: 3;
+}
+
+.pr-note::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 7px;
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.pr-vel-wrap {
+  display: flex;
+  border-top: 1px solid var(--border-color);
+  background-color: #101010;
+}
+
+.pr-vel-label {
+  width: 44px;
+  flex-shrink: 0;
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background-color: #1d1d1d;
+  border-right: 1px solid var(--border-color);
+  font-size: 8px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pr-vel-lane {
+  position: relative;
+}
+
+.pr-vel-bar {
+  position: absolute;
+  bottom: 0;
+  width: 6px;
+  border-radius: 1px 1px 0 0;
+  opacity: 0.8;
+  cursor: ns-resize;
+}
+
+.pr-vel-bar.selected {
+  opacity: 1;
+  outline: 1px solid #fff;
+}
+
+.bottom-detail-panel.tall {
+  height: 380px;
+}
+
+/* Master Meter & Limiter */
+.master-meter-block {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.master-meter {
+  width: 64px;
+  height: 8px;
+  background-color: #0c0c0c;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.master-meter-fill {
+  height: 100%;
+  width: 0%;
+  background-color: var(--accent-green);
+  transition: none;
+}
+
+.master-meter-db {
+  font-family: monospace;
+  font-size: 9px;
+  color: var(--text-secondary);
+  width: 34px;
+  text-align: right;
+}
+
+.master-meter-gr {
+  font-family: monospace;
+  font-size: 9px;
+  color: #f97316;
+  width: 46px;
+}
+
+.clip-led {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background-color: #2a1212;
+  cursor: pointer;
+  padding: 0;
+}
+
+.clip-led.lit {
+  background-color: var(--accent-red);
+  box-shadow: 0 0 6px var(--accent-red);
+}
+
+/* Group / Folder Tracks */
+.track-header-box.group-track {
+  background-color: rgba(168, 85, 247, 0.08);
+}
+
+.track-header-box.group-track:hover {
+  background-color: rgba(168, 85, 247, 0.14);
+}
+
+.track-header-box.group-track.selected {
+  background-color: rgba(168, 85, 247, 0.2);
+}
+
+/* Audio Effect Rack */
+.rack-card {
+  border-left: 3px solid #a855f7;
+  min-width: 460px;
+  max-width: 640px;
+}
+
+.rack-body {
+  display: flex;
+  gap: 10px;
+}
+
+.rack-macros {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border-color);
+  min-width: 190px;
+}
+
+.rack-macro {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background-color: rgba(168, 85, 247, 0.07);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 4px;
+}
+
+.rack-macro-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text-secondary);
+}
+
+.rack-macro-mappings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.rack-mapping-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 8px;
+  background-color: rgba(168, 85, 247, 0.25);
+  border-radius: 3px;
+  padding: 1px 3px;
+  color: var(--text-primary);
+}
+
+.rack-map-select {
+  background-color: #111;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 9px;
+  border-radius: 3px;
+  max-width: 140px;
+}
+
+.rack-devices {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  align-items: flex-start;
+}
+
+.rack-inner-device {
+  min-width: 150px;
+  background-color: #2e2e2e;
+}
+
+.rack-add-device {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  align-self: center;
+}
+
+/* Freeze & Flatten */
+.btn-icon.frozen-active {
+  color: #38bdf8;
+}
+
+.frozen-banner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background-color: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 3px 8px;
+  border-radius: 4px;
+  align-self: flex-start;
+  margin-right: 8px;
+  pointer-events: auto;
+}
+
+.device-chain-view.frozen-locked .device-cards,
+.device-chain-view.frozen-locked .btn-add-track,
+.device-chain-view.frozen-locked .rack-map-select {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* Warping */
+.warp-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: rgba(250, 204, 21, 0.7);
+  pointer-events: none;
+}
+
+.warp-box {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Punch In/Out */
+.punch-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 14px;
+  background-color: rgba(0,0,0,0.35);
+  border-bottom: 1px solid var(--border-color);
+  cursor: ew-resize;
+  z-index: 6;
+}
+
+.punch-region {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  background-color: rgba(239, 68, 68, 0.25);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.punch-region.enabled {
+  background-color: rgba(239, 68, 68, 0.55);
+  border-color: var(--accent-red);
+  box-shadow: 0 0 5px rgba(239, 68, 68, 0.5);
+}
+
+.btn-metronome.punch-active {
+  background-color: var(--accent-red);
+  border-color: var(--accent-red);
 }
