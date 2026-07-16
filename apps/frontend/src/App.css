@@ -998,3 +998,16 @@ body {
   background-color: var(--accent-red);
   box-shadow: 0 0 6px var(--accent-red);
 }
+
+/* Group / Folder Tracks */
+.track-header-box.group-track {
+  background-color: rgba(168, 85, 247, 0.08);
+}
+
+.track-header-box.group-track:hover {
+  background-color: rgba(168, 85, 247, 0.14);
+}
+
+.track-header-box.group-track.selected {
+  background-color: rgba(168, 85, 247, 0.2);
+}

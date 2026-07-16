@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
   Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2,
-  Undo2, Redo2
+  Undo2, Redo2, ChevronDown, ChevronRight
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
@@ -39,6 +39,11 @@ masterAnalyser.connect(audioContext.destination);
 
 let activeSources: any[] = [];
 const PIXELS_PER_SECOND = 50;
+
+// Dev-only handle for driving the store from the console / automated tests
+if (import.meta.env.DEV) {
+  (window as any).__dawStore = useDAWStore;
+}
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 
 // Ableton-style Color Palette Presets
@@ -284,7 +289,7 @@ function App() {
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
     undo, redo, past, future,
     addMidiRegion, setTrackInstrument, updateInstrumentParameter,
-    isLimiterEnabled, toggleLimiter
+    isLimiterEnabled, toggleLimiter, toggleGroupCollapse
   } = useDAWStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -361,23 +366,38 @@ function App() {
     reverbReturnGain.gain.value = reverbReturnVolume;
   }, [reverbReturnVolume]);
 
+  // Tracks whose current gain-node destination is a group bus (by target id),
+  // so we only re-patch the graph when a track's routing actually changes.
+  const trackRoutingRef = useRef<{ [key: string]: string }>({});
+
   useEffect(() => {
+    // Pass 1: ensure every track (including groups) has gain/send nodes
     tracks.forEach((t: any) => {
-      // Main track Gain
       if (!trackGainsRef.current[t.id]) {
         trackGainsRef.current[t.id] = audioContext.createGain();
-        if (masterGainRef.current) {
-          trackGainsRef.current[t.id].connect(masterGainRef.current);
-        }
       }
       trackGainsRef.current[t.id].gain.value = t.isMuted ? 0 : t.volume;
 
-      // Reverb Send Gain
       if (!trackSendsRef.current[t.id]) {
         trackSendsRef.current[t.id] = audioContext.createGain();
         trackSendsRef.current[t.id].connect(reverbReturnNode);
       }
       trackSendsRef.current[t.id].gain.value = t.sendReverb * t.volume;
+    });
+
+    // Pass 2: patch each track into its group's bus (real summing) or master
+    tracks.forEach((t: any) => {
+      const gain = trackGainsRef.current[t.id];
+      const targetId = t.groupId && trackGainsRef.current[t.groupId] ? t.groupId : 'master';
+      if (trackRoutingRef.current[t.id] !== targetId) {
+        gain.disconnect();
+        if (targetId === 'master') {
+          if (masterGainRef.current) gain.connect(masterGainRef.current);
+        } else {
+          gain.connect(trackGainsRef.current[targetId]);
+        }
+        trackRoutingRef.current[t.id] = targetId;
+      }
     });
   }, [tracks]);
 
@@ -575,6 +595,12 @@ function App() {
   // Find selected track and region
   const selectedTrack = tracks.find((t: any) => t.id === selectedTrackId);
   const selectedRegion = regions.find((r: any) => r.id === selectedRegionId);
+
+  // Members of collapsed groups are hidden from the track lists (audio still plays)
+  const collapsedGroupIds = new Set(
+    tracks.filter((t: any) => t.type === 'group' && t.isCollapsed).map((t: any) => t.id)
+  );
+  const visibleTracks = tracks.filter((t: any) => !(t.groupId && collapsedGroupIds.has(t.groupId)));
 
   // Play session clip in real-time
   const playSessionClip = (trackId: string, slotIndex: number) => {
@@ -918,9 +944,9 @@ function App() {
                 <div className="arranger-grid" />
                 <div className="playhead" style={{ left: `${localPlaybackPosition * PIXELS_PER_SECOND}px` }} />
                 
-                {tracks.map((track: any) => (
-                  <div 
-                    key={track.id} 
+                {visibleTracks.map((track: any) => (
+                  <div
+                    key={track.id}
                     className={`arranger-track ${draggedOverTrack === track.id ? 'drag-over' : ''}`}
                     onDragOver={(e) => {
                       e.preventDefault();
@@ -979,18 +1005,30 @@ function App() {
                   </button>
                 </div>
 
-                {tracks.map((track: any) => (
-                  <div 
-                    key={track.id} 
-                    className={`track-header-box ${selectedTrackId === track.id ? 'selected' : ''}`}
+                {visibleTracks.map((track: any) => (
+                  <div
+                    key={track.id}
+                    className={`track-header-box ${selectedTrackId === track.id ? 'selected' : ''} ${track.type === 'group' ? 'group-track' : ''}`}
                     onClick={() => setSelectedTrackId(track.id)}
-                    style={{ 
+                    style={{
                       borderLeft: `4px solid ${track.color}`,
                       paddingLeft: track.groupId ? '1.5rem' : '0.5rem' // Visually indent grouped tracks
                     }}
                   >
                     <div className="track-title-row">
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        {track.type === 'group' && (
+                          <button
+                            className="btn-checkbox"
+                            title={track.isCollapsed ? 'Unfold group' : 'Fold group'}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleGroupCollapse(track.id);
+                            }}
+                          >
+                            {track.isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                          </button>
+                        )}
                         {track.type !== 'group' && (
                           <button 
                             className="btn-checkbox" 
@@ -1032,8 +1070,13 @@ function App() {
                         </div>
                         
                         <span>{track.name}</span>
+                        {track.type === 'group' && (
+                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>
+                            ({tracks.filter((m: any) => m.groupId === track.id).length})
+                          </span>
+                        )}
                       </div>
-                      <button className="btn-icon" onClick={() => removeTrack(track.id)}><Trash2 size={12} /></button>
+                      <button className="btn-icon" title={track.type === 'group' ? 'Ungroup (members return to Master)' : 'Delete Track'} onClick={() => removeTrack(track.id)}><Trash2 size={12} /></button>
                     </div>
                     
                     {/* Track Mixer Controls */}
@@ -1097,7 +1140,7 @@ function App() {
           ) : (
             // Session View Launcher
             <div className="session-view">
-              {tracks.map((track: any) => (
+              {visibleTracks.map((track: any) => (
                 <div key={track.id} className="session-track-column" style={{ borderTop: `4px solid ${track.color}` }}>
                   <div className="session-track-header">{track.name}</div>
                   

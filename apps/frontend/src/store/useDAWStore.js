@@ -216,6 +216,7 @@ export const useDAWStore = create((set, get) => ({
       type: 'group',
       routing: 'master',
       groupId: null,
+      isCollapsed: false,
       volume: 0.8,
       pan: 0.0,
       sendReverb: 0.0,
@@ -286,6 +287,11 @@ export const useDAWStore = create((set, get) => ({
   updateTrackColor: (id, color) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, color } : t)
   })); },
+
+  // Fold/unfold a group track (view state — deliberately not in undo history)
+  toggleGroupCollapse: (id) => set((state) => ({
+    tracks: state.tracks.map(t => t.id === id ? { ...t, isCollapsed: !t.isCollapsed } : t)
+  })),
 
   // Instrument Actions (MIDI tracks)
   setTrackInstrument: (trackId, instrument) => { get().record(); set((state) => ({
