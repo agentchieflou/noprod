@@ -51,6 +51,7 @@ export const useDAWStore = create((set, get) => ({
   masterVolume: 0.8,
   masterPan: 0.0, // -1 (left) to 1 (right)
   reverbReturnVolume: 0.5, // Return Track A volume
+  isLimiterEnabled: true, // Master bus brickwall limiter
   
   // Custom VST Paths for local scanning (Antares, FabFilter)
   vstScanPaths: [
@@ -159,6 +160,7 @@ export const useDAWStore = create((set, get) => ({
   setMasterVolume: (vol) => { get().record('master-volume'); set({ masterVolume: vol }); },
   setMasterPan: (pan) => { get().record('master-pan'); set({ masterPan: pan }); },
   setReverbReturnVolume: (vol) => { get().record('reverb-return'); set({ reverbReturnVolume: vol }); },
+  toggleLimiter: () => set((state) => ({ isLimiterEnabled: !state.isLimiterEnabled })),
 
   loadAbletonSet: (tempo, tracks, regions) => { get().record(); set({
     bpm: tempo,

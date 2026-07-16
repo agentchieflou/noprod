@@ -22,7 +22,20 @@ const reverbReturnGain = audioContext.createGain();
 reverbReturnNode.connect(reverbFeedback);
 reverbFeedback.connect(reverbReturnNode);
 reverbReturnNode.connect(reverbReturnGain);
-reverbReturnGain.connect(audioContext.destination);
+
+// Master bus: limiter (brickwall-configured compressor) -> analyser -> output.
+// The analyser stays in the chain even when the limiter is bypassed so the
+// meter always reflects what actually hits the speakers.
+const masterLimiter = audioContext.createDynamicsCompressor();
+masterLimiter.threshold.value = -1;
+masterLimiter.knee.value = 0;
+masterLimiter.ratio.value = 20;
+masterLimiter.attack.value = 0.001;
+masterLimiter.release.value = 0.1;
+const masterAnalyser = audioContext.createAnalyser();
+masterAnalyser.fftSize = 2048;
+masterLimiter.connect(masterAnalyser);
+masterAnalyser.connect(audioContext.destination);
 
 let activeSources: any[] = [];
 const PIXELS_PER_SECOND = 50;
@@ -145,6 +158,62 @@ const AudioRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }
   );
 };
 
+// Live peak meter + clip LED + limiter gain-reduction readout for the master bus.
+// Writes straight to the DOM from a rAF loop; only the latching clip LED is React state.
+const MasterMeter = ({ limiterEnabled }: { limiterEnabled: boolean }) => {
+  const fillRef = useRef<HTMLDivElement>(null);
+  const dbRef = useRef<HTMLSpanElement>(null);
+  const grRef = useRef<HTMLSpanElement>(null);
+  const [clipped, setClipped] = useState(false);
+  const clippedRef = useRef(false);
+
+  useEffect(() => {
+    const data = new Float32Array(masterAnalyser.fftSize);
+    let raf: number;
+    const tick = () => {
+      masterAnalyser.getFloatTimeDomainData(data);
+      let peak = 0;
+      for (let i = 0; i < data.length; i++) {
+        const a = Math.abs(data[i]);
+        if (a > peak) peak = a;
+      }
+      if (peak >= 0.999 && !clippedRef.current) {
+        clippedRef.current = true;
+        setClipped(true);
+      }
+      const db = 20 * Math.log10(peak || 0.00001);
+      const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+      if (fillRef.current) {
+        fillRef.current.style.width = `${pct}%`;
+        fillRef.current.style.backgroundColor = db > -3 ? 'var(--accent-red)' : db > -12 ? '#eab308' : 'var(--accent-green)';
+      }
+      if (dbRef.current) dbRef.current.textContent = peak > 0.0001 ? `${db.toFixed(1)}` : '-inf';
+      if (grRef.current) {
+        const gr = masterLimiter.reduction;
+        grRef.current.textContent = gr < -0.5 ? `GR ${gr.toFixed(1)}` : '';
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <div className="master-meter-block" title="Master output peak level">
+      <div className="master-meter">
+        <div className="master-meter-fill" ref={fillRef} />
+      </div>
+      <span className="master-meter-db" ref={dbRef}>-inf</span>
+      <button
+        className={`clip-led ${clipped ? 'lit' : ''}`}
+        title={clipped ? 'Clipped! Click to reset' : 'Clip indicator'}
+        onClick={() => { clippedRef.current = false; setClipped(false); }}
+      />
+      <span className="master-meter-gr" ref={grRef} style={{ opacity: limiterEnabled ? 1 : 0.3 }} />
+    </div>
+  );
+};
+
 const MidiRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void, onOpenClip?: () => void }) => {
   const { updateRegionPosition } = useDAWStore();
 
@@ -214,7 +283,8 @@ function App() {
     setMasterVolume, setReverbReturnVolume, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
     undo, redo, past, future,
-    addMidiRegion, setTrackInstrument, updateInstrumentParameter
+    addMidiRegion, setTrackInstrument, updateInstrumentParameter,
+    isLimiterEnabled, toggleLimiter
   } = useDAWStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -271,10 +341,21 @@ function App() {
   useEffect(() => {
     if (!masterGainRef.current) {
       masterGainRef.current = audioContext.createGain();
-      masterGainRef.current.connect(audioContext.destination);
     }
     masterGainRef.current.gain.value = masterVolume;
   }, [masterVolume]);
+
+  // Route the master bus and reverb return through the limiter (or bypass it).
+  // The analyser stays last in the chain either way so metering is always live.
+  useEffect(() => {
+    const mg = masterGainRef.current;
+    if (!mg) return;
+    mg.disconnect();
+    reverbReturnGain.disconnect();
+    const entry = isLimiterEnabled ? masterLimiter : masterAnalyser;
+    mg.connect(entry);
+    reverbReturnGain.connect(entry);
+  }, [isLimiterEnabled]);
 
   useEffect(() => {
     reverbReturnGain.gain.value = reverbReturnVolume;
@@ -783,12 +864,20 @@ function App() {
         <div className="master-fader">
           <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>MASTER</span>
           <Volume2 size={16} />
-          <input 
-            type="range" min="0" max="1" step="0.01" 
-            value={masterVolume} 
+          <input
+            type="range" min="0" max="1" step="0.01"
+            value={masterVolume}
             onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
             className="fader-input"
           />
+          <MasterMeter limiterEnabled={isLimiterEnabled} />
+          <button
+            className={`btn-metronome ${isLimiterEnabled ? 'active' : ''}`}
+            onClick={toggleLimiter}
+            title={isLimiterEnabled ? 'Limiter on (brickwall at -1dB)' : 'Limiter bypassed'}
+          >
+            LIM
+          </button>
         </div>
       </div>
 

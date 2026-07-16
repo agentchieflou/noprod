@@ -945,3 +945,56 @@ body {
 .bottom-detail-panel.tall {
   height: 380px;
 }
+
+/* Master Meter & Limiter */
+.master-meter-block {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.master-meter {
+  width: 64px;
+  height: 8px;
+  background-color: #0c0c0c;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.master-meter-fill {
+  height: 100%;
+  width: 0%;
+  background-color: var(--accent-green);
+  transition: none;
+}
+
+.master-meter-db {
+  font-family: monospace;
+  font-size: 9px;
+  color: var(--text-secondary);
+  width: 34px;
+  text-align: right;
+}
+
+.master-meter-gr {
+  font-family: monospace;
+  font-size: 9px;
+  color: #f97316;
+  width: 46px;
+}
+
+.clip-led {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background-color: #2a1212;
+  cursor: pointer;
+  padding: 0;
+}
+
+.clip-led.lit {
+  background-color: var(--accent-red);
+  box-shadow: 0 0 6px var(--accent-red);
+}
