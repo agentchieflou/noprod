@@ -99,6 +99,16 @@ export const useDAWStore = create((set, get) => ({
     'C:/Program Files/Steinberg/VstPlugins'
   ],
 
+  // Plugins found by scanning real folders (persisted in localStorage).
+  // [{ name, format, path }]
+  scannedPlugins: (() => {
+    try {
+      return JSON.parse(localStorage.getItem('noprod-scanned-plugins') || '[]');
+    } catch {
+      return [];
+    }
+  })(),
+
   // Tracks list
   tracks: [
     {
@@ -224,6 +234,13 @@ export const useDAWStore = create((set, get) => ({
   removeVstScanPath: (path) => { get().record(); set((state) => ({
     vstScanPaths: state.vstScanPaths.filter(p => p !== path)
   })); },
+
+  setScannedPlugins: (scannedPlugins) => {
+    try {
+      localStorage.setItem('noprod-scanned-plugins', JSON.stringify(scannedPlugins));
+    } catch { /* storage full/unavailable: list still lives in memory */ }
+    set({ scannedPlugins });
+  },
 
   // Track Actions
   addTrack: (type) => { get().record(); set((state) => {

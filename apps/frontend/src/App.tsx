@@ -306,8 +306,10 @@ function App() {
     isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
     savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
     setTrackFrozen, unfreezeTrack, flattenTrack, updateRegionWarp,
-    punchInTime, punchOutTime, isPunchEnabled, togglePunch, setPunchRegion
+    punchInTime, punchOutTime, isPunchEnabled, togglePunch, setPunchRegion,
+    scannedPlugins, setScannedPlugins
   } = useDAWStore();
+  const [isScanning, setIsScanning] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggedOverTrack, setDraggedOverTrack] = useState<string | null>(null);
@@ -767,6 +769,54 @@ function App() {
     if (newVstPathInput.trim()) {
       addVstScanPath(newVstPathInput.trim());
       setNewVstPathInput('');
+    }
+  };
+
+  // Real plugin folder scan via the File System Access API: the user picks a
+  // directory and we enumerate actual plugin binaries inside it.
+  const PLUGIN_EXTENSIONS: { [ext: string]: string } = {
+    '.vst3': 'VST3', '.dll': 'VST2', '.clap': 'CLAP', '.component': 'AU'
+  };
+
+  const scanDirectory = async (dirHandle: any, basePath: string, depth: number, found: any[]) => {
+    if (depth > 3) return;
+    for await (const entry of dirHandle.values()) {
+      const lower = entry.name.toLowerCase();
+      const ext = Object.keys(PLUGIN_EXTENSIONS).find(e => lower.endsWith(e));
+      if (ext) {
+        found.push({
+          name: entry.name.replace(/\.(vst3|dll|clap|component)$/i, ''),
+          format: PLUGIN_EXTENSIONS[ext],
+          path: `${basePath}/${entry.name}`
+        });
+      } else if (entry.kind === 'directory') {
+        await scanDirectory(entry, `${basePath}/${entry.name}`, depth + 1, found);
+      }
+    }
+  };
+
+  const handleScanPluginFolder = async () => {
+    const picker = (window as any).showDirectoryPicker;
+    if (!picker) {
+      alert('Folder scanning needs the File System Access API (Chromium-based browser).');
+      return;
+    }
+    try {
+      setIsScanning(true);
+      const dirHandle = await picker.call(window, { mode: 'read' });
+      const found: any[] = [];
+      await scanDirectory(dirHandle, dirHandle.name, 0, found);
+      // Merge with already-scanned plugins, de-duplicated by path
+      const merged = [...scannedPlugins];
+      found.forEach(p => {
+        if (!merged.some((m: any) => m.path === p.path)) merged.push(p);
+      });
+      setScannedPlugins(merged);
+      if (found.length === 0) alert(`No plugin files (.vst3/.dll/.clap/.component) found in "${dirHandle.name}".`);
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') alert(`Scan failed: ${err.message || err}`);
+    } finally {
+      setIsScanning(false);
     }
   };
 
@@ -1624,13 +1674,57 @@ function App() {
                 ))}
               </div>
               
-              <button 
-                className="btn-add-track" 
+              <button
+                className="btn-add-track"
                 style={{ backgroundColor: 'var(--accent-green)', marginTop: '10px' }}
-                onClick={() => alert("Rescanning plugin folders... Complete! Native VSTs mapped to NoProd audio graph.")}
+                onClick={handleScanPluginFolder}
+                disabled={isScanning}
               >
-                Scan & Wire Local Plugins
+                {isScanning ? 'Scanning…' : 'Scan Folder for Plugins…'}
               </button>
+
+              {scannedPlugins.length > 0 && (
+                <div style={{ marginTop: '10px' }}>
+                  <h5>Discovered Plugins ({scannedPlugins.length})</h5>
+                  <div className="vst-path-list" style={{ maxHeight: '110px' }}>
+                    {scannedPlugins.map((p: any) => (
+                      <div key={p.path} className="vst-path-row">
+                        <span style={{ fontSize: '11px' }}>
+                          <b>{p.name}</b>
+                          <span style={{ color: 'var(--accent-green)', marginLeft: '6px', fontSize: '9px' }}>{p.format}</span>
+                          <span style={{ color: 'var(--text-secondary)', marginLeft: '6px', fontFamily: 'monospace', fontSize: '9px' }}>{p.path}</span>
+                        </span>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button
+                            className="btn-icon"
+                            title={selectedTrack ? `Add to ${selectedTrack.name}'s device chain` : 'Select a track first'}
+                            onClick={() => {
+                              if (!selectedTrack) { alert('Select a track first (click a track header).'); return; }
+                              addDeviceToTrack(selectedTrack.id, {
+                                name: p.name, type: 'vst', pluginPath: p.path, format: p.format,
+                                parameters: { 'Dry/Wet': 100, 'Gain': 50 }
+                              });
+                            }}
+                          >
+                            <Plus size={12} />
+                          </button>
+                          <button
+                            className="btn-icon"
+                            title="Remove from list"
+                            onClick={() => setScannedPlugins(scannedPlugins.filter((sp: any) => sp.path !== p.path))}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                    Scanned plugins persist across sessions and can be added to device chains.
+                    Native audio processing through Audio Core (JUCE) is not wired up yet.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
