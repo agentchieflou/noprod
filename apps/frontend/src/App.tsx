@@ -4,7 +4,8 @@ import {
   Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2,
   Undo2, Redo2
 } from 'lucide-react';
-import { useDAWStore } from './store/useDAWStore';
+import { useDAWStore, createDefaultInstrument } from './store/useDAWStore';
+import { triggerNote, midiNoteName } from './audio/synth';
 import './App.css';
 
 // Global AudioContext & Effects
@@ -142,6 +143,64 @@ const AudioRegionNode = ({ region, trackColor, isSelected, onClick }: { region: 
   );
 };
 
+const MidiRegionNode = ({ region, trackColor, isSelected, onClick }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void }) => {
+  const { updateRegionPosition } = useDAWStore();
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onClick();
+    const startX = e.clientX;
+    const startValTime = region.startTime;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaTime = (moveEvent.clientX - startX) / PIXELS_PER_SECOND;
+      updateRegionPosition(region.id, Math.max(0, startValTime + deltaTime));
+    };
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // Map the clip's pitch span onto its height so the pattern silhouette reads at a glance
+  const notes = region.notes || [];
+  const pitches = notes.map((n: any) => n.pitch);
+  const minPitch = pitches.length ? Math.min(...pitches) - 2 : 48;
+  const maxPitch = pitches.length ? Math.max(...pitches) + 2 : 72;
+  const pitchSpan = Math.max(1, maxPitch - minPitch);
+
+  return (
+    <div
+      className={`audio-region midi-region ${isSelected ? 'selected' : ''}`}
+      onMouseDown={handleMouseDown}
+      style={{
+        width: `${region.duration * PIXELS_PER_SECOND}px`,
+        left: `${region.startTime * PIXELS_PER_SECOND}px`,
+        borderColor: isSelected ? '#fff' : trackColor,
+        backgroundColor: `${trackColor}30`
+      }}
+    >
+      {notes.map((note: any) => (
+        <div
+          key={note.id}
+          className="midi-note-bar"
+          style={{
+            left: `${(note.start / region.duration) * 100}%`,
+            width: `${Math.max(1, (note.duration / region.duration) * 100)}%`,
+            top: `${(1 - (note.pitch - minPitch) / pitchSpan) * 90}%`,
+            backgroundColor: trackColor
+          }}
+        />
+      ))}
+      <div style={{ position: 'absolute', top: 4, left: 12, color: '#fff', fontSize: '10px', textShadow: '0 0 4px #000', fontWeight: 'bold', pointerEvents: 'none' }}>
+        {region.file} {notes.length === 0 ? '(empty)' : ''}
+      </div>
+    </div>
+  );
+};
+
 function App() {
   const { 
     tracks, regions, isPlaying, isRecording, isMetronomeEnabled, viewMode,
@@ -151,7 +210,8 @@ function App() {
     updateTrackVolume, updateTrackPan, updateTrackSendReverb, toggleMuteTrack, toggleSoloTrack,
     setMasterVolume, setReverbReturnVolume, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
-    undo, redo, past, future
+    undo, redo, past, future,
+    addMidiRegion, setTrackInstrument, updateInstrumentParameter
   } = useDAWStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -251,6 +311,31 @@ function App() {
       playStartTimeRef.current = audioContext.currentTime - pauseTimeRef.current;
       const currentPlayheadTime = pauseTimeRef.current;
       
+      // Schedule MIDI regions through each track's instrument
+      regions.forEach((region: any) => {
+        if (region.type !== 'midi' || !region.notes) return;
+        const track = useDAWStore.getState().tracks.find((t: any) => t.id === region.trackId);
+        if (!track || !track.instrument) return;
+        const trackGain = trackGainsRef.current[region.trackId];
+        const trackSend = trackSendsRef.current[region.trackId];
+
+        region.notes.forEach((note: any) => {
+          const absStart = region.startTime + note.start;
+          const absEnd = absStart + note.duration;
+          if (absEnd <= currentPlayheadTime) return; // already passed
+          // Clip notes that straddle the playhead so resume mid-note still sounds
+          const startDelay = Math.max(0, absStart - currentPlayheadTime);
+          const playDuration = absEnd - Math.max(absStart, currentPlayheadTime);
+          const when = audioContext.currentTime + startDelay;
+          if (trackGain) {
+            activeSources.push(triggerNote(audioContext, trackGain, track.instrument.parameters, note.pitch, when, playDuration, note.velocity ?? 1));
+          }
+          if (trackSend) {
+            activeSources.push(triggerNote(audioContext, trackSend, track.instrument.parameters, note.pitch, when, playDuration, (note.velocity ?? 1) * 0.5));
+          }
+        });
+      });
+
       // Play Arrangement regions
       regions.forEach((region: any) => {
         if (region.audioBuffer) {
@@ -442,6 +527,31 @@ function App() {
     setSelectedTrackIds([]); // reset selection
   };
 
+  // Create a 1-bar MIDI clip seeded with a simple root-note pattern so it's
+  // immediately audible; notes become editable in the piano roll.
+  const handleCreateMidiClip = (trackId: string, startTime: number) => {
+    const secondsPerBeat = 60 / bpm;
+    const barLength = secondsPerBeat * 4;
+    const seedNotes = [48, 51, 55, 60].map((pitch, i) => ({
+      id: `${Date.now()}-${i}`,
+      pitch,
+      start: i * secondsPerBeat,
+      duration: secondsPerBeat * 0.9,
+      velocity: 0.9
+    }));
+    addMidiRegion(trackId, startTime, barLength, seedNotes);
+  };
+
+  // Audition a note immediately through the track's channel (instrument panel keyboard)
+  const auditionNote = (track: any, pitch: number) => {
+    if (!track?.instrument) return;
+    if (audioContext.state === 'suspended') audioContext.resume();
+    const trackGain = trackGainsRef.current[track.id];
+    if (trackGain) {
+      triggerNote(audioContext, trackGain, track.instrument.parameters, pitch, audioContext.currentTime, 0.35);
+    }
+  };
+
   // Add custom path
   const handleAddVstPath = () => {
     if (newVstPathInput.trim()) {
@@ -534,6 +644,7 @@ function App() {
           pan,
           sendReverb,
           color,
+          instrument: type === 'midi' ? createDefaultInstrument() : null,
           plugins
         });
 
@@ -725,15 +836,31 @@ function App() {
                     }}
                     onDragLeave={() => setDraggedOverTrack(null)}
                     onDrop={(e) => handleDrop(e, track.id)}
+                    onDoubleClick={(e) => {
+                      if (track.type !== 'midi') return;
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      const clickTime = Math.max(0, (e.clientX - rect.left) / PIXELS_PER_SECOND);
+                      handleCreateMidiClip(track.id, clickTime);
+                    }}
                   >
                     {regions.filter((r: any) => r.trackId === track.id).map((region: any) => (
-                      <AudioRegionNode 
-                        key={region.id} 
-                        region={region} 
-                        trackColor={track.color} 
-                        isSelected={selectedRegionId === region.id}
-                        onClick={() => setSelectedRegionId(region.id)}
-                      />
+                      region.type === 'midi' ? (
+                        <MidiRegionNode
+                          key={region.id}
+                          region={region}
+                          trackColor={track.color}
+                          isSelected={selectedRegionId === region.id}
+                          onClick={() => setSelectedRegionId(region.id)}
+                        />
+                      ) : (
+                        <AudioRegionNode
+                          key={region.id}
+                          region={region}
+                          trackColor={track.color}
+                          isSelected={selectedRegionId === region.id}
+                          onClick={() => setSelectedRegionId(region.id)}
+                        />
+                      )
                     ))}
                   </div>
                 ))}
@@ -957,6 +1084,63 @@ function App() {
                     </button>
                   </div>
                   
+                  {/* Instrument Card (MIDI tracks) */}
+                  {selectedTrack.type === 'midi' && (
+                    selectedTrack.instrument ? (
+                      <div className="device-card instrument-card">
+                        <div className="device-card-header">
+                          <span>{selectedTrack.instrument.name}</span>
+                          <span style={{ fontSize: '9px', color: 'var(--accent-green)' }}>INSTRUMENT</span>
+                        </div>
+                        <div className="device-card-params">
+                          <div className="param-slider-row">
+                            <span style={{ fontSize: '10px' }}>Waveform</span>
+                            <select
+                              className="clip-input"
+                              value={selectedTrack.instrument.parameters.Waveform}
+                              onChange={(e) => updateInstrumentParameter(selectedTrack.id, 'Waveform', e.target.value)}
+                            >
+                              <option value="sawtooth">Sawtooth</option>
+                              <option value="square">Square</option>
+                              <option value="sine">Sine</option>
+                              <option value="triangle">Triangle</option>
+                            </select>
+                          </div>
+                          {['Attack', 'Decay', 'Sustain', 'Release', 'Gain'].map((paramName) => (
+                            <div key={paramName} className="param-slider-row">
+                              <span style={{ fontSize: '10px' }}>{paramName}</span>
+                              <input
+                                type="range" min="0" max="1" step="0.01"
+                                value={selectedTrack.instrument.parameters[paramName]}
+                                onChange={(e) => updateInstrumentParameter(selectedTrack.id, paramName, parseFloat(e.target.value))}
+                                className="param-slider"
+                              />
+                              <span style={{ fontSize: '10px', width: '28px', textAlign: 'right' }}>{Number(selectedTrack.instrument.parameters[paramName]).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {/* Audition keyboard: one octave from C4 */}
+                        <div className="audition-keys">
+                          {[60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71].map(pitch => (
+                            <button
+                              key={pitch}
+                              className={`audition-key ${midiNoteName(pitch).includes('#') ? 'black-key' : ''}`}
+                              onMouseDown={() => auditionNote(selectedTrack, pitch)}
+                              title={midiNoteName(pitch)}
+                            >
+                              {midiNoteName(pitch).includes('#') ? '' : midiNoteName(pitch)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <button className="btn-add-track" style={{ backgroundColor: '#10b981', alignSelf: 'flex-start' }}
+                        onClick={() => setTrackInstrument(selectedTrack.id, createDefaultInstrument())}>
+                        <Plus size={12} /> Add Instrument
+                      </button>
+                    )
+                  )}
+
                   {/* Plugin Cards */}
                   <div className="device-cards">
                     {selectedTrack.plugins.map((plugin: any) => (

@@ -21,6 +21,21 @@ const takeSnapshot = (state) => {
   return snap;
 };
 
+// Default instrument attached to new MIDI tracks so their clips are audible.
+export const createDefaultInstrument = () => ({
+  id: uuidv4(),
+  name: 'NoProd Synth',
+  type: 'instrument',
+  parameters: {
+    Waveform: 'sawtooth',
+    Attack: 0.01,
+    Decay: 0.15,
+    Sustain: 0.6,
+    Release: 0.2,
+    Gain: 0.7
+  }
+});
+
 export const useDAWStore = create((set, get) => ({
   // Global State
   isPlaying: false,
@@ -75,6 +90,7 @@ export const useDAWStore = create((set, get) => ({
       isSoloed: false,
       isArmed: false,
       color: '#10b981',
+      instrument: createDefaultInstrument(),
       plugins: [
         { id: uuidv4(), name: 'FabFilter Pro-Q 3', type: 'vst', parameters: { 'Freq': 440, 'Gain': 0.0 } }
       ],
@@ -179,6 +195,7 @@ export const useDAWStore = create((set, get) => ({
           isSoloed: false,
           isArmed: false,
           color: type === 'audio' ? '#3b82f6' : type === 'midi' ? '#10b981' : '#a855f7',
+          instrument: type === 'midi' ? createDefaultInstrument() : null,
           plugins: [],
         }
       ]
@@ -268,6 +285,25 @@ export const useDAWStore = create((set, get) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, color } : t)
   })); },
 
+  // Instrument Actions (MIDI tracks)
+  setTrackInstrument: (trackId, instrument) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, instrument } : t)
+  })); },
+
+  removeTrackInstrument: (trackId) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, instrument: null } : t)
+  })); },
+
+  updateInstrumentParameter: (trackId, paramName, val) => { get().record(`instrument-param-${trackId}-${paramName}`); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId && t.instrument ? {
+      ...t,
+      instrument: {
+        ...t.instrument,
+        parameters: { ...t.instrument.parameters, [paramName]: val }
+      }
+    } : t)
+  })); },
+
   // Device Chain Actions
   addDeviceToTrack: (trackId, device) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? {
@@ -308,6 +344,35 @@ export const useDAWStore = create((set, get) => ({
 
   updateRegionTrim: (id, startTime, duration, startOffset) => { get().record(`region-trim-${id}`); set((state) => ({
     regions: state.regions.map(r => r.id === id ? { ...r, startTime, duration, startOffset } : r)
+  })); },
+
+  // MIDI Region Actions
+  // notes: [{ id, pitch (MIDI number), start (sec, region-relative), duration (sec), velocity (0..1) }]
+  addMidiRegion: (trackId, startTime, duration, notes = []) => { get().record(); set((state) => {
+    const id = uuidv4();
+    return {
+      regions: [...state.regions, {
+        id,
+        trackId,
+        type: 'midi',
+        file: 'MIDI Clip',
+        audioBuffer: null,
+        startTime,
+        duration,
+        startOffset: 0,
+        notes
+      }],
+      selectedRegionId: id
+    };
+  }); },
+
+  updateRegionNotes: (id, notes) => { get().record(`region-notes-${id}`); set((state) => ({
+    regions: state.regions.map(r => r.id === id ? { ...r, notes } : r)
+  })); },
+
+  removeRegion: (id) => { get().record(); set((state) => ({
+    regions: state.regions.filter(r => r.id !== id),
+    selectedRegionId: state.selectedRegionId === id ? null : state.selectedRegionId
   })); },
 
   // Session Actions

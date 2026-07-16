@@ -740,3 +740,63 @@ body {
   padding: 4px;
   border-bottom: 1px solid rgba(255,255,255,0.05);
 }
+
+/* MIDI Regions & Instrument */
+.midi-region {
+  border: 1px solid;
+  border-radius: 3px;
+  height: 80px;
+  position: absolute;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.midi-note-bar {
+  position: absolute;
+  height: 6%;
+  min-height: 3px;
+  border-radius: 1px;
+  opacity: 0.95;
+  pointer-events: none;
+}
+
+.instrument-card {
+  border-left: 3px solid var(--accent-green);
+  min-width: 240px;
+}
+
+.audition-keys {
+  display: flex;
+  gap: 1px;
+  margin-top: 8px;
+  height: 42px;
+}
+
+.audition-key {
+  flex: 1;
+  background-color: #e5e5e5;
+  border: 1px solid #333;
+  border-radius: 0 0 3px 3px;
+  color: #222;
+  font-size: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 2px;
+}
+
+.audition-key:active {
+  background-color: var(--accent-green);
+}
+
+.audition-key.black-key {
+  background-color: #1a1a1a;
+  color: #eee;
+  flex: 0.7;
+  height: 65%;
+}
+
+.audition-key.black-key:active {
+  background-color: var(--accent-green);
+}
