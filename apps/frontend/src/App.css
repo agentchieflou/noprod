@@ -1011,3 +1011,86 @@ body {
 .track-header-box.group-track.selected {
   background-color: rgba(168, 85, 247, 0.2);
 }
+
+/* Audio Effect Rack */
+.rack-card {
+  border-left: 3px solid #a855f7;
+  min-width: 460px;
+  max-width: 640px;
+}
+
+.rack-body {
+  display: flex;
+  gap: 10px;
+}
+
+.rack-macros {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border-color);
+  min-width: 190px;
+}
+
+.rack-macro {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background-color: rgba(168, 85, 247, 0.07);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 4px;
+}
+
+.rack-macro-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text-secondary);
+}
+
+.rack-macro-mappings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.rack-mapping-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 8px;
+  background-color: rgba(168, 85, 247, 0.25);
+  border-radius: 3px;
+  padding: 1px 3px;
+  color: var(--text-primary);
+}
+
+.rack-map-select {
+  background-color: #111;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 9px;
+  border-radius: 3px;
+  max-width: 140px;
+}
+
+.rack-devices {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  align-items: flex-start;
+}
+
+.rack-inner-device {
+  min-width: 150px;
+  background-color: #2e2e2e;
+}
+
+.rack-add-device {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  align-self: center;
+}

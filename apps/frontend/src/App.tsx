@@ -7,6 +7,7 @@ import {
 import { useDAWStore, createDefaultInstrument } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
 import PianoRoll from './components/PianoRoll';
+import RackDevice from './components/RackDevice';
 import './App.css';
 
 // Global AudioContext & Effects
@@ -289,7 +290,8 @@ function App() {
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
     undo, redo, past, future,
     addMidiRegion, setTrackInstrument, updateInstrumentParameter,
-    isLimiterEnabled, toggleLimiter, toggleGroupCollapse
+    isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
+    savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack
   } = useDAWStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1214,11 +1216,34 @@ function App() {
             <div className="device-chain-view">
               {selectedTrack ? (
                 <>
-                  <div style={{ marginRight: '1rem', borderRight: '1px solid var(--border-color)', paddingRight: '1rem' }}>
+                  <div style={{ marginRight: '1rem', borderRight: '1px solid var(--border-color)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
                     <h5 style={{ color: selectedTrack.color }}>{selectedTrack.name} Device Chain</h5>
-                    <button className="btn-add-track" style={{ marginTop: '5px' }} onClick={() => addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[0])}>
+                    <button className="btn-add-track" onClick={() => addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[0])}>
                       <Plus size={12} /> Add Device
                     </button>
+                    <button className="btn-add-track" style={{ backgroundColor: '#a855f7' }} onClick={() => addRackToTrack(selectedTrack.id)}>
+                      <Plus size={12} /> Add Rack
+                    </button>
+                    {selectedTrack.plugins.some((p: any) => p.type !== 'rack') && (
+                      <button className="btn-add-track" style={{ backgroundColor: '#6366f1' }}
+                        title="Wrap this track's devices into an Audio Effect Rack"
+                        onClick={() => groupTrackDevicesIntoRack(selectedTrack.id)}>
+                        Group into Rack
+                      </button>
+                    )}
+                    {savedRacks.length > 0 && (
+                      <select
+                        className="rack-map-select"
+                        title="Insert a saved rack preset"
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value !== '') addSavedRackToTrack(selectedTrack.id, parseInt(e.target.value));
+                        }}
+                      >
+                        <option value="">Saved racks…</option>
+                        {savedRacks.map((r: any, i: number) => <option key={i} value={i}>{r.name}</option>)}
+                      </select>
+                    )}
                   </div>
                   
                   {/* Instrument Card (MIDI tracks) */}
@@ -1281,6 +1306,15 @@ function App() {
                   {/* Plugin Cards */}
                   <div className="device-cards">
                     {selectedTrack.plugins.map((plugin: any) => (
+                      plugin.type === 'rack' ? (
+                        <RackDevice
+                          key={plugin.id}
+                          trackId={selectedTrack.id}
+                          rack={plugin}
+                          browserPlugins={BROWSER_PLUGINS}
+                          onRemove={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}
+                        />
+                      ) : (
                       <div key={plugin.id} className="device-card">
                         <div className="device-card-header">
                           <span>{plugin.name}</span>
@@ -1301,6 +1335,7 @@ function App() {
                           ))}
                         </div>
                       </div>
+                      )
                     ))}
                   </div>
                 </>

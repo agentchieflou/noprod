@@ -21,6 +21,41 @@ const takeSnapshot = (state) => {
   return snap;
 };
 
+// Audio Effect Rack: a container device with nested devices and 4 macro knobs.
+// Macro mappings scale a contained device's parameter across [min, max] as the
+// macro sweeps 0..100.
+export const createEmptyRack = () => ({
+  id: uuidv4(),
+  name: 'Audio Effect Rack',
+  type: 'rack',
+  parameters: {},
+  devices: [],
+  macros: [1, 2, 3, 4].map(i => ({ id: uuidv4(), name: `Macro ${i}`, value: 0, mappings: [] }))
+});
+
+// Deep-copy a rack with fresh ids (device ids remapped inside macro mappings)
+// so presets can be instantiated on any track without sharing state.
+export const cloneRack = (rack) => {
+  const idMap = {};
+  const devices = rack.devices.map(d => {
+    const nid = uuidv4();
+    idMap[d.id] = nid;
+    return { ...d, id: nid, parameters: { ...d.parameters } };
+  });
+  return {
+    ...rack,
+    id: uuidv4(),
+    devices,
+    macros: rack.macros.map(m => ({
+      ...m,
+      id: uuidv4(),
+      mappings: m.mappings
+        .map(mp => ({ ...mp, deviceId: idMap[mp.deviceId] }))
+        .filter(mp => mp.deviceId)
+    }))
+  };
+};
+
 // Default instrument attached to new MIDI tracks so their clips are audible.
 export const createDefaultInstrument = () => ({
   id: uuidv4(),
@@ -103,6 +138,9 @@ export const useDAWStore = create((set, get) => ({
 
   // Session View Grid slots: { [trackId]: { [slotIndex]: clipData } }
   sessionClips: {},
+
+  // Saved Audio Effect Rack presets, reusable across tracks
+  savedRacks: [],
 
   // Undo/Redo History
   past: [],
@@ -336,6 +374,127 @@ export const useDAWStore = create((set, get) => ({
       } : p)
     } : t)
   })); },
+
+  // Audio Effect Rack Actions
+  addRackToTrack: (trackId) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      plugins: [...t.plugins, createEmptyRack()]
+    } : t)
+  })); },
+
+  // Wrap all of a track's loose (non-rack) devices into a new rack
+  groupTrackDevicesIntoRack: (trackId) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => {
+      if (t.id !== trackId) return t;
+      const loose = t.plugins.filter(p => p.type !== 'rack');
+      if (loose.length === 0) return t;
+      const rack = { ...createEmptyRack(), devices: loose };
+      return { ...t, plugins: [...t.plugins.filter(p => p.type === 'rack'), rack] };
+    })
+  })); },
+
+  addDeviceToRack: (trackId, rackId, device) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      plugins: t.plugins.map(p => p.id === rackId ? {
+        ...p,
+        devices: [...p.devices, { ...device, id: uuidv4() }]
+      } : p)
+    } : t)
+  })); },
+
+  removeDeviceFromRack: (trackId, rackId, deviceId) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      plugins: t.plugins.map(p => p.id === rackId ? {
+        ...p,
+        devices: p.devices.filter(d => d.id !== deviceId),
+        macros: p.macros.map(m => ({ ...m, mappings: m.mappings.filter(mp => mp.deviceId !== deviceId) }))
+      } : p)
+    } : t)
+  })); },
+
+  updateRackDeviceParameter: (trackId, rackId, deviceId, paramName, val) => { get().record(`rack-device-${deviceId}-${paramName}`); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      plugins: t.plugins.map(p => p.id === rackId ? {
+        ...p,
+        devices: p.devices.map(d => d.id === deviceId ? {
+          ...d,
+          parameters: { ...d.parameters, [paramName]: val }
+        } : d)
+      } : p)
+    } : t)
+  })); },
+
+  // Move a macro: store its value and push every mapped parameter to
+  // min + (value/100) * (max - min).
+  updateMacroValue: (trackId, rackId, macroId, value) => { get().record(`macro-${macroId}`); set((state) => ({
+    tracks: state.tracks.map(t => {
+      if (t.id !== trackId) return t;
+      return {
+        ...t,
+        plugins: t.plugins.map(p => {
+          if (p.id !== rackId) return p;
+          const macros = p.macros.map(m => m.id === macroId ? { ...m, value } : m);
+          const macro = macros.find(m => m.id === macroId);
+          let devices = p.devices;
+          macro.mappings.forEach(mp => {
+            const mapped = Math.round((mp.min + (value / 100) * (mp.max - mp.min)) * 100) / 100;
+            devices = devices.map(d => d.id === mp.deviceId ? {
+              ...d,
+              parameters: { ...d.parameters, [mp.paramName]: mapped }
+            } : d);
+          });
+          return { ...p, macros, devices };
+        })
+      };
+    })
+  })); },
+
+  addMacroMapping: (trackId, rackId, macroId, deviceId, paramName) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      plugins: t.plugins.map(p => p.id === rackId ? {
+        ...p,
+        macros: p.macros.map(m => m.id === macroId ? {
+          ...m,
+          mappings: m.mappings.some(mp => mp.deviceId === deviceId && mp.paramName === paramName)
+            ? m.mappings
+            : [...m.mappings, { deviceId, paramName, min: 0, max: 100 }]
+        } : m)
+      } : p)
+    } : t)
+  })); },
+
+  removeMacroMapping: (trackId, rackId, macroId, index) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      plugins: t.plugins.map(p => p.id === rackId ? {
+        ...p,
+        macros: p.macros.map(m => m.id === macroId ? {
+          ...m,
+          mappings: m.mappings.filter((_, i) => i !== index)
+        } : m)
+      } : p)
+    } : t)
+  })); },
+
+  saveRackPreset: (rack) => set((state) => ({
+    savedRacks: [...state.savedRacks, { ...cloneRack(rack), name: `${rack.name} ${state.savedRacks.length + 1}` }]
+  })),
+
+  addSavedRackToTrack: (trackId, presetIndex) => { get().record(); set((state) => {
+    const preset = state.savedRacks[presetIndex];
+    if (!preset) return {};
+    return {
+      tracks: state.tracks.map(t => t.id === trackId ? {
+        ...t,
+        plugins: [...t.plugins, cloneRack(preset)]
+      } : t)
+    };
+  }); },
 
   // Region Actions
   addRegion: (regionData) => { get().record(); set((state) => {
