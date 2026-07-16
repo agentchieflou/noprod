@@ -1,0 +1,19 @@
+{
+  "name": "@noprod/sequencer",
+  "version": "1.0.0",
+  "description": "Headless Strudel evaluation engine",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@strudel/core": "latest",
+    "@strudel/repl": "latest",
+    "puppeteer": "^25.3.0",
+    "ws": "^8.16.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

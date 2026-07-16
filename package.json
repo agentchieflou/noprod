@@ -1,0 +1,18 @@
+{
+  "name": "noprod",
+  "version": "1.0.0",
+  "description": "Need to find an easier way to make instrumentals I want to hear. Have no idea how to do that.",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "start:frontend": "npm run dev --workspace=apps/frontend",
+    "start:orchestrator": "npm start --workspace=apps/orchestrator",
+    "start:sequencer": "npm start --workspace=apps/sequencer"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
