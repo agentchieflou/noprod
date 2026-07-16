@@ -513,6 +513,42 @@ export const useDAWStore = create((set, get) => ({
     regions: state.regions.map(r => r.id === id ? { ...r, startTime, duration, startOffset } : r)
   })); },
 
+  // Freeze & Flatten
+  setTrackFrozen: (trackId, frozenBuffer, frozenDuration) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, isFrozen: true, frozenBuffer, frozenDuration } : t)
+  })); },
+
+  unfreezeTrack: (trackId) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, isFrozen: false, frozenBuffer: null, frozenDuration: 0 } : t)
+  })); },
+
+  // Permanently replace a frozen track's clips and devices with the rendered audio
+  flattenTrack: (trackId) => { get().record(); set((state) => {
+    const track = state.tracks.find(t => t.id === trackId);
+    if (!track || !track.isFrozen || !track.frozenBuffer) return {};
+    const flatRegion = {
+      id: uuidv4(),
+      trackId,
+      file: `${track.name} (flattened)`,
+      audioBuffer: track.frozenBuffer,
+      startTime: 0,
+      duration: track.frozenDuration,
+      startOffset: 0
+    };
+    return {
+      regions: [...state.regions.filter(r => r.trackId !== trackId), flatRegion],
+      tracks: state.tracks.map(t => t.id === trackId ? {
+        ...t,
+        type: 'audio',
+        instrument: null,
+        plugins: [],
+        isFrozen: false,
+        frozenBuffer: null,
+        frozenDuration: 0
+      } : t)
+    };
+  }); },
+
   // MIDI Region Actions
   // notes: [{ id, pitch (MIDI number), start (sec, region-relative), duration (sec), velocity (0..1) }]
   addMidiRegion: (trackId, startTime, duration, notes = []) => { get().record(); set((state) => {

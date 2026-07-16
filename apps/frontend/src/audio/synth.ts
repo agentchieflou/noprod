@@ -20,7 +20,7 @@ export const midiNoteName = (note: number): string =>
 // Schedules a single note. Returns the oscillator so callers can force-stop it
 // (it self-stops after release otherwise).
 export function triggerNote(
-  ctx: AudioContext,
+  ctx: BaseAudioContext,
   destination: AudioNode,
   params: SynthParams,
   midiNote: number,

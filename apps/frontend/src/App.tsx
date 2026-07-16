@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
   Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2,
-  Undo2, Redo2, ChevronDown, ChevronRight
+  Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
@@ -291,7 +291,8 @@ function App() {
     undo, redo, past, future,
     addMidiRegion, setTrackInstrument, updateInstrumentParameter,
     isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
-    savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack
+    savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
+    setTrackFrozen, unfreezeTrack, flattenTrack
   } = useDAWStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -417,11 +418,27 @@ function App() {
       playStartTimeRef.current = audioContext.currentTime - pauseTimeRef.current;
       const currentPlayheadTime = pauseTimeRef.current;
       
+      // Frozen tracks play their rendered buffer instead of live clips
+      const allTracks = useDAWStore.getState().tracks;
+      allTracks.forEach((t: any) => {
+        if (!t.isFrozen || !t.frozenBuffer) return;
+        const durationLeft = t.frozenDuration - currentPlayheadTime;
+        if (durationLeft <= 0) return;
+        const source = audioContext.createBufferSource();
+        source.buffer = t.frozenBuffer;
+        const trackGain = trackGainsRef.current[t.id];
+        const trackSend = trackSendsRef.current[t.id];
+        if (trackGain) source.connect(trackGain);
+        if (trackSend) source.connect(trackSend);
+        source.start(audioContext.currentTime, Math.max(0, currentPlayheadTime), durationLeft);
+        activeSources.push(source);
+      });
+
       // Schedule MIDI regions through each track's instrument
       regions.forEach((region: any) => {
         if (region.type !== 'midi' || !region.notes) return;
         const track = useDAWStore.getState().tracks.find((t: any) => t.id === region.trackId);
-        if (!track || !track.instrument) return;
+        if (!track || !track.instrument || track.isFrozen) return;
         const trackGain = trackGainsRef.current[region.trackId];
         const trackSend = trackSendsRef.current[region.trackId];
 
@@ -444,6 +461,8 @@ function App() {
 
       // Play Arrangement regions
       regions.forEach((region: any) => {
+        const regionTrack = allTracks.find((t: any) => t.id === region.trackId);
+        if (regionTrack?.isFrozen) return; // frozen buffer already covers this track
         if (region.audioBuffer) {
           const source = audioContext.createBufferSource();
           source.buffer = region.audioBuffer;
@@ -662,6 +681,40 @@ function App() {
     if (trackGain) {
       triggerNote(audioContext, trackGain, track.instrument.parameters, pitch, audioContext.currentTime, 0.35);
     }
+  };
+
+  // Freeze: render the track's clips offline (instrument included for MIDI),
+  // store the buffer on the track and lock its devices. Unfreeze reverses it.
+  const handleFreezeTrack = async (track: any) => {
+    if (track.isFrozen) {
+      unfreezeTrack(track.id);
+      return;
+    }
+    if (isPlaying) togglePlayback();
+    const trackRegions = regions.filter((r: any) => r.trackId === track.id);
+    if (trackRegions.length === 0) {
+      alert('Nothing to freeze: this track has no clips.');
+      return;
+    }
+    const end = Math.max(...trackRegions.map((r: any) => r.startTime + r.duration)) + 0.5; // headroom for release tails
+    const sampleRate = audioContext.sampleRate;
+    const offline = new OfflineAudioContext(2, Math.ceil(sampleRate * end), sampleRate);
+
+    trackRegions.forEach((region: any) => {
+      if (region.type === 'midi' && region.notes && track.instrument) {
+        region.notes.forEach((note: any) => {
+          triggerNote(offline, offline.destination, track.instrument.parameters, note.pitch, region.startTime + note.start, note.duration, note.velocity ?? 1);
+        });
+      } else if (region.audioBuffer) {
+        const src = offline.createBufferSource();
+        src.buffer = region.audioBuffer;
+        src.connect(offline.destination);
+        src.start(region.startTime, region.startOffset || 0, region.duration);
+      }
+    });
+
+    const rendered = await offline.startRendering();
+    setTrackFrozen(track.id, rendered, end);
   };
 
   // Add custom path
@@ -1078,7 +1131,27 @@ function App() {
                           </span>
                         )}
                       </div>
-                      <button className="btn-icon" title={track.type === 'group' ? 'Ungroup (members return to Master)' : 'Delete Track'} onClick={() => removeTrack(track.id)}><Trash2 size={12} /></button>
+                      <div style={{ display: 'flex', gap: '2px' }}>
+                        {track.type !== 'group' && (
+                          <button
+                            className={`btn-icon ${track.isFrozen ? 'frozen-active' : ''}`}
+                            title={track.isFrozen ? 'Unfreeze Track' : 'Freeze Track (render to audio, lock devices)'}
+                            onClick={(e) => { e.stopPropagation(); handleFreezeTrack(track); }}
+                          >
+                            <Snowflake size={12} />
+                          </button>
+                        )}
+                        {track.isFrozen && (
+                          <button
+                            className="btn-icon"
+                            title="Flatten (replace clips & devices with frozen audio)"
+                            onClick={(e) => { e.stopPropagation(); flattenTrack(track.id); }}
+                          >
+                            <ArrowDownToLine size={12} />
+                          </button>
+                        )}
+                        <button className="btn-icon" title={track.type === 'group' ? 'Ungroup (members return to Master)' : 'Delete Track'} onClick={() => removeTrack(track.id)}><Trash2 size={12} /></button>
+                      </div>
                     </div>
                     
                     {/* Track Mixer Controls */}
@@ -1213,9 +1286,14 @@ function App() {
         
         <div className="detail-content">
           {activeTab === 'devices' && (
-            <div className="device-chain-view">
+            <div className={`device-chain-view ${selectedTrack?.isFrozen ? 'frozen-locked' : ''}`}>
               {selectedTrack ? (
                 <>
+                  {selectedTrack.isFrozen && (
+                    <div className="frozen-banner" title="Unfreeze the track to edit devices">
+                      <Snowflake size={12} /> Frozen
+                    </div>
+                  )}
                   <div style={{ marginRight: '1rem', borderRight: '1px solid var(--border-color)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
                     <h5 style={{ color: selectedTrack.color }}>{selectedTrack.name} Device Chain</h5>
                     <button className="btn-add-track" onClick={() => addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[0])}>

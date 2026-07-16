@@ -1094,3 +1094,31 @@ body {
   gap: 4px;
   align-self: center;
 }
+
+/* Freeze & Flatten */
+.btn-icon.frozen-active {
+  color: #38bdf8;
+}
+
+.frozen-banner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background-color: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 3px 8px;
+  border-radius: 4px;
+  align-self: flex-start;
+  margin-right: 8px;
+  pointer-events: auto;
+}
+
+.device-chain-view.frozen-locked .device-cards,
+.device-chain-view.frozen-locked .btn-add-track,
+.device-chain-view.frozen-locked .rack-map-select {
+  pointer-events: none;
+  opacity: 0.5;
+}
