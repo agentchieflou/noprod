@@ -13,6 +13,8 @@ dotenv.config();
 const wss = new WebSocketServer({ port: 8080 });
 console.log('Orchestrator WebSocket Server listening on port 8080 (Frontend API)');
 
+const frontendClients = new Set();
+
 // Initialize Gemini Client
 // Requires GEMINI_API_KEY to be set in environment or .env
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -36,9 +38,14 @@ function connectToSequencer() {
 
   sequencerWs.on('message', (message) => {
     console.log(`Received from Sequencer: ${message}`);
-    // Broadcast haps to frontend or audio core
+    // Broadcast haps to frontend and audio core
     if (audioCoreWs && audioCoreWs.readyState === WebSocket.OPEN) {
         audioCoreWs.send(message);
+    }
+    for (const client of frontendClients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
     }
   });
 
@@ -80,6 +87,7 @@ connectToAudioCore();
 // Handle Frontend connections
 wss.on('connection', (ws) => {
   console.log('Frontend client connected to Orchestrator');
+  frontendClients.add(ws);
 
   ws.on('message', async (message) => {
     try {
@@ -104,7 +112,11 @@ wss.on('connection', (ws) => {
            strudelCode = strudelCode.replace(/^\`\`\`javascript\n?/, '').replace(/^\`\`\`\n?/, '').replace(/\n?\`\`\`$/, '');
            
            console.log(`Generated Strudel code: ${strudelCode}`);
-           
+
+           // Let the requesting frontend client see the generated code immediately,
+           // ahead of (or independent of) the Sequencer's evaluated haps.
+           ws.send(JSON.stringify({ type: 'GENERATED', code: strudelCode }));
+
            // Pass generated Strudel code to Sequencer
            if (sequencerWs && sequencerWs.readyState === WebSocket.OPEN) {
              sequencerWs.send(JSON.stringify({
@@ -128,5 +140,6 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     console.log('Frontend client disconnected');
+    frontendClients.delete(ws);
   });
 });
