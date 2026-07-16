@@ -15,7 +15,7 @@ console.log('Orchestrator WebSocket Server listening on port 8080 (Frontend API)
 
 // Initialize Gemini Client
 // Requires GEMINI_API_KEY to be set in environment or .env
-const ai = new GoogleGenAI();
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const SYSTEM_PROMPT = `
 You are the dictation engine for the NoProd DAW. Your job is to translate user natural language requests into Strudel patterns.
