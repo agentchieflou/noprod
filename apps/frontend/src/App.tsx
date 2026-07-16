@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
-  Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders
+  Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2
 } from 'lucide-react';
 import { useDAWStore } from './store/useDAWStore';
 import './App.css';
@@ -23,6 +23,7 @@ reverbReturnGain.connect(audioContext.destination);
 
 let activeSources: any[] = [];
 const PIXELS_PER_SECOND = 50;
+const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 
 // Ableton-style Color Palette Presets
 const PRESET_COLORS = [
@@ -153,10 +154,49 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggedOverTrack, setDraggedOverTrack] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'vst-paths'>('devices');
+  const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'vst-paths' | 'dictation'>('devices');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [newVstPathInput, setNewVstPathInput] = useState('');
+
+  // AI Dictation (Orchestrator connection)
+  const orchestratorWsRef = useRef<WebSocket | null>(null);
+  const [orchestratorConnected, setOrchestratorConnected] = useState(false);
+  const [dictationInput, setDictationInput] = useState('');
+  const [dictationStatus, setDictationStatus] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
+  const [dictationCode, setDictationCode] = useState<string | null>(null);
+  const [dictationError, setDictationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const ws = new WebSocket(ORCHESTRATOR_WS_URL);
+    orchestratorWsRef.current = ws;
+
+    ws.onopen = () => setOrchestratorConnected(true);
+    ws.onclose = () => setOrchestratorConnected(false);
+    ws.onerror = () => setOrchestratorConnected(false);
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'GENERATED') {
+        setDictationCode(msg.code);
+        setDictationStatus('done');
+      } else if (msg.type === 'ERROR') {
+        setDictationError(msg.message);
+        setDictationStatus('error');
+      }
+    };
+
+    return () => ws.close();
+  }, []);
+
+  const handleSendDictation = () => {
+    const ws = orchestratorWsRef.current;
+    if (!dictationInput.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+    setDictationStatus('sending');
+    setDictationError(null);
+    setDictationCode(null);
+    ws.send(JSON.stringify({ type: 'DICTATION', text: dictationInput.trim() }));
+  };
 
   // Audio Nodes Setup
   const masterGainRef = useRef<GainNode | null>(null);
@@ -556,14 +596,41 @@ function App() {
         <button className="btn-metronome" onClick={() => fileInputRef.current?.click()} title="Import Ableton Live Set (.als)">
           <FolderOpen size={14} style={{ marginRight: '5px' }} /> Import ALS
         </button>
-        <input 
-          type="file" 
-          ref={fileInputRef} 
-          onChange={handleAlsImport} 
-          accept=".als" 
-          style={{ display: 'none' }} 
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleAlsImport}
+          accept=".als"
+          style={{ display: 'none' }}
         />
-        
+
+        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
+
+        {/* AI Dictation */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <input
+            type="text"
+            placeholder="Describe a beat or melody..."
+            value={dictationInput}
+            onChange={(e) => setDictationInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSendDictation(); }}
+            className="vst-path-input"
+            style={{ width: '220px' }}
+          />
+          <button
+            className="btn-metronome"
+            onClick={() => { handleSendDictation(); setActiveTab('dictation'); }}
+            disabled={!orchestratorConnected || dictationStatus === 'sending'}
+            title={orchestratorConnected ? 'Generate a Strudel pattern from text via the Orchestrator' : 'Orchestrator offline'}
+          >
+            <Wand2 size={14} style={{ marginRight: '5px' }} />
+            {dictationStatus === 'sending' ? 'Generating...' : 'Dictate'}
+          </button>
+          <span style={{ fontSize: '10px', color: orchestratorConnected ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+            {orchestratorConnected ? '● orchestrator' : '○ offline'}
+          </span>
+        </div>
+
         {/* View Switcher */}
         <div className="view-switcher">
           <button className={`btn-view ${viewMode === 'session' ? 'active' : ''}`} onClick={() => setViewMode('session')} title="Session View">
@@ -851,6 +918,7 @@ function App() {
           <button className="detail-tab active">Device Chain</button>
           <button className="detail-tab">Clip View</button>
           <button className="detail-tab" onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>
+          <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>
         </div>
         
         <div className="detail-content">
@@ -964,6 +1032,34 @@ function App() {
               >
                 Scan & Wire Local Plugins
               </button>
+            </div>
+          )}
+
+          {activeTab === 'dictation' && (
+            <div className="vst-paths-view">
+              <h5>AI Dictation</h5>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+                Describe a beat or melody in the box at the top and click Dictate. The Orchestrator sends it to
+                Gemini, which generates Strudel code and passes it to the Sequencer to evaluate.
+              </p>
+
+              {dictationStatus === 'sending' && (
+                <div className="detail-empty-message">Generating...</div>
+              )}
+
+              {dictationStatus === 'done' && dictationCode && (
+                <pre style={{ fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>
+                  {dictationCode}
+                </pre>
+              )}
+
+              {dictationStatus === 'error' && dictationError && (
+                <div style={{ fontSize: '12px', color: 'var(--accent-red)' }}>{dictationError}</div>
+              )}
+
+              {dictationStatus === 'idle' && (
+                <div className="detail-empty-message">No dictation request sent yet.</div>
+              )}
             </div>
           )}
         </div>
