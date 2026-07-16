@@ -91,7 +91,7 @@ wss.on('connection', (ws) => {
         
         try {
            const response = await ai.models.generateContent({
-              model: 'gemini-2.5-flash',
+              model: 'gemini-flash-latest',
               contents: data.text,
               config: {
                 systemInstruction: SYSTEM_PROMPT,
