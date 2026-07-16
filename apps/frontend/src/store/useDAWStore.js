@@ -1,6 +1,26 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 
+// Undo/redo: which slice of the store is history-tracked. Transport/selection/UI
+// state stays out so undoing never yanks the playhead or flips the view.
+const UNDOABLE_KEYS = [
+  'tracks', 'regions', 'sessionClips', 'bpm', 'vstScanPaths',
+  'masterVolume', 'masterPan', 'reverbReturnVolume'
+];
+const HISTORY_LIMIT = 100;
+// Continuous gestures (fader/dial/param drags) coalesce into one entry as long
+// as change events for the same target keep arriving within this window.
+const COALESCE_MS = 800;
+
+let lastCoalesceKey = null;
+let lastCoalesceTime = 0;
+
+const takeSnapshot = (state) => {
+  const snap = {};
+  UNDOABLE_KEYS.forEach((k) => { snap[k] = state[k]; });
+  return snap;
+};
+
 export const useDAWStore = create((set, get) => ({
   // Global State
   isPlaying: false,
@@ -67,39 +87,81 @@ export const useDAWStore = create((set, get) => ({
   // Session View Grid slots: { [trackId]: { [slotIndex]: clipData } }
   sessionClips: {},
 
+  // Undo/Redo History
+  past: [],
+  future: [],
+
+  // Push the current undoable slice onto the history stack. Call BEFORE mutating.
+  // Pass a coalesceKey for continuous gestures so a drag lands as one entry.
+  record: (coalesceKey = null) => {
+    const now = Date.now();
+    if (coalesceKey && coalesceKey === lastCoalesceKey && now - lastCoalesceTime < COALESCE_MS) {
+      lastCoalesceTime = now;
+      return;
+    }
+    lastCoalesceKey = coalesceKey;
+    lastCoalesceTime = now;
+    set((state) => ({
+      past: [...state.past.slice(-(HISTORY_LIMIT - 1)), takeSnapshot(state)],
+      future: []
+    }));
+  },
+
+  undo: () => set((state) => {
+    if (state.past.length === 0) return {};
+    lastCoalesceKey = null;
+    const previous = state.past[state.past.length - 1];
+    return {
+      ...previous,
+      past: state.past.slice(0, -1),
+      future: [...state.future, takeSnapshot(state)]
+    };
+  }),
+
+  redo: () => set((state) => {
+    if (state.future.length === 0) return {};
+    lastCoalesceKey = null;
+    const next = state.future[state.future.length - 1];
+    return {
+      ...next,
+      past: [...state.past, takeSnapshot(state)],
+      future: state.future.slice(0, -1)
+    };
+  }),
+
   // Global Actions
   togglePlayback: () => set((state) => ({ isPlaying: !state.isPlaying })),
   toggleRecording: () => set((state) => ({ isRecording: !state.isRecording })),
   toggleMetronome: () => set((state) => ({ isMetronomeEnabled: !state.isMetronomeEnabled })),
   setViewMode: (mode) => set({ viewMode: mode }),
   setPlaybackPosition: (pos) => set({ playbackPosition: pos }),
-  setBpm: (bpm) => set({ bpm }),
+  setBpm: (bpm) => { get().record('bpm'); set({ bpm }); },
   
   setSelectedTrackId: (id) => set({ selectedTrackId: id }),
   setSelectedRegionId: (id) => set({ selectedRegionId: id }),
   
-  setMasterVolume: (vol) => set({ masterVolume: vol }),
-  setMasterPan: (pan) => set({ masterPan: pan }),
-  setReverbReturnVolume: (vol) => set({ reverbReturnVolume: vol }),
-  
-  loadAbletonSet: (tempo, tracks, regions) => set({
+  setMasterVolume: (vol) => { get().record('master-volume'); set({ masterVolume: vol }); },
+  setMasterPan: (pan) => { get().record('master-pan'); set({ masterPan: pan }); },
+  setReverbReturnVolume: (vol) => { get().record('reverb-return'); set({ reverbReturnVolume: vol }); },
+
+  loadAbletonSet: (tempo, tracks, regions) => { get().record(); set({
     bpm: tempo,
     tracks,
     regions,
     selectedTrackId: null,
     selectedRegionId: null
-  }),
-  
-  addVstScanPath: (path) => set((state) => ({
+  }); },
+
+  addVstScanPath: (path) => { get().record(); set((state) => ({
     vstScanPaths: [...state.vstScanPaths, path]
-  })),
-  
-  removeVstScanPath: (path) => set((state) => ({
+  })); },
+
+  removeVstScanPath: (path) => { get().record(); set((state) => ({
     vstScanPaths: state.vstScanPaths.filter(p => p !== path)
-  })),
+  })); },
 
   // Track Actions
-  addTrack: (type) => set((state) => {
+  addTrack: (type) => { get().record(); set((state) => {
     const id = uuidv4();
     return {
       tracks: [
@@ -121,10 +183,10 @@ export const useDAWStore = create((set, get) => ({
         }
       ]
     };
-  }),
+  }); },
 
   // Group Track functionality: links selected tracks into a Group Track
-  groupTracks: (trackIds) => set((state) => {
+  groupTracks: (trackIds) => { get().record(); set((state) => {
     const groupId = uuidv4();
     const groupTrackName = `${state.tracks.filter(t => t.type === 'group').length + 1} Group`;
     
@@ -156,9 +218,9 @@ export const useDAWStore = create((set, get) => ({
     return {
       tracks: [...updatedTracks, newGroupTrack]
     };
-  }),
+  }); },
 
-  removeTrack: (id) => set((state) => {
+  removeTrack: (id) => { get().record(); set((state) => {
     // If we delete a group, set its members groupId back to null and routing back to master
     const updatedTracks = state.tracks.map(t => {
       if (t.groupId === id) {
@@ -172,56 +234,56 @@ export const useDAWStore = create((set, get) => ({
       regions: state.regions.filter(r => r.trackId !== id),
       selectedTrackId: state.selectedTrackId === id ? null : state.selectedTrackId
     };
-  }),
+  }); },
 
-  updateTrackRouting: (id, routing) => set((state) => ({
+  updateTrackRouting: (id, routing) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, routing } : t)
-  })),
-  
-  updateTrackVolume: (id, volume) => set((state) => ({
+  })); },
+
+  updateTrackVolume: (id, volume) => { get().record(`track-volume-${id}`); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, volume } : t)
-  })),
+  })); },
 
-  updateTrackPan: (id, pan) => set((state) => ({
+  updateTrackPan: (id, pan) => { get().record(`track-pan-${id}`); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, pan } : t)
-  })),
+  })); },
 
-  updateTrackSendReverb: (id, val) => set((state) => ({
+  updateTrackSendReverb: (id, val) => { get().record(`track-send-${id}`); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, sendReverb: val } : t)
-  })),
+  })); },
 
-  toggleMuteTrack: (id) => set((state) => ({
+  toggleMuteTrack: (id) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, isMuted: !t.isMuted } : t)
-  })),
+  })); },
 
-  toggleSoloTrack: (id) => set((state) => ({
+  toggleSoloTrack: (id) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, isSoloed: !t.isSoloed } : t)
-  })),
+  })); },
 
-  toggleArmTrack: (id) => set((state) => ({
+  toggleArmTrack: (id) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, isArmed: !t.isArmed } : t)
-  })),
-  
-  updateTrackColor: (id, color) => set((state) => ({
+  })); },
+
+  updateTrackColor: (id, color) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, color } : t)
-  })),
+  })); },
 
   // Device Chain Actions
-  addDeviceToTrack: (trackId, device) => set((state) => ({
+  addDeviceToTrack: (trackId, device) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? {
       ...t,
       plugins: [...t.plugins, { ...device, id: uuidv4() }]
     } : t)
-  })),
+  })); },
 
-  removeDeviceFromTrack: (trackId, deviceId) => set((state) => ({
+  removeDeviceFromTrack: (trackId, deviceId) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? {
       ...t,
       plugins: t.plugins.filter(p => p.id !== deviceId)
     } : t)
-  })),
+  })); },
 
-  updateDeviceParameter: (trackId, deviceId, paramName, val) => set((state) => ({
+  updateDeviceParameter: (trackId, deviceId, paramName, val) => { get().record(`device-param-${deviceId}-${paramName}`); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? {
       ...t,
       plugins: t.plugins.map(p => p.id === deviceId ? {
@@ -229,27 +291,27 @@ export const useDAWStore = create((set, get) => ({
         parameters: { ...p.parameters, [paramName]: val }
       } : p)
     } : t)
-  })),
+  })); },
 
   // Region Actions
-  addRegion: (regionData) => set((state) => {
+  addRegion: (regionData) => { get().record(); set((state) => {
     const id = uuidv4();
     return {
       regions: [...state.regions, { startOffset: 0, ...regionData, id }],
       selectedRegionId: id
     };
-  }),
+  }); },
 
-  updateRegionPosition: (id, startTime) => set((state) => ({
+  updateRegionPosition: (id, startTime) => { get().record(`region-move-${id}`); set((state) => ({
     regions: state.regions.map(r => r.id === id ? { ...r, startTime } : r)
-  })),
+  })); },
 
-  updateRegionTrim: (id, startTime, duration, startOffset) => set((state) => ({
+  updateRegionTrim: (id, startTime, duration, startOffset) => { get().record(`region-trim-${id}`); set((state) => ({
     regions: state.regions.map(r => r.id === id ? { ...r, startTime, duration, startOffset } : r)
-  })),
+  })); },
 
   // Session Actions
-  setSessionClip: (trackId, slotIndex, clipData) => set((state) => ({
+  setSessionClip: (trackId, slotIndex, clipData) => { get().record(); set((state) => ({
     sessionClips: {
       ...state.sessionClips,
       [trackId]: {
@@ -257,5 +319,5 @@ export const useDAWStore = create((set, get) => ({
         [slotIndex]: clipData
       }
     }
-  }))
+  })); }
 }));

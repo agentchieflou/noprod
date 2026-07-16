@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
-  Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2
+  Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2,
+  Undo2, Redo2
 } from 'lucide-react';
 import { useDAWStore } from './store/useDAWStore';
 import './App.css';
@@ -149,7 +150,8 @@ function App() {
     addTrack, removeTrack, addRegion, updateTrackColor, toggleArmTrack,
     updateTrackVolume, updateTrackPan, updateTrackSendReverb, toggleMuteTrack, toggleSoloTrack,
     setMasterVolume, setReverbReturnVolume, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
-    setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet
+    setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
+    undo, redo, past, future
   } = useDAWStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -380,14 +382,26 @@ function App() {
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && (e.target as HTMLElement).tagName !== 'INPUT') {
+      const isInput = (e.target as HTMLElement).tagName === 'INPUT';
+      if (e.code === 'Space' && !isInput) {
         e.preventDefault();
         togglePlayback();
+      }
+      // Undo/Redo: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y (skip while typing in text fields)
+      if ((e.ctrlKey || e.metaKey) && !isInput) {
+        const key = e.key.toLowerCase();
+        if (key === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) redo(); else undo();
+        } else if (key === 'y') {
+          e.preventDefault();
+          redo();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlayback]);
+  }, [togglePlayback, undo, redo]);
 
   // Find selected track and region
   const selectedTrack = tracks.find((t: any) => t.id === selectedTrackId);
@@ -583,7 +597,17 @@ function App() {
         <button className="btn-transport" onClick={handleStop} title="Stop">
           <Square size={18} />
         </button>
-        
+
+        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
+
+        {/* Undo / Redo */}
+        <button className="btn-transport" onClick={undo} disabled={past.length === 0} title="Undo (Ctrl+Z)">
+          <Undo2 size={16} />
+        </button>
+        <button className="btn-transport" onClick={redo} disabled={future.length === 0} title="Redo (Ctrl+Shift+Z)">
+          <Redo2 size={16} />
+        </button>
+
         <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
 
         {/* Metronome */}

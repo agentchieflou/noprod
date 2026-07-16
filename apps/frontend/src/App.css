@@ -91,6 +91,13 @@ body {
 .btn-transport.recording {
   color: var(--accent-red);
 }
+.btn-transport:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.btn-transport:disabled:hover {
+  background: none;
+}
 
 .btn-metronome {
   background-color: #2e2e2e;
