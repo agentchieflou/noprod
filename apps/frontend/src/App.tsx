@@ -4,7 +4,7 @@ import {
   Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2,
   Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine
 } from 'lucide-react';
-import { useDAWStore, createDefaultInstrument, RETURN_LETTERS } from './store/useDAWStore';
+import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
 import { detectTransients, estimateBpm, scheduleWarpedRegion } from './audio/warp';
 import PianoRoll from './components/PianoRoll';
@@ -271,7 +271,7 @@ const MidiRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }:
 function App() {
   const { 
     tracks, regions, isPlaying, isRecording, isMetronomeEnabled, viewMode,
-    selectedTrackId, selectedRegionId, masterVolume, returns, sessionClips, vstScanPaths, bpm,
+    selectedTrackId, selectedRegionId, masterVolume, returns, masterPlugins, sessionClips, vstScanPaths, bpm,
     togglePlayback, toggleRecording, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
     addTrack, removeTrack, addRegion, updateTrackColor, toggleArmTrack,
     updateTrackVolume, updateTrackPan, updateTrackSend, toggleMuteTrack, toggleSoloTrack,
@@ -560,8 +560,10 @@ function App() {
   const returnStrips = returns.map((r: any, i: number) => ({
     ...r, type: 'return', color: '#6b7280', name: `${RETURN_LETTERS[i]} ${r.name}`
   }));
+  const masterStrip = { id: MASTER_STRIP_ID, name: 'Master', type: 'master', color: '#e5e7eb', plugins: masterPlugins };
   const selectedTrack = tracks.find((t: any) => t.id === selectedTrackId)
-    || returnStrips.find((r: any) => r.id === selectedTrackId);
+    || returnStrips.find((r: any) => r.id === selectedTrackId)
+    || (selectedTrackId === MASTER_STRIP_ID ? masterStrip : undefined);
   const selectedRegion = regions.find((r: any) => r.id === selectedRegionId);
 
   // Members of collapsed groups are hidden from the track lists (audio still plays)
@@ -1266,6 +1268,29 @@ function App() {
                     </div>
                   </div>
                 ))}
+                {/* Master strip: its device chain sits before the master fader and limiter */}
+                <div
+                  className={`track-header-box return-master master-strip ${selectedTrackId === MASTER_STRIP_ID ? 'selected' : ''}`}
+                  onClick={() => setSelectedTrackId(MASTER_STRIP_ID)}
+                  title="Click to edit the master device chain"
+                >
+                  <div className="track-title-row">
+                    <span style={{ fontSize: '10px', fontWeight: 'bold' }}>MASTER</span>
+                    <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>
+                      {masterPlugins.length ? `${masterPlugins.length} device${masterPlugins.length > 1 ? 's' : ''}` : 'no devices'}
+                    </span>
+                  </div>
+                  <div className="fader-row">
+                    <Volume2 size={12} />
+                    <input
+                      type="range" min="0" max="1" step="0.01"
+                      value={masterVolume}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
+                      className="mixer-fader"
+                    />
+                  </div>
+                </div>
                 <div className="track-list-actions">
                   <button className="btn-add-track" style={{ backgroundColor: '#6b7280' }} onClick={addReturn}
                     disabled={returns.length >= RETURN_LETTERS.length} title="Add Return Track">

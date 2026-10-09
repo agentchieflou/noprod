@@ -137,6 +137,51 @@ const compressorDef: DeviceDef = {
   }
 };
 
+// Bus compressor modelled on the classic console design: stepped ratio /
+// attack / release (with program-dependent Auto release), a Range control
+// that caps how much gain reduction can happen, hard or soft knee, and an
+// optional output soft clipper.
+const glueCompressorDef: DeviceDef = {
+  kind: 'glue',
+  name: 'Glue Compressor',
+  description: 'Bus compressor for groups, returns and the master',
+  params: [
+    { name: 'Threshold', min: -40, max: 0, step: 0.1, unit: 'dB', default: -10 },
+    { name: 'Ratio', kind: 'enum', options: ['2:1', '4:1', '10:1'], default: '4:1' },
+    { name: 'Attack', kind: 'enum', options: ['0.01 ms', '0.1 ms', '0.3 ms', '1 ms', '3 ms', '10 ms', '30 ms'], default: '10 ms' },
+    { name: 'Release', kind: 'enum', options: ['0.1 s', '0.2 s', '0.4 s', '0.6 s', '0.8 s', '1.2 s', 'Auto'], default: 'Auto' },
+    { name: 'Makeup', min: 0, max: 20, step: 0.1, unit: 'dB', default: 0 },
+    { name: 'Range', min: 0, max: 70, step: 0.1, unit: 'dB', default: 70 },
+    { name: 'Knee', kind: 'enum', options: ['Classic', 'Soft'], default: 'Classic' },
+    { name: 'Soft Clip', kind: 'bool', default: false },
+    { name: 'Dry/Wet', min: 0, max: 100, step: 1, unit: '%', default: 100 }
+  ],
+  create(ctx) {
+    const dyn = createDynamics(ctx);
+    const numeric: Record<string, ParamTarget> = {
+      Threshold: { param: dyn.param('threshold'), map: (v) => v },
+      Makeup: { param: dyn.param('makeup'), map: (v) => v },
+      Range: { param: dyn.param('range'), map: (v) => v },
+      'Dry/Wet': { param: dyn.param('mix'), map: (v) => v / 100 }
+    };
+    return {
+      input: dyn.node,
+      output: dyn.node,
+      update(p) {
+        Object.entries(numeric).forEach(([name, t]) => setParam(t.param, t.map(num(p[name], 0))));
+        setParam(dyn.param('ratio'), num(p.Ratio, 4));                 // '4:1' -> 4
+        setParam(dyn.param('attack'), num(p.Attack, 10) / 1000);       // '10 ms' -> 0.01 s
+        setParam(dyn.param('release'), p.Release === 'Auto' ? 0 : num(p.Release, 0.4)); // 0 = auto
+        setParam(dyn.param('knee'), p.Knee === 'Soft' ? 10 : 0);
+        setParam(dyn.param('softClip'), p['Soft Clip'] === true ? 1 : 0);
+      },
+      targets: (name) => (numeric[name] ? [numeric[name]] : []),
+      getReduction: dyn.getReduction,
+      dispose() { dyn.node.disconnect(); dyn.node.port.onmessage = null; }
+    };
+  }
+};
+
 // ---------------------------------------------------------------- EQ Three
 
 // Complex response of a chain of biquads (multiplied), for display.
@@ -452,6 +497,7 @@ const delayDef: DeviceDef = {
 
 export const DEVICE_DEFS: Record<string, DeviceDef> = {
   compressor: compressorDef,
+  glue: glueCompressorDef,
   eq3: eqThreeDef,
   eq8: eqEightDef,
   reverb: reverbDef,

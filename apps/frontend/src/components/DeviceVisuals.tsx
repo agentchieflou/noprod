@@ -116,6 +116,13 @@ export function DeviceExtra({ device, onChange }: { device: any; onChange: (para
       </div>
     );
   }
+  if (kind === 'glue') {
+    return (
+      <div className="device-visuals">
+        <GainReductionMeter deviceId={device.id} rangeDb={20} />
+      </div>
+    );
+  }
   if (kind === 'compressor') {
     const p = resolvedParameters(device);
     return (
