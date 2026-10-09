@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { getDeviceDSP } from '../audio/engine';
 import { deviceKind, resolvedParameters, type ParamValue } from '../audio/devices';
+import { RESPONSE_FREQS, freqToX } from '../audio/response';
+import EqEightPanel from './EqEightPanel';
 
 // Live gain-reduction bar for dynamics devices; reads the DSP straight from a
 // rAF loop and writes to the DOM so metering never re-renders React.
@@ -57,15 +59,6 @@ export function TransferCurve({ threshold, ratio, knee, size = 54 }: { threshold
   );
 }
 
-const RESPONSE_POINTS = 240;
-export const RESPONSE_FREQS = (() => {
-  const f = new Float32Array(RESPONSE_POINTS);
-  for (let i = 0; i < RESPONSE_POINTS; i++) f[i] = 20 * Math.pow(1000, i / (RESPONSE_POINTS - 1));
-  return f;
-})();
-export const freqToX = (f: number, width: number) => (Math.log(f / 20) / Math.log(1000)) * width;
-export const xToFreq = (x: number, width: number) => 20 * Math.pow(1000, Math.max(0, Math.min(1, x / width)));
-
 // Frequency-response curve read from the device's live DSP (log 20Hz-20kHz).
 // `version` is anything that changes when the response does (the device object).
 export function ResponseCurve({ deviceId, version, width = 200, height = 64, rangeDb = 18, color = '#3b82f6' }:
@@ -102,6 +95,7 @@ export function ResponseCurve({ deviceId, version, width = 200, height = 64, ran
 // Device-specific visuals shown above a device card's parameters.
 export function DeviceExtra({ device, onChange }: { device: any; onChange: (paramName: string, value: ParamValue) => void }) {
   const kind = deviceKind(device);
+  if (kind === 'eq8') return <EqEightPanel device={device} onChange={onChange} />;
   if (kind === 'eq3') {
     const p = resolvedParameters(device);
     return (

@@ -1300,3 +1300,82 @@ body {
   background: #222;
   color: var(--text-secondary);
 }
+
+/* EQ Eight */
+.device-card.device-eq8 {
+  width: 420px;
+}
+
+.eq8-panel {
+  padding: 6px 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eq8-curve {
+  position: relative;
+  user-select: none;
+}
+
+.eq8-dot {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid;
+  font-size: 8px;
+  line-height: 10px;
+  text-align: center;
+  color: #fff;
+  font-weight: bold;
+  cursor: grab;
+  opacity: 0.55;
+}
+
+.eq8-dot.on { opacity: 1; color: #111; }
+.eq8-dot.selected { box-shadow: 0 0 0 2px #fff; }
+
+.eq8-bands {
+  display: flex;
+  gap: 3px;
+}
+
+.eq8-band-chip {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 10px;
+  background: #222;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  cursor: pointer;
+  line-height: 16px;
+}
+
+.eq8-band-chip.selected { border-color: #fff; }
+
+.eq8-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid #666;
+  background: #111;
+  cursor: pointer;
+  padding: 0;
+}
+
+.eq8-band-editor {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 10px;
+  line-height: 1.2;
+}
+
+.eq8-band-editor .param-name { width: 32px; }
+.eq8-band-editor .param-value { width: 50px; }
+.eq8-band-editor .param-slider { height: 14px; }
+.eq8-band-editor .rack-map-select { flex: 1; }

@@ -10,6 +10,8 @@ const UNDOABLE_KEYS = [
 const HISTORY_LIMIT = 100;
 // Continuous gestures (fader/dial/param drags) coalesce into one entry as long
 // as change events for the same target keep arriving within this window.
+// Device params coalesce per device, since one gesture can move several
+// params at once (e.g. dragging an EQ band changes its Freq and Gain).
 const COALESCE_MS = 800;
 
 let lastCoalesceKey = null;
@@ -391,7 +393,7 @@ export const useDAWStore = create((set, get) => ({
     } : t)
   })); },
 
-  updateDeviceParameter: (trackId, deviceId, paramName, val) => { get().record(`device-param-${deviceId}-${paramName}`); set((state) => ({
+  updateDeviceParameter: (trackId, deviceId, paramName, val) => { get().record(`device-param-${deviceId}`); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? {
       ...t,
       plugins: t.plugins.map(p => p.id === deviceId ? {
@@ -441,7 +443,7 @@ export const useDAWStore = create((set, get) => ({
     } : t)
   })); },
 
-  updateRackDeviceParameter: (trackId, rackId, deviceId, paramName, val) => { get().record(`rack-device-${deviceId}-${paramName}`); set((state) => ({
+  updateRackDeviceParameter: (trackId, rackId, deviceId, paramName, val) => { get().record(`rack-device-${deviceId}`); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? {
       ...t,
       plugins: t.plugins.map(p => p.id === rackId ? {

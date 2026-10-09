@@ -1,10 +1,8 @@
 import type { ReactNode } from 'react';
 import { Trash2 } from 'lucide-react';
 import { DeviceExtra } from './DeviceVisuals';
-import {
-  getDeviceDef, resolvedParameters, formatParam, valueToSlider, sliderToValue, SLIDER_STEPS,
-  type ParamSpec, type ParamValue
-} from '../audio/devices';
+import ParamControl from './ParamControl';
+import { getDeviceDef, resolvedParameters, type ParamValue } from '../audio/devices';
 
 interface DeviceCardProps {
   device: any;
@@ -12,45 +10,6 @@ interface DeviceCardProps {
   onRemove: () => void;
   className?: string;
   extra?: ReactNode; // device-specific visuals (meters, curves) above the params
-}
-
-// One parameter control driven by its spec: slider (lin/log), toggle, or select.
-export function ParamControl({ spec, value, onChange }: { spec: ParamSpec; value: ParamValue; onChange: (v: ParamValue) => void }) {
-  if (spec.kind === 'bool') {
-    return (
-      <div className="param-slider-row">
-        <span className="param-name">{spec.name}</span>
-        <button className={`btn-view param-toggle ${value ? 'active' : ''}`} onClick={() => onChange(!value)}>
-          {value ? 'ON' : 'OFF'}
-        </button>
-      </div>
-    );
-  }
-  if (spec.kind === 'enum') {
-    return (
-      <div className="param-slider-row">
-        <span className="param-name">{spec.name}</span>
-        <select className="rack-map-select" value={String(value)} onChange={(e) => onChange(e.target.value)}>
-          {(spec.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-      </div>
-    );
-  }
-  const v = typeof value === 'number' ? value : Number(value) || 0;
-  return (
-    <div className="param-slider-row">
-      <span className="param-name">{spec.name}</span>
-      <input
-        type="range" min="0" max={SLIDER_STEPS} step="1"
-        value={valueToSlider(spec, v)}
-        onChange={(e) => onChange(sliderToValue(spec, parseFloat(e.target.value)))}
-        onDoubleClick={() => onChange(spec.default)}
-        className="param-slider"
-        title="Double-click to reset"
-      />
-      <span className="param-value">{formatParam(spec, v)}{spec.unit && !(spec.minLabel && v <= (spec.min ?? 0)) ? ` ${spec.unit}` : ''}</span>
-    </div>
-  );
 }
 
 export default function DeviceCard({ device, onChange, onRemove, className = '', extra }: DeviceCardProps) {

@@ -248,6 +248,129 @@ const eqThreeDef: DeviceDef = {
   }
 };
 
+// ---------------------------------------------------------------- EQ Eight
+
+export const EQ8_TYPES = ['Low Cut 48', 'Low Cut 12', 'Low Shelf', 'Bell', 'Notch', 'High Shelf', 'High Cut 12', 'High Cut 48'];
+export const EQ8_BANDS = 8;
+const EQ8_DEFAULTS: { type: string; freq: number; on: boolean }[] = [
+  { type: 'Low Cut 12', freq: 30, on: false },
+  { type: 'Low Shelf', freq: 100, on: true },
+  { type: 'Bell', freq: 250, on: true },
+  { type: 'Bell', freq: 500, on: true },
+  { type: 'Bell', freq: 1000, on: true },
+  { type: 'Bell', freq: 2500, on: true },
+  { type: 'High Shelf', freq: 6000, on: true },
+  { type: 'High Cut 12', freq: 18000, on: false }
+];
+// Q of each 2nd-order section of an 8th-order Butterworth (48 dB/oct) cut
+const BUTTERWORTH_8_Q = [0.5098, 0.6013, 0.9000, 2.5629];
+export const eq8HasGain = (type: string) => type === 'Low Shelf' || type === 'Bell' || type === 'High Shelf';
+
+// Each band is 4 biquad sections; only 48 dB cuts use all four, the rest sit
+// as unity peaking filters (gain 0 dB = exact identity).
+const eqEightDef: DeviceDef = {
+  kind: 'eq8',
+  name: 'EQ Eight',
+  description: '8-band parametric EQ',
+  params: [
+    ...EQ8_DEFAULTS.flatMap((b, i): ParamSpec[] => [
+      { name: `${i + 1} On`, kind: 'bool', default: b.on, hidden: true },
+      { name: `${i + 1} Type`, kind: 'enum', options: EQ8_TYPES, default: b.type, hidden: true },
+      { name: `${i + 1} Freq`, min: 20, max: 20000, log: true, unit: 'Hz', default: b.freq, hidden: true },
+      { name: `${i + 1} Gain`, min: -15, max: 15, step: 0.1, unit: 'dB', default: 0, hidden: true },
+      { name: `${i + 1} Q`, min: 0.1, max: 18, log: true, default: 0.71, hidden: true }
+    ]),
+    { name: 'Output', min: -12, max: 12, step: 0.1, unit: 'dB', default: 0 }
+  ],
+  create(ctx) {
+    const input = ctx.createGain();
+    const output = ctx.createGain();
+    const bands = Array.from({ length: EQ8_BANDS }, () => Array.from({ length: 4 }, () => ctx.createBiquadFilter()));
+    const sections = bands.flat();
+    [input, ...sections, output].reduce((a, b) => { a.connect(b); return b; });
+    let bandState: { on: boolean; type: string }[] = EQ8_DEFAULTS.map((b) => ({ on: b.on, type: b.type }));
+
+    const setType = (f: BiquadFilterNode, t: BiquadFilterType) => { if (f.type !== t) f.type = t; };
+    const identity = (f: BiquadFilterNode) => { setType(f, 'peaking'); setParam(f.gain, 0); };
+    // Configure one band's sections for its type; Q is a plain ratio in the UI
+    // and converted to dB where Web Audio expects it (lowpass/highpass).
+    const applyBand = (i: number, on: boolean, type: string, freq: number, gain: number, q: number) => {
+      const secs = bands[i];
+      secs.forEach((f) => setParam(f.frequency, freq));
+      if (!on) { secs.forEach(identity); return; }
+      const qDb = (lin: number) => 20 * Math.log10(lin);
+      switch (type) {
+        case 'Low Cut 12':
+        case 'High Cut 12':
+          setType(secs[0], type.startsWith('Low') ? 'highpass' : 'lowpass');
+          setParam(secs[0].Q, qDb(q));
+          secs.slice(1).forEach(identity);
+          break;
+        case 'Low Cut 48':
+        case 'High Cut 48':
+          secs.forEach((f, k) => {
+            setType(f, type.startsWith('Low') ? 'highpass' : 'lowpass');
+            // resonance scales the sharpest section; the rest stay Butterworth
+            setParam(f.Q, qDb(k === 3 ? BUTTERWORTH_8_Q[k] * (q / 0.71) : BUTTERWORTH_8_Q[k]));
+          });
+          break;
+        case 'Low Shelf':
+        case 'High Shelf':
+          setType(secs[0], type === 'Low Shelf' ? 'lowshelf' : 'highshelf');
+          setParam(secs[0].gain, gain);
+          secs.slice(1).forEach(identity);
+          break;
+        case 'Notch':
+          setType(secs[0], 'notch');
+          setParam(secs[0].Q, q);
+          secs.slice(1).forEach(identity);
+          break;
+        default: // Bell
+          setType(secs[0], 'peaking');
+          setParam(secs[0].gain, gain);
+          setParam(secs[0].Q, q);
+          secs.slice(1).forEach(identity);
+      }
+    };
+
+    return {
+      input,
+      output,
+      update(p) {
+        bandState = EQ8_DEFAULTS.map((_, i) => {
+          const n = i + 1;
+          const on = p[`${n} On`] === true;
+          const type = String(p[`${n} Type`] ?? 'Bell');
+          applyBand(i, on, type, num(p[`${n} Freq`], 1000), num(p[`${n} Gain`], 0), num(p[`${n} Q`], 0.71));
+          return { on, type };
+        });
+        setParam(output.gain, dbToGain(num(p.Output, 0)));
+      },
+      targets(name) {
+        if (name === 'Output') return [{ param: output.gain, map: (v) => dbToGain(v) }];
+        const m = /^(\d) (Freq|Gain)$/.exec(name);
+        if (!m) return [];
+        const i = parseInt(m[1]) - 1;
+        const st = bandState[i];
+        if (!st?.on) return [];
+        if (m[2] === 'Freq') return bands[i].map((f) => ({ param: f.frequency, map: (v: number) => v }));
+        return eq8HasGain(st.type) ? [{ param: bands[i][0].gain, map: (v: number) => v }] : [];
+      },
+      getResponse(freqs) {
+        const out = new Float32Array(freqs.length).fill(20 * Math.log10(Math.max(1e-6, output.gain.value)));
+        const mag = new Float32Array(freqs.length);
+        const ph = new Float32Array(freqs.length);
+        sections.forEach((f) => {
+          f.getFrequencyResponse(freqs as Float32Array<ArrayBuffer>, mag as Float32Array<ArrayBuffer>, ph as Float32Array<ArrayBuffer>);
+          for (let i = 0; i < freqs.length; i++) out[i] += 20 * Math.log10(Math.max(1e-6, mag[i]));
+        });
+        return out;
+      },
+      dispose() { [input, ...sections, output].forEach((n) => n.disconnect()); }
+    };
+  }
+};
+
 // ---------------------------------------------------------------- Reverb
 
 // Exponentially decaying stereo noise: a cheap but convincing room tail.
@@ -330,6 +453,7 @@ const delayDef: DeviceDef = {
 export const DEVICE_DEFS: Record<string, DeviceDef> = {
   compressor: compressorDef,
   eq3: eqThreeDef,
+  eq8: eqEightDef,
   reverb: reverbDef,
   delay: delayDef
 };
