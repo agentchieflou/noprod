@@ -456,6 +456,35 @@ export const useDAWStore = create((set, get) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, isCollapsed: !t.isCollapsed } : t)
   })),
 
+  // Automation: track.automation[key] = [{ time, value }] sorted by time,
+  // with keys 'volume' | 'pan' | 'send:<returnId>' | 'device:<deviceId>:<param>'
+  setAutomationPoints: (trackId, key, points) => { get().record(`automation-${trackId}-${key}`); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      automation: { ...(t.automation || {}), [key]: [...points].sort((a, b) => a.time - b.time) }
+    } : t)
+  })); },
+
+  clearAutomation: (trackId, key) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => {
+      if (t.id !== trackId || !t.automation) return t;
+      const { [key]: _cleared, ...automation } = t.automation;
+      return { ...t, automation };
+    })
+  })); },
+
+  // Which automation lanes a track shows (view state, not in undo history)
+  toggleAutomationView: (trackId) => set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      showAutomation: !t.showAutomation,
+      automationLanes: t.automationLanes?.length ? t.automationLanes : ['volume']
+    } : t)
+  })),
+  setAutomationLanes: (trackId, automationLanes) => set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, automationLanes, showAutomation: automationLanes.length > 0 } : t)
+  })),
+
   // Instrument Actions (MIDI tracks)
   setTrackInstrument: (trackId, instrument) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? { ...t, instrument } : t)

@@ -1558,3 +1558,40 @@ body {
   cursor: pointer;
   z-index: 1;
 }
+
+/* Automation lanes (arranger row + matching mixer-header row) */
+.automation-lane-row {
+  height: 56px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: rgba(255, 255, 255, 0.015);
+  position: relative;
+}
+
+.automation-lane {
+  display: block;
+  cursor: crosshair;
+}
+.automation-path { fill: none; stroke-width: 1.5; }
+.automation-static { stroke: #666; stroke-width: 1; stroke-dasharray: 4 3; }
+.automation-point { stroke: #fff; stroke-width: 1; cursor: grab; }
+
+.automation-lane-header {
+  height: 56px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--border-color);
+  background-color: #242424;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 1.2rem;
+}
+.automation-lane-header .rack-map-select { flex: 1; min-width: 0; }
+.automation-count { font-size: 9px; color: var(--text-secondary); white-space: nowrap; }
+.btn-icon.automation-active { color: #eab308; }
+
+/* Track headers must stay exactly as tall as their arranger lanes */
+.track-header-box:not(.return-master) {
+  height: 125px;
+  overflow: hidden;
+}
+.mixer-headers > * { flex-shrink: 0; }

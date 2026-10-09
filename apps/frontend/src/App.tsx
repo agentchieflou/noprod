@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
   Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2,
-  Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine
+  Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
@@ -12,6 +12,8 @@ import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
 import ArrangementRuler from './components/ArrangementRuler';
 import TempoControls from './components/TempoControls';
+import AutomationLane from './components/AutomationLane';
+import { automationParams } from './audio/automation';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
 import { DEVICE_DEFS, createDevice } from './audio/devices';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
@@ -287,6 +289,7 @@ function App() {
     setTrackFrozen, unfreezeTrack, flattenTrack, updateRegionWarp,
     punchInTime, punchOutTime, isPunchEnabled, togglePunch,
     isLoopEnabled, loopStart, loopEnd, toggleLoop, locators, addLocator, timeSignatures,
+    toggleAutomationView, setAutomationLanes, clearAutomation,
     scannedPlugins, setScannedPlugins
   } = useDAWStore();
   const [isScanning, setIsScanning] = useState(false);
@@ -489,6 +492,13 @@ function App() {
     ...locators.map((l: any) => l.time + 16)
   );
   const timelineWidth = Math.ceil(contentEnd * PIXELS_PER_SECOND);
+
+  // Track lanes and their headers live in two scroll containers; keep them in step
+  const arrangerScrollRef = useRef<HTMLDivElement>(null);
+  const headersScrollRef = useRef<HTMLDivElement>(null);
+  const syncScroll = (from: HTMLDivElement | null, to: HTMLDivElement | null) => {
+    if (from && to && Math.abs(to.scrollTop - from.scrollTop) > 1) to.scrollTop = from.scrollTop;
+  };
 
   // Jump to the previous/next locator relative to the playhead
   const jumpLocator = (dir: 1 | -1) => {
@@ -939,7 +949,12 @@ function App() {
             <div className="arrangement-view">
               
               {/* Arranger Track Grid (Moved to left) */}
-              <div className="arranger-timeline" onClick={() => setSelectedRegionId(null)}>
+              <div
+                className="arranger-timeline"
+                ref={arrangerScrollRef}
+                onScroll={() => syncScroll(arrangerScrollRef.current, headersScrollRef.current)}
+                onClick={() => setSelectedRegionId(null)}
+              >
                 {/* Bar / beat grid follows the tempo */}
                 <svg className="arranger-grid" width={timelineWidth} height="100%">
                   {barsUntil(bpm, timelineWidth / PIXELS_PER_SECOND, timeSignatures).map((b) => (
@@ -959,8 +974,8 @@ function App() {
                 <div className="playhead" style={{ left: `${localPlaybackPosition * PIXELS_PER_SECOND}px` }} />
                 
                 {visibleTracks.map((track: any) => (
+                  <Fragment key={track.id}>
                   <div
-                    key={track.id}
                     className={`arranger-track ${draggedOverTrack === track.id ? 'drag-over' : ''}`}
                     style={{ width: timelineWidth }}
                     onDragOver={(e) => {
@@ -998,11 +1013,27 @@ function App() {
                       )
                     ))}
                   </div>
+                  {/* Automation lanes under the track */}
+                  {track.showAutomation && (track.automationLanes || []).map((key: string) => {
+                    const param = automationParams(track, returns).find((p) => p.key === key);
+                    return param ? (
+                      <div key={key} className="automation-lane-row" style={{ width: timelineWidth }}>
+                        <AutomationLane track={track} param={param} width={timelineWidth} color={track.color} />
+                      </div>
+                    ) : <div key={key} className="automation-lane-row" style={{ width: timelineWidth }} />;
+                  })}
+                  </Fragment>
                 ))}
+                {/* Room to scroll as far as the return/master strips in the header column */}
+                <div style={{ height: 120 + returns.length * 82 + 82 }} />
               </div>
 
               {/* Mixer Headers / Tracks Panel (Moved to right) */}
-              <div className="mixer-headers">
+              <div
+                className="mixer-headers"
+                ref={headersScrollRef}
+                onScroll={() => syncScroll(headersScrollRef.current, arrangerScrollRef.current)}
+              >
                 <div className="track-list-actions">
                   <button className="btn-add-track" onClick={() => addTrack('audio')} title="Add Audio Track">
                     + Audio
@@ -1021,8 +1052,8 @@ function App() {
                 </div>
 
                 {visibleTracks.map((track: any) => (
+                  <Fragment key={track.id}>
                   <div
-                    key={track.id}
                     className={`track-header-box ${selectedTrackId === track.id ? 'selected' : ''} ${track.type === 'group' ? 'group-track' : ''}`}
                     onClick={() => setSelectedTrackId(track.id)}
                     style={{
@@ -1092,6 +1123,13 @@ function App() {
                         )}
                       </div>
                       <div style={{ display: 'flex', gap: '2px' }}>
+                        <button
+                          className={`btn-icon ${track.showAutomation ? 'automation-active' : ''}`}
+                          title={track.showAutomation ? 'Hide automation lanes' : 'Show automation lanes'}
+                          onClick={(e) => { e.stopPropagation(); toggleAutomationView(track.id); }}
+                        >
+                          <Activity size={12} />
+                        </button>
                         {track.type !== 'group' && (
                           <button
                             className={`btn-icon ${track.isFrozen ? 'frozen-active' : ''}`}
@@ -1157,6 +1195,38 @@ function App() {
                       />
                     </div>
                   </div>
+                  {/* Automation lane headers: choose the parameter, clear, add/remove lanes */}
+                  {track.showAutomation && (track.automationLanes || []).map((key: string, laneIdx: number) => {
+                    const params = automationParams(track, returns);
+                    const lanes: string[] = track.automationLanes;
+                    const points = track.automation?.[key]?.length || 0;
+                    return (
+                      <div key={key} className="automation-lane-header" style={{ borderLeft: `4px solid ${track.color}` }}>
+                        <select
+                          className="rack-map-select"
+                          value={key}
+                          onChange={(e) => setAutomationLanes(track.id, lanes.map((k, i) => (i === laneIdx ? e.target.value : k)))}
+                        >
+                          {params.filter((p) => p.key === key || !lanes.includes(p.key)).map((p) => (
+                            <option key={p.key} value={p.key}>{p.label}{track.automation?.[p.key]?.length ? ' •' : ''}</option>
+                          ))}
+                        </select>
+                        <span className="automation-count">{points ? `${points} pts` : 'empty'}</span>
+                        <div style={{ display: 'flex', gap: '2px' }}>
+                          <button className="btn-icon" title="Clear this envelope" disabled={!points}
+                            onClick={() => clearAutomation(track.id, key)}><Eraser size={12} /></button>
+                          <button className="btn-icon" title="Show another automation lane"
+                            onClick={() => {
+                              const next = params.find((p) => !lanes.includes(p.key));
+                              if (next) setAutomationLanes(track.id, [...lanes, next.key]);
+                            }}><Plus size={12} /></button>
+                          <button className="btn-icon" title="Hide this lane (its automation keeps playing)"
+                            onClick={() => setAutomationLanes(track.id, lanes.filter((_, i) => i !== laneIdx))}><X size={12} /></button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  </Fragment>
                 ))}
 
                 {/* Return Tracks: each has its own device chain (click to edit) */}

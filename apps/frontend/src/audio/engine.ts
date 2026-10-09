@@ -1,10 +1,10 @@
 // The browser audio engine: one mixer strip per track / return / master, each
-//   input -> [device chain DSP] -> panner -> fader -> output target
+//   input -> [device chain DSP] -> panner -> fader -> mute -> output target
 // with post-fader sends from each track into every return strip. The graph is
 // kept in sync with the store by syncEngine(), which only touches nodes whose
 // backing state actually changed.
 
-import { createDeviceDSP, deviceKind, resolvedParameters, loadDeviceWorklets, type DeviceDSP } from './devices';
+import { createDeviceDSP, deviceKind, resolvedParameters, loadDeviceWorklets, type DeviceDSP, type ParamTarget } from './devices';
 
 export const audioContext: AudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
 
@@ -28,8 +28,9 @@ interface Strip {
   id: string;
   input: GainNode;
   panner: StereoPannerNode;
-  fader: GainNode;
-  sends: Map<string, GainNode>; // returnId -> send level
+  fader: GainNode;              // volume (automatable)
+  mute: GainNode;               // 0/1 for mute & solo, kept apart from volume automation
+  sends: Map<string, GainNode>; // returnId -> send level (post-fader, post-mute)
   chainSig: string;
   chainOutputs: AudioNode[];    // outputs of the devices currently wired, for teardown
   outputTarget: string | null;
@@ -43,9 +44,11 @@ const createStrip = (id: string): Strip => {
   const input = audioContext.createGain();
   const panner = audioContext.createStereoPanner();
   const fader = audioContext.createGain();
+  const mute = audioContext.createGain();
   panner.connect(fader);
+  fader.connect(mute);
   // chainSig starts unmatched so the first wireChain always patches input -> panner
-  const strip = { id, input, panner, fader, sends: new Map(), chainSig: '<unwired>', chainOutputs: [], outputTarget: null };
+  const strip = { id, input, panner, fader, mute, sends: new Map(), chainSig: '<unwired>', chainOutputs: [], outputTarget: null };
   strips.set(id, strip);
   return strip;
 };
@@ -55,6 +58,7 @@ const destroyStrip = (strip: Strip) => {
   strip.chainOutputs.forEach((n) => n.disconnect());
   strip.panner.disconnect();
   strip.fader.disconnect();
+  strip.mute.disconnect();
   strip.sends.forEach((g) => g.disconnect());
   strips.delete(strip.id);
 };
@@ -68,7 +72,8 @@ const setParam = (p: AudioParam, v: number) => {
   if (Math.abs(p.value - v) > 1e-6) p.value = v;
 };
 
-const wireChain = (strip: Strip, plugins: any[]) => {
+// `skipUpdates`: devices whose params are being driven by automation right now
+const wireChain = (strip: Strip, plugins: any[], skipUpdates?: Set<string>) => {
   const devices = flattenDevices(plugins);
   const sig = devices.map((d) => `${d.id}:${deviceKind(d) || 'thru'}`).join('|');
 
@@ -77,7 +82,7 @@ const wireChain = (strip: Strip, plugins: any[]) => {
     if (!dsp && deviceKind(d)) {
       const created = createDeviceDSP(audioContext, d);
       if (created) { dsps.set(d.id, created); dsp = created; lastDeviceState.set(d.id, d); }
-    } else if (dsp && lastDeviceState.get(d.id) !== d) {
+    } else if (dsp && lastDeviceState.get(d.id) !== d && !skipUpdates?.has(d.id)) {
       dsp.update(resolvedParameters(d));
       lastDeviceState.set(d.id, d);
     }
@@ -99,25 +104,26 @@ const wireChain = (strip: Strip, plugins: any[]) => {
   prev.connect(strip.panner);
 };
 
-// Patch a strip's fader into its output target plus all of its sends.
+// Patch a strip's output into its target plus all of its sends.
 const routeStrip = (strip: Strip, targetId: string) => {
   if (strip.outputTarget === targetId) return;
-  strip.fader.disconnect();
+  strip.mute.disconnect();
   if (targetId === 'destination') {
-    strip.fader.connect(masterAnalyser);
+    strip.mute.connect(masterAnalyser);
   } else if (targetId === 'limiter') {
-    strip.fader.connect(masterLimiter);
+    strip.mute.connect(masterLimiter);
   } else {
     const target = strips.get(targetId);
-    if (target) strip.fader.connect(target.input);
+    if (target) strip.mute.connect(target.input);
   }
-  strip.sends.forEach((g) => strip.fader.connect(g));
+  strip.sends.forEach((g) => strip.mute.connect(g));
   strip.outputTarget = targetId;
 };
 
 const sendLevel = (track: any, returnId: string) => track.sends?.[returnId] ?? 0;
 
 let lastState: any = null;
+let automationPlaying = false;
 
 export function syncEngine(state: any) {
   if (lastState
@@ -146,7 +152,8 @@ export function syncEngine(state: any) {
     const strip = strips.get(r.id) || createStrip(r.id);
     wireChain(strip, r.plugins || []);
     setParam(strip.panner.pan, r.pan || 0);
-    setParam(strip.fader.gain, r.isMuted ? 0 : r.volume);
+    setParam(strip.fader.gain, r.volume);
+    setParam(strip.mute.gain, r.isMuted ? 0 : 1);
     routeStrip(strip, MASTER_ID);
   });
 
@@ -163,9 +170,15 @@ export function syncEngine(state: any) {
   tracks.forEach((t) => {
     live.add(t.id);
     const strip = strips.get(t.id) || createStrip(t.id);
-    wireChain(strip, t.plugins || []);
-    setParam(strip.panner.pan, t.pan || 0);
-    setParam(strip.fader.gain, audible(t) ? t.volume : 0);
+    // While automation plays, an automated control's lane owns its AudioParam
+    const auto = automationPlaying ? t.automation || {} : {};
+    const automated = (key: string) => (auto[key]?.length || 0) > 0;
+    const skipDevices = new Set(Object.keys(auto).filter(automated)
+      .filter((k) => k.startsWith('device:')).map((k) => k.split(':')[1]));
+    wireChain(strip, t.plugins || [], skipDevices);
+    if (!automated('pan')) setParam(strip.panner.pan, t.pan || 0);
+    if (!automated('volume')) setParam(strip.fader.gain, t.volume);
+    setParam(strip.mute.gain, audible(t) ? 1 : 0);
 
     // Sends: one post-fader gain per return
     returns.forEach((r) => {
@@ -174,10 +187,10 @@ export function syncEngine(state: any) {
         g = audioContext.createGain();
         g.gain.value = 0;
         strip.sends.set(r.id, g);
-        strip.fader.connect(g);
+        strip.mute.connect(g);
         g.connect(strips.get(r.id)!.input);
       }
-      setParam(g.gain, sendLevel(t, r.id));
+      if (!automated(`send:${r.id}`)) setParam(g.gain, sendLevel(t, r.id));
     });
     strip.sends.forEach((g, rid) => {
       if (!returns.some((r) => r.id === rid)) { g.disconnect(); strip.sends.delete(rid); }
@@ -201,6 +214,40 @@ export function syncEngine(state: any) {
   dsps.forEach((dsp, id) => {
     if (!liveDevices.has(id)) { dsp.dispose(); dsps.delete(id); lastDeviceState.delete(id); }
   });
+}
+
+// ---------------------------------------------------------------- automation
+// Lane keys: 'volume' | 'pan' | 'send:<returnId>' | 'device:<deviceId>:<param>'
+
+export function getAutomationTargets(trackId: string, key: string): ParamTarget[] {
+  const strip = strips.get(trackId);
+  if (!strip) return [];
+  if (key === 'volume') return [{ param: strip.fader.gain, map: (v) => v }];
+  if (key === 'pan') return [{ param: strip.panner.pan, map: (v) => v }];
+  if (key.startsWith('send:')) {
+    const g = strip.sends.get(key.slice(5));
+    return g ? [{ param: g.gain, map: (v) => v }] : [];
+  }
+  if (key.startsWith('device:')) {
+    const [, deviceId, ...rest] = key.split(':');
+    return dsps.get(deviceId)?.targets?.(rest.join(':')) || [];
+  }
+  return [];
+}
+
+// The transport toggles this around playback; when automation stops, every
+// automated param drops its schedule and returns to its static (store) value.
+export function setAutomationPlaying(on: boolean, state?: any) {
+  automationPlaying = on;
+  if (on || !state) return;
+  (state.tracks || []).forEach((t: any) => {
+    Object.keys(t.automation || {}).forEach((key) => {
+      getAutomationTargets(t.id, key).forEach(({ param }) => param.cancelScheduledValues(0));
+    });
+  });
+  lastState = null;
+  lastDeviceState.clear();
+  syncEngine(state);
 }
 
 // Where sources for a track (clips, notes, frozen audio) should connect.

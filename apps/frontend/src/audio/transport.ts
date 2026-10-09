@@ -9,7 +9,7 @@
 // so loops wrap sample-accurately. Metronome clicks are scheduled with a short
 // lookahead from a timer since a segment without a loop has no end.
 
-import { audioContext, getStripInput } from './engine';
+import { audioContext, getStripInput, getAutomationTargets, setAutomationPlaying } from './engine';
 import { triggerNote } from './synth';
 import { scheduleWarpedRegion } from './warp';
 import { beatsBetween, barAt, barSeconds } from './timeline';
@@ -40,6 +40,11 @@ const frozenSig = (st: any) => (st.tracks || []).map((t: any) => (t.isFrozen ? t
 
 let loopDebounce: ReturnType<typeof setTimeout> | null = null;
 
+const automationChanged = (st: any, prev: any) => {
+  const before = new Map((prev.tracks || []).map((t: any) => [t.id, t.automation]));
+  return (st.tracks || []).some((t: any) => before.get(t.id) !== t.automation);
+};
+
 // Follow the store: isPlaying starts/stops the transport, and edits to what
 // plays (clips, tempo, loop, freeze) reschedule from the playhead.
 export function initTransport(store: { getState: () => any; subscribe: (fn: (s: any, prev: any) => void) => unknown }) {
@@ -58,7 +63,11 @@ export function initTransport(store: { getState: () => any; subscribe: (fn: (s: 
       loopDebounce = setTimeout(reschedule, 60);
       return;
     }
-    if (st.regions !== prev.regions || st.bpm !== prev.bpm || frozenSig(st) !== frozenSig(prev)) reschedule();
+    if (st.regions !== prev.regions || st.bpm !== prev.bpm || frozenSig(st) !== frozenSig(prev)) {
+      reschedule();
+    } else if (st.tracks !== prev.tracks && automationChanged(st, prev)) {
+      refreshAutomation();
+    }
   });
 }
 
@@ -171,7 +180,55 @@ function scheduleSegment(ctxStart: number, posStart: number, posEnd: number): Se
   });
 
   segments.push(seg);
+  scheduleAutomation(seg);
   return seg;
+}
+
+// ----------------------------------------------------------------- automation
+
+// Envelope value at a timeline position: linear between breakpoints, held
+// flat before the first and after the last.
+export function envelopeAt(points: { time: number; value: number }[], t: number): number {
+  if (t <= points[0].time) return points[0].value;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    if (t < b.time) return a.value + ((t - a.time) / Math.max(1e-9, b.time - a.time)) * (b.value - a.value);
+  }
+  return points[points.length - 1].value;
+}
+
+// Write every track's automation lanes for one segment as AudioParam events
+// (setValueAtTime at the start, linear ramps through each breakpoint, and a
+// ramp to the boundary value at a loop end). `fromCtx` re-applies from a
+// later point, e.g. after an envelope edit mid-playback.
+function scheduleAutomation(seg: Segment, fromCtx = seg.ctxStart) {
+  const st = getState();
+  const segCtxEnd = seg.ctxStart + (seg.posEnd - seg.posStart);
+  if (fromCtx >= segCtxEnd) return;
+  const startCtx = Math.max(seg.ctxStart, fromCtx);
+  const a = seg.posStart + (startCtx - seg.ctxStart);
+  (st.tracks || []).forEach((t: any) => {
+    Object.entries(t.automation || {}).forEach(([key, pts]: [string, any]) => {
+      if (!pts?.length) return;
+      getAutomationTargets(t.id, key).forEach(({ param, map }) => {
+        // the epsilon keeps a previous segment's ramp that ends exactly here
+        param.cancelScheduledValues(startCtx + 1e-6);
+        param.setValueAtTime(map(envelopeAt(pts, a)), startCtx + 1e-6);
+        pts.forEach((pt: any) => {
+          if (pt.time > a && pt.time < seg.posEnd) {
+            param.linearRampToValueAtTime(map(pt.value), seg.ctxStart + (pt.time - seg.posStart));
+          }
+        });
+        if (Number.isFinite(seg.posEnd)) param.linearRampToValueAtTime(map(envelopeAt(pts, seg.posEnd)), segCtxEnd);
+      });
+    });
+  });
+}
+
+// An envelope changed while playing: re-apply from just ahead of now
+function refreshAutomation() {
+  const from = audioContext.currentTime + 0.02;
+  segments.forEach((seg) => scheduleAutomation(seg, from));
 }
 
 function tick() {
@@ -229,6 +286,7 @@ export function play(countInSeconds = 0, countInGrid?: { time: number; accent: b
   if (playing) return;
   if (audioContext.state === 'suspended') audioContext.resume();
   playing = true;
+  setAutomationPlaying(true);
   const startCtx = audioContext.currentTime + 0.05;
   countInEnd = 0;
   if (countInSeconds > 0 && countInGrid) {
@@ -265,6 +323,7 @@ export function stop() {
   if (timer) clearInterval(timer);
   timer = null;
   stopAllSources();
+  setAutomationPlaying(false, getState());
   notify();
 }
 
