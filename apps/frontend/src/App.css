@@ -1937,3 +1937,50 @@ body {
 .arrangement-view.show-io .track-header-box:not(.return-master) {
   height: 172px;
 }
+
+/* Take lanes */
+.take-lane-row {
+  height: 48px;
+  position: relative;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: text;
+}
+.take-clip {
+  position: absolute;
+  top: 0;
+  height: 48px;
+  opacity: 0.35;
+  border-left: 1px solid;
+  border-right: 1px solid;
+  box-sizing: border-box;
+}
+.take-used {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.16);
+  border-top: 2px solid #eab308;
+  pointer-events: none;
+}
+.take-selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(59, 130, 246, 0.35);
+  pointer-events: none;
+}
+.take-lane-header {
+  height: 48px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--border-color);
+  background: #222;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 0 1.2rem;
+  font-size: 11px;
+}
+.take-name { color: var(--text-secondary); }
+.take-name.in-comp { color: #eab308; font-weight: bold; }
+.take-use { font-size: 9px; padding: 1px 6px; }

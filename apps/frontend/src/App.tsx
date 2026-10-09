@@ -10,6 +10,7 @@ import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
 import ClipView from './components/ClipView';
 import SessionView from './components/SessionView';
 import TrackIO from './components/TrackIO';
+import TakeLane from './components/TakeLane';
 import { initMidi, onInputsChange, isComputerKeyboardEnabled, setComputerKeyboardEnabled, getComputerKeyboardOctave } from './audio/inputs';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
@@ -129,6 +130,7 @@ function App() {
     isLoopEnabled, loopStart, loopEnd, toggleLoop, locators, addLocator, timeSignatures,
     toggleAutomationView, setAutomationLanes, clearAutomation,
     selectedSessionClip, updateSessionClip, updateClip,
+    compTakeRange, removeTakeLane, toggleTakesView,
     scannedPlugins, setScannedPlugins
   } = useDAWStore();
   const [isScanning, setIsScanning] = useState(false);
@@ -849,6 +851,10 @@ function App() {
                       </div>
                     ) : <div key={key} className="automation-lane-row" style={{ width: timelineWidth }} />;
                   })}
+                  {/* Take lanes (recorded passes) under the track */}
+                  {track.showTakes && (track.takeLanes || []).map((lane: any) => (
+                    <TakeLane key={lane.id} track={track} lane={lane} width={timelineWidth} />
+                  ))}
                   </Fragment>
                 ))}
                 {/* Room to scroll as far as the return/master strips in the header column */}
@@ -955,6 +961,15 @@ function App() {
                         )}
                       </div>
                       <div style={{ display: 'flex', gap: '2px' }}>
+                        {(track.takeLanes || []).length > 0 && (
+                          <button
+                            className={`btn-icon ${track.showTakes ? 'automation-active' : ''}`}
+                            title={`${track.showTakes ? 'Hide' : 'Show'} take lanes (${track.takeLanes.length})`}
+                            onClick={(e) => { e.stopPropagation(); toggleTakesView(track.id); }}
+                          >
+                            <Layers size={12} />
+                          </button>
+                        )}
                         <button
                           className={`btn-icon ${track.showAutomation ? 'automation-active' : ''}`}
                           title={track.showAutomation ? 'Hide automation lanes' : 'Show automation lanes'}
@@ -1057,6 +1072,19 @@ function App() {
                             }}><Plus size={12} /></button>
                           <button className="btn-icon" title="Hide this lane (its automation keeps playing)"
                             onClick={() => setAutomationLanes(track.id, lanes.filter((_, i) => i !== laneIdx))}><X size={12} /></button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {track.showTakes && (track.takeLanes || []).map((lane: any) => {
+                    const inComp = regions.some((r: any) => r.trackId === track.id && r.takeLaneId === lane.id);
+                    return (
+                      <div key={lane.id} className="take-lane-header" style={{ borderLeft: `4px solid ${track.color}` }}>
+                        <span className={`take-name ${inComp ? 'in-comp' : ''}`} title={inComp ? 'Parts of this take are in the comp' : 'Not used in the comp'}>{lane.name}</span>
+                        <div style={{ display: 'flex', gap: '2px' }}>
+                          <button className="btn-metronome take-use" title="Use this whole take in the comp"
+                            onClick={() => lane.regions.forEach((c: any) => compTakeRange(track.id, lane.id, c.startTime, c.startTime + clipTimelineLength(c, bpm)))}>Use</button>
+                          <button className="btn-icon" title="Delete this take lane (comped parts stay)" onClick={() => removeTakeLane(track.id, lane.id)}><Trash2 size={12} /></button>
                         </div>
                       </div>
                     );

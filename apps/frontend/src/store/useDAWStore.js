@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { createDevice } from '../audio/devices';
+import { clipTimelineLength } from '../audio/clipPlayback';
+import { sliceClip, cutRange, overlapping } from '../project/comping';
 
 // Undo/redo: which slice of the store is history-tracked. Transport/selection/UI
 // state stays out so undoing never yanks the playhead or flips the view.
@@ -326,7 +328,8 @@ export const useDAWStore = create((set, get) => ({
   })),
 
   // Global Actions
-  togglePlayback: () => set((state) => ({ isPlaying: !state.isPlaying })),
+  // Stopping also ends recording (as in Ableton); starting leaves it alone
+  togglePlayback: () => set((state) => (state.isPlaying ? { isPlaying: false, isRecording: false } : { isPlaying: true })),
   toggleRecording: () => set((state) => ({ isRecording: !state.isRecording })),
   toggleMetronome: () => set((state) => ({ isMetronomeEnabled: !state.isMetronomeEnabled })),
   setViewMode: (mode) => set({ viewMode: mode }),
@@ -749,6 +752,59 @@ export const useDAWStore = create((set, get) => ({
       } : t)
     };
   }); },
+
+  // Take lanes: each recording pass becomes a take lane under the track
+  // (track.takeLanes = [{ id, name, regions }]); the main lane holds the comp,
+  // whose regions remember which take they came from (region.takeLaneId).
+  addRecordedTakes: (trackId, clips) => { if (!clips.length) return; get().record(); set((state) => {
+    const bpm = state.bpm;
+    let regions = state.regions;
+    let track = state.tracks.find(t => t.id === trackId);
+    let lanes = [...(track.takeLanes || [])];
+    clips.forEach((clip) => {
+      const a = clip.startTime;
+      const b = a + clipTimelineLength(clip, bpm);
+      // Recording over clips that didn't come from takes keeps them as a take
+      // instead of silently overwriting them
+      const displaced = overlapping(regions, trackId, a, b, bpm).filter(r => !r.takeLaneId);
+      if (displaced.length) {
+        const originals = lanes.filter(l => l.name.startsWith('Original')).length;
+        const original = { id: uuidv4(), name: originals ? `Original ${originals + 1}` : 'Original', regions: displaced.map(r => ({ ...r, id: uuidv4() })) };
+        lanes.push(original);
+      }
+      const lane = { id: uuidv4(), name: `Take ${lanes.filter(l => l.name.startsWith('Take')).length + 1}`, regions: [{ ...clip, id: uuidv4(), trackId }] };
+      lanes.push(lane);
+      // The newest take becomes the comp for its range
+      regions = [...cutRange(regions, trackId, a, b, bpm), { ...clip, id: uuidv4(), trackId, takeLaneId: lane.id, file: lane.name }];
+    });
+    return {
+      regions,
+      tracks: state.tracks.map(t => t.id === trackId ? { ...t, takeLanes: lanes, showTakes: true } : t)
+    };
+  }); },
+
+  // Comp: use take lane `laneId` for timeline range [a, b) of the main lane
+  compTakeRange: (trackId, laneId, a, b) => { get().record(); set((state) => {
+    const track = state.tracks.find(t => t.id === trackId);
+    const lane = track?.takeLanes?.find(l => l.id === laneId);
+    if (!lane || b - a < 0.01) return {};
+    const pieces = lane.regions
+      .map(r => sliceClip(r, a, b, state.bpm))
+      .filter(Boolean)
+      .map(p => ({ ...p, trackId, takeLaneId: laneId, file: lane.name }));
+    if (!pieces.length) return {};
+    return { regions: [...cutRange(state.regions, trackId, a, b, state.bpm), ...pieces] };
+  }); },
+
+  removeTakeLane: (trackId, laneId) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, takeLanes: (t.takeLanes || []).filter(l => l.id !== laneId) } : t),
+    regions: state.regions.map(r => r.takeLaneId === laneId ? { ...r, takeLaneId: undefined } : r)
+  })); },
+
+  // Show/hide take lanes (view state, not in undo history)
+  toggleTakesView: (trackId) => set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, showTakes: !t.showTakes } : t)
+  })),
 
   // MIDI Region Actions
   // notes: [{ id, pitch (MIDI number), start (sec, region-relative), duration (sec), velocity (0..1) }]

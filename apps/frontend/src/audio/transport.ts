@@ -181,8 +181,21 @@ function scheduleSegment(ctxStart: number, posStart: number, posEnd: number): Se
 
   segments.push(seg);
   scheduleAutomation(seg);
+  segmentListeners.forEach((fn) => fn({ ctxStart, posStart, posEnd }));
   return seg;
 }
+
+// Recording places captured audio/MIDI on the timeline by replaying this
+// ctx-time -> position map, so it hears about every segment (loop pass).
+export interface SegmentInfo { ctxStart: number; posStart: number; posEnd: number }
+const segmentListeners = new Set<(s: SegmentInfo) => void>();
+export const onSegmentScheduled = (fn: (s: SegmentInfo) => void) => {
+  segmentListeners.add(fn);
+  return () => { segmentListeners.delete(fn); };
+};
+export const getSegments = (): SegmentInfo[] =>
+  segments.map(({ ctxStart, posStart, posEnd }) => ({ ctxStart, posStart, posEnd }));
+export const getCountInEnd = () => countInEnd;
 
 // ----------------------------------------------------------------- automation
 

@@ -6,6 +6,7 @@
 // (native hosting is audio_core's job, not the browser's).
 
 import dynamicsProcessorUrl from './worklets/dynamics-processor.js?url';
+import recorderProcessorUrl from './worklets/recorder-processor.js?url';
 
 export type ParamValue = number | boolean | string;
 
@@ -86,7 +87,10 @@ const createMix = (ctx: BaseAudioContext) => {
 
 // AudioWorklet modules must be registered on a context before devices that use
 // them can be created there (done once at startup for the live context).
-export const loadDeviceWorklets = (ctx: BaseAudioContext) => ctx.audioWorklet.addModule(dynamicsProcessorUrl);
+export const loadDeviceWorklets = (ctx: BaseAudioContext) => Promise.all([
+  ctx.audioWorklet.addModule(dynamicsProcessorUrl),
+  ctx.audioWorklet.addModule(recorderProcessorUrl)
+]);
 
 // Wrap the shared dynamics worklet: AudioParams are exposed by name for
 // automation and the processor reports its current gain reduction.
