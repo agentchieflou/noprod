@@ -53,3 +53,44 @@ export function triggerNote(
   osc.stop(holdEnd + release + 0.05);
   return osc;
 }
+
+// A held voice for live playing (MIDI input): sounds until release().
+export function startVoice(
+  ctx: BaseAudioContext,
+  destination: AudioNode,
+  params: SynthParams,
+  midiNote: number,
+  when: number,
+  velocity = 1
+): { release: (at: number) => void } {
+  const osc = ctx.createOscillator();
+  const validTypes = ['sine', 'square', 'sawtooth', 'triangle'];
+  osc.type = (validTypes.includes(params.Waveform as string) ? params.Waveform : 'sawtooth') as OscillatorType;
+  osc.frequency.value = midiToFreq(midiNote);
+  const env = ctx.createGain();
+  const attack = params.Attack ?? 0.01;
+  const decay = params.Decay ?? 0.15;
+  const sustain = params.Sustain ?? 0.6;
+  const release = params.Release ?? 0.2;
+  const peak = (params.Gain ?? 0.7) * Math.max(0, Math.min(1, velocity));
+  env.gain.setValueAtTime(0, when);
+  env.gain.linearRampToValueAtTime(peak, when + attack);
+  env.gain.linearRampToValueAtTime(peak * sustain, when + attack + decay);
+  osc.connect(env);
+  env.connect(destination);
+  osc.start(when);
+  let released = false;
+  return {
+    release(at: number) {
+      if (released) return;
+      released = true;
+      const t = Math.max(at, ctx.currentTime);
+      // hold whatever level the envelope has reached, then fade out
+      const g: any = env.gain;
+      if (typeof g.cancelAndHoldAtTime === 'function') g.cancelAndHoldAtTime(t);
+      else g.cancelScheduledValues(t);
+      env.gain.linearRampToValueAtTime(0, t + release);
+      osc.stop(t + release + 0.05);
+    }
+  };
+}

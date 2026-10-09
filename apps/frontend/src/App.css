@@ -1903,3 +1903,37 @@ body {
 .scene-badges span { background: #111; color: #2dd4bf; border-radius: 2px; padding: 0 3px; font-family: monospace; font-size: 9px; }
 .scene-launcher { width: 170px; }
 .session-track-mixer .btn-mute { width: auto; padding: 2px 6px; font-size: 10px; }
+
+/* Track I/O section */
+.track-io {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1.2;
+}
+.track-io-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.track-io-row .rack-map-select { flex: 1; min-width: 0; font-size: 9px; }
+.track-io-row .io-channel { flex: 0 0 56px; }
+.io-label { font-size: 9px; color: var(--text-secondary); width: 18px; }
+.monitor-switch { display: flex; }
+.monitor-switch button {
+  font-size: 8px;
+  padding: 1px 4px;
+  background: #1f1f1f;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.monitor-switch button.active { background: #eab308; color: #111; }
+.btn-add-track.io-toggle { background-color: #374151; padding-left: 6px; padding-right: 6px; }
+.btn-add-track.io-toggle.active { background-color: #eab308; color: #111; }
+
+/* With I/O shown, track lanes and headers grow together */
+.arrangement-view.show-io .arranger-track,
+.arrangement-view.show-io .track-header-box:not(.return-master) {
+  height: 172px;
+}

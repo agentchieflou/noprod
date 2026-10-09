@@ -358,9 +358,10 @@ export const useDAWStore = create((set, get) => ({
   removeReturn: (id) => { get().record(); set((state) => ({
     returns: state.returns.filter(r => r.id !== id),
     tracks: state.tracks.map(t => {
-      if (!t.sends || !(id in t.sends)) return t;
-      const { [id]: _removed, ...sends } = t.sends;
-      return { ...t, sends };
+      const routed = t.routing === id ? { ...t, routing: t.groupId || 'master' } : t;
+      if (!routed.sends || !(id in routed.sends)) return routed;
+      const { [id]: _removed, ...sends } = routed.sends;
+      return { ...routed, sends };
     }),
     selectedTrackId: state.selectedTrackId === id ? null : state.selectedTrackId
   })); },
@@ -491,8 +492,20 @@ export const useDAWStore = create((set, get) => ({
     };
   }); },
 
+  // Output: 'master' | a group track id | a return id
   updateTrackRouting: (id, routing) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, routing } : t)
+  })); },
+
+  // Input: audio tracks { type: 'ext' | 'none', device, channel: '1/2' | '1' | '2' };
+  // MIDI tracks { type: 'all' | 'computer' | <MIDI input id> | 'none', channel: 'all' | 1..16 }
+  setTrackInput: (id, input) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === id ? { ...t, input } : t)
+  })); },
+
+  // Monitoring: 'auto' (hear the input while armed) | 'in' (always) | 'off'
+  setTrackMonitor: (id, monitor) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === id ? { ...t, monitor } : t)
   })); },
 
   updateTrackVolume: (id, volume) => { get().record(`track-volume-${id}`); set((state) => ({

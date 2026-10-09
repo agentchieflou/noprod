@@ -4,6 +4,7 @@
 // kept in sync with the store by syncEngine(), which only touches nodes whose
 // backing state actually changed.
 
+import { getAudioInputNode, isMonitoring, onInputsChange } from './inputs';
 import { createDeviceDSP, deviceKind, resolvedParameters, loadDeviceWorklets, type DeviceDSP, type ParamTarget } from './devices';
 
 export const audioContext: AudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -34,6 +35,7 @@ interface Strip {
   chainSig: string;
   chainOutputs: AudioNode[];    // outputs of the devices currently wired, for teardown
   outputTarget: string | null;
+  monitorSource: AudioNode | null; // live audio input being monitored into this strip
 }
 
 const strips = new Map<string, Strip>();
@@ -48,12 +50,13 @@ const createStrip = (id: string): Strip => {
   panner.connect(fader);
   fader.connect(mute);
   // chainSig starts unmatched so the first wireChain always patches input -> panner
-  const strip = { id, input, panner, fader, mute, sends: new Map(), chainSig: '<unwired>', chainOutputs: [], outputTarget: null };
+  const strip = { id, input, panner, fader, mute, sends: new Map(), chainSig: '<unwired>', chainOutputs: [], outputTarget: null, monitorSource: null };
   strips.set(id, strip);
   return strip;
 };
 
 const destroyStrip = (strip: Strip) => {
+  if (strip.monitorSource) strip.monitorSource.disconnect(strip.input);
   strip.input.disconnect();
   strip.chainOutputs.forEach((n) => n.disconnect());
   strip.panner.disconnect();
@@ -197,13 +200,39 @@ export function syncEngine(state: any) {
     });
   });
 
-  // Output routing (after every strip exists, so group/return targets resolve)
+  // Output routing (after every strip exists, so group/return targets
+  // resolve): the track's chosen output, else its group, else the master.
+  // A choice that would feed back into the track itself falls back to master.
+  const trackById = new Map(tracks.map((t) => [t.id, t]));
+  const outputOf = (t: any): string => {
+    if (t.routing && t.routing !== 'master' && t.routing !== t.id && strips.has(t.routing)) return t.routing;
+    if (t.groupId && strips.has(t.groupId)) return t.groupId;
+    return MASTER_ID;
+  };
+  const feedsBack = (t: any) => {
+    const seen = new Set<string>([t.id]);
+    for (let id = outputOf(t); id !== MASTER_ID; ) {
+      if (seen.has(id)) return true;
+      seen.add(id);
+      const next = trackById.get(id);
+      if (!next) return false; // a return: returns always go to master
+      id = outputOf(next);
+    }
+    return false;
+  };
+  tracks.forEach((t) => routeStrip(strips.get(t.id)!, feedsBack(t) ? MASTER_ID : outputOf(t)));
+
+  // Input monitoring: an audio track's input feeds its strip while monitored
   tracks.forEach((t) => {
     const strip = strips.get(t.id)!;
-    let target = MASTER_ID;
-    if (t.groupId && strips.has(t.groupId)) target = t.groupId;
-    else if (t.routing && t.routing !== t.id && strips.has(t.routing)) target = t.routing;
-    routeStrip(strip, target);
+    const inp = t.input || { type: 'ext', device: 'default', channel: '1/2' };
+    const want = t.type === 'audio' && inp.type === 'ext' && isMonitoring(t)
+      ? getAudioInputNode(inp.device || 'default', inp.channel || '1/2')
+      : null;
+    if (strip.monitorSource === want) return;
+    if (strip.monitorSource) strip.monitorSource.disconnect(strip.input);
+    if (want) want.connect(strip.input);
+    strip.monitorSource = want;
   });
 
   // Tear down strips and devices that no longer exist
@@ -265,6 +294,8 @@ export async function initEngine(store: { getState: () => any; subscribe: (fn: (
   }
   syncEngine(store.getState());
   store.subscribe(syncEngine);
+  // an input finishing opening (async permission) may complete a monitor connection
+  onInputsChange(() => { lastState = null; syncEngine(store.getState()); });
 }
 
 export const resumeAudio = () => {

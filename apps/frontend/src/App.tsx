@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type DragEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
   Layers, FolderOpen, Radio, Music, CheckSquare, Square as SquareIcon, Sliders, Wand2,
@@ -9,6 +9,8 @@ import { triggerNote, midiNoteName } from './audio/synth';
 import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
 import ClipView from './components/ClipView';
 import SessionView from './components/SessionView';
+import TrackIO from './components/TrackIO';
+import { initMidi, onInputsChange, isComputerKeyboardEnabled, setComputerKeyboardEnabled, getComputerKeyboardOctave } from './audio/inputs';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
@@ -138,6 +140,8 @@ function App() {
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [newVstPathInput, setNewVstPathInput] = useState('');
   const [newDeviceIdx, setNewDeviceIdx] = useState(0);
+  const [showIO, setShowIO] = useState(false);
+  const keyboardMidi = useSyncExternalStore(onInputsChange, isComputerKeyboardEnabled);
 
   // AI Dictation (Orchestrator connection)
   const orchestratorWsRef = useRef<WebSocket | null>(null);
@@ -769,7 +773,7 @@ function App() {
         {/* Timeline / Grid - Tracks moved to the right! */}
         <div className="timeline-section">
           {viewMode === 'arrangement' ? (
-            <div className="arrangement-view">
+            <div className={`arrangement-view ${showIO ? 'show-io' : ''}`}>
               
               {/* Arranger Track Grid (Moved to left) */}
               <div
@@ -872,6 +876,11 @@ function App() {
                   >
                     Group ({selectedTrackIds.length})
                   </button>
+                  <button className={`btn-add-track io-toggle ${showIO ? 'active' : ''}`} onClick={() => setShowIO(!showIO)}
+                    title="Show each track's input, output and monitoring">I/O</button>
+                  <button className={`btn-add-track io-toggle ${keyboardMidi ? 'active' : ''}`}
+                    onClick={() => setComputerKeyboardEnabled(!keyboardMidi)}
+                    title={`Computer MIDI keyboard ${keyboardMidi ? 'on' : 'off'}: A-K play notes (W E T Y U sharps), Z/X octave (now ${getComputerKeyboardOctave()}), C/V velocity`}>⌨</button>
                 </div>
 
                 {visibleTracks.map((track: any) => (
@@ -977,7 +986,9 @@ function App() {
                     
                     {/* Track Mixer Controls */}
                     <div className="mixer-strip">
-                      <button className={`btn-arm ${track.isArmed ? 'armed' : ''}`} onClick={() => toggleArmTrack(track.id)} title="Arm Recording"><Mic size={12} /></button>
+                      <button className={`btn-arm ${track.isArmed ? 'armed' : ''}`}
+                        onClick={() => { if (track.type === 'midi') initMidi(); toggleArmTrack(track.id); }}
+                        title="Arm recording (an armed track also monitors its input)"><Mic size={12} /></button>
                       <button className={`btn-mute ${track.isMuted ? 'muted' : ''}`} onClick={() => toggleMuteTrack(track.id)} title="Mute Track">M</button>
                       <button className={`btn-solo ${track.isSoloed ? 'soloed' : ''}`} onClick={() => toggleSoloTrack(track.id)} title="Solo Track">S</button>
                       
@@ -1017,6 +1028,7 @@ function App() {
                         className="mixer-fader"
                       />
                     </div>
+                    {showIO && <TrackIO track={track} tracks={tracks} returns={returns} />}
                   </div>
                   {/* Automation lane headers: choose the parameter, clear, add/remove lanes */}
                   {track.showAutomation && (track.automationLanes || []).map((key: string, laneIdx: number) => {
