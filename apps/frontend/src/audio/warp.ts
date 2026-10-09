@@ -47,7 +47,8 @@ const HOP = 0.045;
 
 // Schedules a warped region as overlapping grains. `stretchRatio` > 1 means the
 // project is faster than the clip (output shorter than source).
-// `outputOffset` is how far into the (warped) clip playback resumes.
+// `outputOffset` is how far into the (warped) clip playback resumes and
+// `outputEnd` (optional) where it stops, e.g. at a loop end.
 // Returns the scheduled sources so the caller can stop them.
 export function scheduleWarpedRegion(
   ctx: BaseAudioContext,
@@ -55,10 +56,11 @@ export function scheduleWarpedRegion(
   region: { audioBuffer: AudioBuffer; startOffset?: number; duration: number },
   whenBase: number,
   outputOffset: number,
-  stretchRatio: number
+  stretchRatio: number,
+  outputEnd = Infinity
 ): AudioBufferSourceNode[] {
   const sources: AudioBufferSourceNode[] = [];
-  const warpedDur = region.duration / stretchRatio;
+  const warpedDur = Math.min(region.duration / stretchRatio, outputEnd);
   const buffer = region.audioBuffer;
 
   for (let out = outputOffset; out < warpedDur; out += HOP) {
@@ -74,7 +76,8 @@ export function scheduleWarpedRegion(
     destinations.forEach(d => env.connect(d));
     const sourcePos = (region.startOffset || 0) + out * stretchRatio;
     if (sourcePos >= buffer.duration - 0.01) break;
-    src.start(when, sourcePos, Math.min(GRAIN, buffer.duration - sourcePos));
+    // the last grain is cut at warpedDur so nothing leaks past a loop end
+    src.start(when, sourcePos, Math.min(GRAIN, buffer.duration - sourcePos, warpedDur - out));
     sources.push(src);
   }
   return sources;

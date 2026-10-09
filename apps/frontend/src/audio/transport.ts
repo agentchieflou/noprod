@@ -1,0 +1,287 @@
+// Transport: owns the playhead and schedules everything that plays on the
+// arrangement timeline (seconds).
+//
+// Playback is a sequence of segments. Each segment maps a timeline range
+// [posStart, posEnd) onto audio-context time starting at ctxStart and
+// schedules every clip, note and frozen buffer overlapping that range, cut at
+// posEnd. A loop is just "when the current segment is about to end at the loop
+// end, queue another [loopStart, loopEnd) segment exactly where it finishes",
+// so loops wrap sample-accurately. Metronome clicks are scheduled with a short
+// lookahead from a timer since a segment without a loop has no end.
+
+import { audioContext, getStripInput } from './engine';
+import { triggerNote } from './synth';
+import { scheduleWarpedRegion } from './warp';
+
+type Stoppable = { stop: (when?: number) => void };
+
+interface Segment {
+  ctxStart: number;
+  posStart: number;
+  posEnd: number;        // Infinity when not looping
+  sources: Stoppable[];
+  clickCursor: number;   // next timeline position to consider for a metronome click
+}
+
+const LOOKAHEAD = 0.25;  // seconds of audio scheduled ahead of the playhead
+const TICK_MS = 40;
+
+let getState: () => any = () => ({});
+let playing = false;
+let stoppedPosition = 0;
+let segments: Segment[] = [];
+let timer: ReturnType<typeof setInterval> | null = null;
+let countInEnd = 0;      // ctx time at which a count-in finishes (0 = none)
+const listeners = new Set<() => void>();
+
+// What a frozen/unfrozen track plays changes the schedule; mixer moves don't.
+const frozenSig = (st: any) => (st.tracks || []).map((t: any) => (t.isFrozen ? t.id : '')).join(',');
+
+let loopDebounce: ReturnType<typeof setTimeout> | null = null;
+
+// Follow the store: isPlaying starts/stops the transport, and edits to what
+// plays (clips, tempo, loop, freeze) reschedule from the playhead.
+export function initTransport(store: { getState: () => any; subscribe: (fn: (s: any, prev: any) => void) => unknown }) {
+  getState = store.getState;
+  store.subscribe((st, prev) => {
+    if (st.isPlaying !== prev.isPlaying) {
+      if (st.isPlaying) play(); else stop();
+      return;
+    }
+    if (!playing) return;
+    if (st.isLoopEnabled !== prev.isLoopEnabled || st.loopStart !== prev.loopStart || st.loopEnd !== prev.loopEnd) {
+      // brace drags fire continuously; rebuild once the drag settles
+      if (loopDebounce) clearTimeout(loopDebounce);
+      loopDebounce = setTimeout(reschedule, 60);
+      return;
+    }
+    if (st.regions !== prev.regions || st.bpm !== prev.bpm || frozenSig(st) !== frozenSig(prev)) reschedule();
+  });
+}
+
+const notify = () => listeners.forEach((fn) => fn());
+export const onTransportChange = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
+
+export const isPlaying = () => playing;
+export const isCountingIn = () => playing && countInEnd > audioContext.currentTime;
+
+// Timeline position in seconds right now
+export function getPosition(): number {
+  if (!playing || segments.length === 0) return stoppedPosition;
+  const now = audioContext.currentTime;
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i];
+    if (now >= s.ctxStart) return Math.min(s.posEnd, s.posStart + (now - s.ctxStart));
+  }
+  return segments[0].posStart; // still in a count-in
+}
+
+// ------------------------------------------------------------------ helpers
+
+const loopRange = (st: any): [number, number] | null => {
+  if (!st.isLoopEnabled) return null;
+  const start = st.loopStart ?? 0, end = st.loopEnd ?? 0;
+  return end - start > 0.01 ? [start, end] : null;
+};
+
+// Seconds per bar at a timeline position (time signature map from the store)
+export const beatSeconds = (bpm: number) => 60 / bpm;
+
+// Metronome: a short sine blip, accented on the first beat of each bar.
+// Goes straight to the output so master devices and the limiter don't color it.
+export const clickGain = audioContext.createGain();
+clickGain.gain.value = 0.35;
+clickGain.connect(audioContext.destination);
+
+function playClick(when: number, accent: boolean, sources: Stoppable[]) {
+  const osc = audioContext.createOscillator();
+  const env = audioContext.createGain();
+  osc.frequency.value = accent ? 1600 : 1000;
+  env.gain.setValueAtTime(0, when);
+  env.gain.linearRampToValueAtTime(accent ? 1 : 0.6, when + 0.002);
+  env.gain.exponentialRampToValueAtTime(0.001, when + 0.05);
+  osc.connect(env);
+  env.connect(clickGain);
+  osc.start(when);
+  osc.stop(when + 0.06);
+  sources.push(osc);
+}
+
+// Beat grid for clicks: list of { time, accent } beat positions in [from, to)
+export type BeatGridFn = (from: number, to: number) => { time: number; accent: boolean }[];
+let beatGrid: BeatGridFn = (from, to) => {
+  const spb = beatSeconds(getState().bpm || 120);
+  const out = [];
+  for (let b = Math.ceil(from / spb - 1e-9); b * spb < to; b++) out.push({ time: b * spb, accent: b % 4 === 0 });
+  return out;
+};
+export const setBeatGrid = (fn: BeatGridFn) => { beatGrid = fn; };
+
+// --------------------------------------------------------------- scheduling
+
+function scheduleSegment(ctxStart: number, posStart: number, posEnd: number): Segment {
+  const st = getState();
+  const seg: Segment = { ctxStart, posStart, posEnd, sources: [], clickCursor: posStart };
+  const at = (pos: number) => ctxStart + (pos - posStart);
+  const tracks: any[] = st.tracks || [];
+  const trackById = new Map(tracks.map((t) => [t.id, t]));
+
+  // Frozen tracks play their rendered buffer instead of live clips
+  tracks.forEach((t) => {
+    if (!t.isFrozen || !t.frozenBuffer) return;
+    const a = Math.max(posStart, 0), b = Math.min(posEnd, t.frozenDuration);
+    if (b <= a) return;
+    const src = audioContext.createBufferSource();
+    src.buffer = t.frozenBuffer;
+    src.connect(getStripInput(t.id));
+    src.start(at(a), a, b - a);
+    seg.sources.push(src);
+  });
+
+  (st.regions || []).forEach((region: any) => {
+    const track = trackById.get(region.trackId);
+    if (!track || track.isFrozen) return;
+    const dest = getStripInput(region.trackId);
+
+    if (region.type === 'midi') {
+      if (!track.instrument || !region.notes) return;
+      const regionEnd = region.startTime + region.duration;
+      region.notes.forEach((note: any) => {
+        const s = region.startTime + note.start;
+        const e = Math.min(regionEnd, s + note.duration);
+        const a = Math.max(posStart, s), b = Math.min(posEnd, e);
+        if (b <= a) return;
+        seg.sources.push(triggerNote(audioContext, dest, track.instrument.parameters, note.pitch, at(a), b - a, note.velocity ?? 1));
+      });
+      return;
+    }
+
+    if (!region.audioBuffer) return;
+
+    // Warped clips: granular time-stretch to follow the project tempo
+    if (region.warpEnabled && region.originalBpm) {
+      const ratio = (st.bpm || 120) / region.originalBpm;
+      const warpedEnd = region.startTime + region.duration / ratio;
+      const a = Math.max(posStart, region.startTime), b = Math.min(posEnd, warpedEnd);
+      if (b <= a) return;
+      seg.sources.push(...scheduleWarpedRegion(
+        audioContext, [dest], region, at(a), a - region.startTime, ratio, b - region.startTime
+      ));
+      return;
+    }
+
+    const a = Math.max(posStart, region.startTime);
+    const b = Math.min(posEnd, region.startTime + region.duration);
+    if (b <= a) return;
+    const src = audioContext.createBufferSource();
+    src.buffer = region.audioBuffer;
+    src.connect(dest);
+    src.start(at(a), (region.startOffset || 0) + (a - region.startTime), b - a);
+    seg.sources.push(src);
+  });
+
+  segments.push(seg);
+  return seg;
+}
+
+function tick() {
+  if (!playing) return;
+  const st = getState();
+  const now = audioContext.currentTime;
+  const horizon = now + LOOKAHEAD;
+
+  // Queue the next loop pass just before the current one ends
+  const last = segments[segments.length - 1];
+  const loop = loopRange(st);
+  if (last && loop && last.posEnd === loop[1]) {
+    const lastCtxEnd = last.ctxStart + (last.posEnd - last.posStart);
+    if (horizon >= lastCtxEnd) scheduleSegment(lastCtxEnd, loop[0], loop[1]);
+  }
+
+  // Metronome clicks within the lookahead window. Cursors advance even with
+  // the click off so switching it on mid-play doesn't replay past beats.
+  segments.forEach((s) => {
+    const segCtxEnd = s.ctxStart + (s.posEnd - s.posStart);
+    const windowEndPos = Math.min(s.posEnd, s.posStart + (Math.min(horizon, segCtxEnd) - s.ctxStart));
+    if (windowEndPos <= s.clickCursor) return;
+    if (st.isMetronomeEnabled) {
+      beatGrid(s.clickCursor, windowEndPos).forEach((b) => {
+        const when = s.ctxStart + (b.time - s.posStart);
+        if (when >= now - 0.005) playClick(Math.max(now, when), b.accent, s.sources);
+      });
+    }
+    s.clickCursor = windowEndPos;
+  });
+
+  // Drop segments that finished long enough ago that their sources are done
+  segments = segments.filter((s, i) => i === segments.length - 1
+    || s.ctxStart + (s.posEnd - s.posStart) > now - 5);
+}
+
+function startSegmentsAt(pos: number, ctxStart: number) {
+  const loop = loopRange(getState());
+  // Ableton-style: a loop only engages when playback starts before its end
+  const end = loop && pos < loop[1] ? loop[1] : Infinity;
+  scheduleSegment(ctxStart, pos, end);
+}
+
+function stopAllSources() {
+  segments.forEach((s) => s.sources.forEach((src) => { try { src.stop(); } catch { /* already stopped */ } }));
+  segments = [];
+}
+
+// ------------------------------------------------------------------ control
+
+// Start playback from the current position. With a count-in, the given click
+// grid (times relative to the count-in start) plays for countInSeconds before
+// the timeline starts moving.
+export function play(countInSeconds = 0, countInGrid?: { time: number; accent: boolean }[]) {
+  if (playing) return;
+  if (audioContext.state === 'suspended') audioContext.resume();
+  playing = true;
+  const startCtx = audioContext.currentTime + 0.05;
+  countInEnd = 0;
+  if (countInSeconds > 0 && countInGrid) {
+    const pre: Segment = { ctxStart: startCtx, posStart: stoppedPosition - countInSeconds, posEnd: stoppedPosition, sources: [], clickCursor: Infinity };
+    countInGrid.forEach((b) => playClick(startCtx + b.time, b.accent, pre.sources));
+    segments.push(pre);
+    countInEnd = startCtx + countInSeconds;
+  }
+  startSegmentsAt(stoppedPosition, startCtx + countInSeconds);
+  timer = setInterval(tick, TICK_MS);
+  tick();
+  notify();
+}
+
+export function stop() {
+  if (!playing) return;
+  stoppedPosition = Math.max(0, getPosition());
+  playing = false;
+  countInEnd = 0;
+  if (timer) clearInterval(timer);
+  timer = null;
+  stopAllSources();
+  notify();
+}
+
+// Move the playhead. While playing, playback continues from the new spot.
+export function setPosition(pos: number) {
+  const p = Math.max(0, pos);
+  if (!playing) {
+    stoppedPosition = p;
+    notify();
+    return;
+  }
+  stopAllSources();
+  countInEnd = 0;
+  startSegmentsAt(p, audioContext.currentTime + 0.03);
+  tick();
+  notify();
+}
+
+// Clips, notes, tempo or loop settings changed: rebuild what's scheduled
+// from the current playhead so edits are heard straight away.
+export function reschedule() {
+  if (!playing || isCountingIn()) return;
+  setPosition(getPosition());
+}

@@ -6,20 +6,21 @@ import {
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
-import { detectTransients, estimateBpm, scheduleWarpedRegion } from './audio/warp';
+import { detectTransients, estimateBpm } from './audio/warp';
 import PianoRoll from './components/PianoRoll';
 import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
 import { DEVICE_DEFS, createDevice } from './audio/devices';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
+import { getPosition, isCountingIn, onTransportChange, setPosition as setTransportPosition, clickGain } from './audio/transport';
 import './App.css';
 
-let activeSources: any[] = [];
 const PIXELS_PER_SECOND = 50;
 
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
   (window as any).__dawStore = useDAWStore;
+  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext };
 }
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 
@@ -334,142 +335,36 @@ function App() {
     ws.send(JSON.stringify({ type: 'DICTATION', text: dictationInput.trim() }));
   };
 
-  // Playback & Playhead Engine
-  const animationRef = useRef<number | undefined>(undefined);
+  // Playhead display: the transport owns position and scheduling; this just
+  // follows it (rAF while playing) and runs punch-in/out at the punch points.
   const [localPlaybackPosition, setLocalPlaybackPosition] = useState(0);
-  const playStartTimeRef = useRef(0);
-  const pauseTimeRef = useRef(0);
+
+  useEffect(() => onTransportChange(() => setLocalPlaybackPosition(Math.max(0, getPosition()))), []);
 
   useEffect(() => {
-    if (isPlaying) {
-      if (audioContext.state === 'suspended') {
-        audioContext.resume();
-      }
-      playStartTimeRef.current = audioContext.currentTime - pauseTimeRef.current;
-      const currentPlayheadTime = pauseTimeRef.current;
-      
-      // Frozen tracks play their rendered buffer instead of live clips
-      const allTracks = useDAWStore.getState().tracks;
-      allTracks.forEach((t: any) => {
-        if (!t.isFrozen || !t.frozenBuffer) return;
-        const durationLeft = t.frozenDuration - currentPlayheadTime;
-        if (durationLeft <= 0) return;
-        const source = audioContext.createBufferSource();
-        source.buffer = t.frozenBuffer;
-        source.connect(getStripInput(t.id));
-        source.start(audioContext.currentTime, Math.max(0, currentPlayheadTime), durationLeft);
-        activeSources.push(source);
-      });
-
-      // Schedule MIDI regions through each track's instrument
-      regions.forEach((region: any) => {
-        if (region.type !== 'midi' || !region.notes) return;
-        const track = useDAWStore.getState().tracks.find((t: any) => t.id === region.trackId);
-        if (!track || !track.instrument || track.isFrozen) return;
-        const stripInput = getStripInput(region.trackId);
-
-        region.notes.forEach((note: any) => {
-          const absStart = region.startTime + note.start;
-          const absEnd = absStart + note.duration;
-          if (absEnd <= currentPlayheadTime) return; // already passed
-          // Clip notes that straddle the playhead so resume mid-note still sounds
-          const startDelay = Math.max(0, absStart - currentPlayheadTime);
-          const playDuration = absEnd - Math.max(absStart, currentPlayheadTime);
-          const when = audioContext.currentTime + startDelay;
-          activeSources.push(triggerNote(audioContext, stripInput, track.instrument.parameters, note.pitch, when, playDuration, note.velocity ?? 1));
-        });
-      });
-
-      // Play Arrangement regions
-      regions.forEach((region: any) => {
-        const regionTrack = allTracks.find((t: any) => t.id === region.trackId);
-        if (regionTrack?.isFrozen) return; // frozen buffer already covers this track
-
-        // Warped clips: granular time-stretch to follow the project tempo
-        if (region.warpEnabled && region.audioBuffer && region.originalBpm) {
-          const currentBpm = useDAWStore.getState().bpm;
-          const ratio = currentBpm / region.originalBpm;
-          const warpedDur = region.duration / ratio;
-          const outputOffset = Math.max(0, currentPlayheadTime - region.startTime);
-          if (outputOffset >= warpedDur) return;
-          const startDelay = Math.max(0, region.startTime - currentPlayheadTime);
-          const grains = scheduleWarpedRegion(
-            audioContext, [getStripInput(region.trackId)], region,
-            audioContext.currentTime + startDelay, outputOffset, ratio
-          );
-          activeSources.push(...grains);
-          return;
+    if (!isPlaying) return;
+    let raf: number;
+    const updatePlayhead = () => {
+      const currentPos = getPosition();
+      setLocalPlaybackPosition(Math.max(0, currentPos));
+      const st = useDAWStore.getState();
+      if (st.isPunchEnabled && !isCountingIn()) {
+        if (currentPos >= st.punchInTime && currentPos < st.punchOutTime) {
+          if (!st.isRecording) st.setRecording(true);
+        } else if (st.isRecording) {
+          st.setRecording(false);
         }
-
-        if (region.audioBuffer) {
-          const source = audioContext.createBufferSource();
-          source.buffer = region.audioBuffer;
-          source.connect(getStripInput(region.trackId));
-
-          // Play offset inside the buffer, including startOffset and resume offset
-          const actualBufferOffset = (region.startOffset || 0) + Math.max(0, currentPlayheadTime - region.startTime);
-          const startOffset = Math.max(0, region.startTime - currentPlayheadTime);
-          
-          // Only play what's left inside the trimmed duration
-          const durationLeft = region.duration - Math.max(0, currentPlayheadTime - region.startTime);
-          
-          if (durationLeft > 0) {
-            source.start(audioContext.currentTime + startOffset, actualBufferOffset, durationLeft);
-            activeSources.push(source);
-          }
-        }
-      });
-
-      const updatePlayhead = () => {
-        const currentPos = audioContext.currentTime - playStartTimeRef.current;
-        setLocalPlaybackPosition(currentPos);
-        // Punch recording: engage/disengage the record state at the punch points
-        const st = useDAWStore.getState();
-        if (st.isPunchEnabled) {
-          if (currentPos >= st.punchInTime && currentPos < st.punchOutTime) {
-            if (!st.isRecording) st.setRecording(true);
-          } else if (st.isRecording) {
-            st.setRecording(false);
-          }
-        }
-        animationRef.current = requestAnimationFrame(updatePlayhead);
-      };
-      updatePlayhead();
-    } else {
-      // Stop playback
-      activeSources.forEach(source => {
-        try { source.stop(); } catch(e) {}
-      });
-      activeSources = [];
-      if (playStartTimeRef.current > 0) {
-        pauseTimeRef.current = audioContext.currentTime - playStartTimeRef.current;
-        setLocalPlaybackPosition(pauseTimeRef.current);
       }
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-    }
-
-    return () => {
-      // Clean up previous active sources before the effect runs again (e.g. during a drag)
-      activeSources.forEach(source => {
-        try { source.stop(); } catch(e) {}
-      });
-      activeSources = [];
-      if (isPlaying && playStartTimeRef.current > 0) {
-        // Store current playhead position during a drag so the new sources resume from here
-        pauseTimeRef.current = audioContext.currentTime - playStartTimeRef.current;
-      }
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      raf = requestAnimationFrame(updatePlayhead);
     };
-  }, [isPlaying, regions, bpm]); // bpm: warped clips must be re-stretched when tempo changes
+    updatePlayhead();
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying]);
 
-  // Double stop to Return to Zero
+  // Stop; stopping again while stopped returns to zero
   const handleStop = () => {
-    if (!isPlaying && pauseTimeRef.current > 0) {
-      pauseTimeRef.current = 0;
-      setLocalPlaybackPosition(0);
-    } else if (isPlaying) {
-      togglePlayback();
-    }
+    if (isPlaying) togglePlayback();
+    else setTransportPosition(0);
   };
 
   // Drag and Drop files onto timelines or slots
