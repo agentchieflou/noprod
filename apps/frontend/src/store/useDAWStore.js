@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
+import { createDevice } from '../audio/devices';
 
 // Undo/redo: which slice of the store is history-tracked. Transport/selection/UI
 // state stays out so undoing never yanks the playhead or flips the view.
 const UNDOABLE_KEYS = [
   'tracks', 'regions', 'sessionClips', 'bpm', 'vstScanPaths',
-  'masterVolume', 'masterPan', 'reverbReturnVolume'
+  'masterVolume', 'masterPan', 'returns', 'masterPlugins'
 ];
 const HISTORY_LIMIT = 100;
 // Continuous gestures (fader/dial/param drags) coalesce into one entry as long
@@ -58,6 +59,46 @@ export const cloneRack = (rack) => {
   };
 };
 
+// Device chains live on tracks, returns and the master strip. Apply
+// `fn(plugins) -> plugins` to whichever strip `stripId` names and return the
+// partial state to set.
+export const MASTER_STRIP_ID = 'master';
+
+const mapStripPlugins = (state, stripId, fn) => {
+  if (stripId === MASTER_STRIP_ID) return { masterPlugins: fn(state.masterPlugins) };
+  if (state.returns.some(r => r.id === stripId)) {
+    return { returns: state.returns.map(r => r.id === stripId ? { ...r, plugins: fn(r.plugins) } : r) };
+  }
+  return { tracks: state.tracks.map(t => t.id === stripId ? { ...t, plugins: fn(t.plugins) } : t) };
+};
+
+const mapRack = (state, stripId, rackId, fn) =>
+  mapStripPlugins(state, stripId, plugins => plugins.map(p => p.id === rackId ? fn(p) : p));
+
+// Return tracks: each has its own device chain; every track has a send
+// level per return (track.sends[returnId], 0..1, post-fader).
+export const RETURN_LETTERS = 'ABCDEFGHIJKL';
+
+const createReturn = (name, plugins = []) => ({
+  id: uuidv4(),
+  name,
+  volume: 0.5,
+  pan: 0,
+  isMuted: false,
+  plugins
+});
+
+// Returns are fully wet: the dry signal already reaches the master directly.
+const wet = (kind, overrides = {}) => {
+  const d = createDevice(kind);
+  return { ...d, id: uuidv4(), parameters: { ...d.parameters, 'Dry/Wet': 100, ...overrides } };
+};
+
+const DEFAULT_RETURNS = [
+  { ...createReturn('Reverb', [wet('reverb')]), id: 'return-a' },
+  { ...createReturn('Delay', [wet('delay', { Time: 0.375, Feedback: 35 })]), id: 'return-b' }
+];
+
 // Default instrument attached to new MIDI tracks so their clips are audible.
 export const createDefaultInstrument = () => ({
   id: uuidv4(),
@@ -87,7 +128,9 @@ export const useDAWStore = create((set, get) => ({
   // Mix Bus Volumes
   masterVolume: 0.8,
   masterPan: 0.0, // -1 (left) to 1 (right)
-  reverbReturnVolume: 0.5, // Return Track A volume
+  // Return tracks (A Reverb, B Delay by default) and the master device chain
+  returns: DEFAULT_RETURNS,
+  masterPlugins: [],
   isLimiterEnabled: true, // Master bus brickwall limiter
 
   // Punch recording: auto start/stop recording at these timeline positions
@@ -121,7 +164,7 @@ export const useDAWStore = create((set, get) => ({
       groupId: null, // If member of a group
       volume: 0.8,
       pan: 0.0,
-      sendReverb: 0.2,
+      sends: { 'return-a': 0.2 },
       isMuted: false,
       isSoloed: false,
       isArmed: false,
@@ -138,7 +181,7 @@ export const useDAWStore = create((set, get) => ({
       groupId: null,
       volume: 0.8,
       pan: 0.0,
-      sendReverb: 0.0,
+      sends: {},
       isMuted: false,
       isSoloed: false,
       isArmed: false,
@@ -214,7 +257,27 @@ export const useDAWStore = create((set, get) => ({
   
   setMasterVolume: (vol) => { get().record('master-volume'); set({ masterVolume: vol }); },
   setMasterPan: (pan) => { get().record('master-pan'); set({ masterPan: pan }); },
-  setReverbReturnVolume: (vol) => { get().record('reverb-return'); set({ reverbReturnVolume: vol }); },
+  // Return Track Actions
+  addReturn: () => { get().record(); set((state) => ({
+    returns: [...state.returns, createReturn('Return')]
+  })); },
+
+  // Removing a return also drops every track's send to it
+  removeReturn: (id) => { get().record(); set((state) => ({
+    returns: state.returns.filter(r => r.id !== id),
+    tracks: state.tracks.map(t => {
+      if (!t.sends || !(id in t.sends)) return t;
+      const { [id]: _removed, ...sends } = t.sends;
+      return { ...t, sends };
+    }),
+    selectedTrackId: state.selectedTrackId === id ? null : state.selectedTrackId
+  })); },
+
+  // patch: { volume, pan, isMuted, name }
+  updateReturn: (id, patch) => {
+    get().record('volume' in patch || 'pan' in patch ? `return-${id}-${Object.keys(patch).join()}` : null);
+    set((state) => ({ returns: state.returns.map(r => r.id === id ? { ...r, ...patch } : r) }));
+  },
   toggleLimiter: () => set((state) => ({ isLimiterEnabled: !state.isLimiterEnabled })),
 
   setRecording: (isRecording) => set({ isRecording }),
@@ -258,7 +321,7 @@ export const useDAWStore = create((set, get) => ({
           groupId: null,
           volume: 0.8,
           pan: 0.0,
-          sendReverb: 0.0,
+          sends: {},
           isMuted: false,
           isSoloed: false,
           isArmed: false,
@@ -285,7 +348,7 @@ export const useDAWStore = create((set, get) => ({
       isCollapsed: false,
       volume: 0.8,
       pan: 0.0,
-      sendReverb: 0.0,
+      sends: {},
       isMuted: false,
       isSoloed: false,
       isArmed: false,
@@ -334,8 +397,8 @@ export const useDAWStore = create((set, get) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, pan } : t)
   })); },
 
-  updateTrackSendReverb: (id, val) => { get().record(`track-send-${id}`); set((state) => ({
-    tracks: state.tracks.map(t => t.id === id ? { ...t, sendReverb: val } : t)
+  updateTrackSend: (id, returnId, val) => { get().record(`track-send-${id}-${returnId}`); set((state) => ({
+    tracks: state.tracks.map(t => t.id === id ? { ...t, sends: { ...(t.sends || {}), [returnId]: val } } : t)
   })); },
 
   toggleMuteTrack: (id) => { get().record(); set((state) => ({
@@ -378,150 +441,106 @@ export const useDAWStore = create((set, get) => ({
     } : t)
   })); },
 
-  // Device Chain Actions
-  addDeviceToTrack: (trackId, device) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: [...t.plugins, { ...device, id: uuidv4() }]
-    } : t)
-  })); },
+  // Device Chain Actions. `stripId` is a track id, a return id or MASTER_STRIP_ID.
+  addDeviceToTrack: (stripId, device) => { get().record(); set((state) =>
+    mapStripPlugins(state, stripId, plugins => [...plugins, { ...device, id: uuidv4() }])
+  ); },
 
-  removeDeviceFromTrack: (trackId, deviceId) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.filter(p => p.id !== deviceId)
-    } : t)
-  })); },
+  removeDeviceFromTrack: (stripId, deviceId) => { get().record(); set((state) =>
+    mapStripPlugins(state, stripId, plugins => plugins.filter(p => p.id !== deviceId))
+  ); },
 
-  updateDeviceParameter: (trackId, deviceId, paramName, val) => { get().record(`device-param-${deviceId}`); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === deviceId ? {
-        ...p,
-        parameters: { ...p.parameters, [paramName]: val }
-      } : p)
-    } : t)
-  })); },
+  updateDeviceParameter: (stripId, deviceId, paramName, val) => { get().record(`device-param-${deviceId}`); set((state) =>
+    mapStripPlugins(state, stripId, plugins => plugins.map(p => p.id === deviceId ? {
+      ...p,
+      parameters: { ...p.parameters, [paramName]: val }
+    } : p))
+  ); },
 
   // Audio Effect Rack Actions
-  addRackToTrack: (trackId) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: [...t.plugins, createEmptyRack()]
-    } : t)
-  })); },
+  addRackToTrack: (stripId) => { get().record(); set((state) =>
+    mapStripPlugins(state, stripId, plugins => [...plugins, createEmptyRack()])
+  ); },
 
-  // Wrap all of a track's loose (non-rack) devices into a new rack
-  groupTrackDevicesIntoRack: (trackId) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => {
-      if (t.id !== trackId) return t;
-      const loose = t.plugins.filter(p => p.type !== 'rack');
-      if (loose.length === 0) return t;
-      const rack = { ...createEmptyRack(), devices: loose };
-      return { ...t, plugins: [...t.plugins.filter(p => p.type === 'rack'), rack] };
+  // Wrap all of a strip's loose (non-rack) devices into a new rack
+  groupTrackDevicesIntoRack: (stripId) => { get().record(); set((state) =>
+    mapStripPlugins(state, stripId, plugins => {
+      const loose = plugins.filter(p => p.type !== 'rack');
+      if (loose.length === 0) return plugins;
+      return [...plugins.filter(p => p.type === 'rack'), { ...createEmptyRack(), devices: loose }];
     })
-  })); },
+  ); },
 
-  addDeviceToRack: (trackId, rackId, device) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === rackId ? {
-        ...p,
-        devices: [...p.devices, { ...device, id: uuidv4() }]
-      } : p)
-    } : t)
-  })); },
+  addDeviceToRack: (stripId, rackId, device) => { get().record(); set((state) =>
+    mapRack(state, stripId, rackId, rack => ({ ...rack, devices: [...rack.devices, { ...device, id: uuidv4() }] }))
+  ); },
 
-  removeDeviceFromRack: (trackId, rackId, deviceId) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === rackId ? {
-        ...p,
-        devices: p.devices.filter(d => d.id !== deviceId),
-        macros: p.macros.map(m => ({ ...m, mappings: m.mappings.filter(mp => mp.deviceId !== deviceId) }))
-      } : p)
-    } : t)
-  })); },
+  removeDeviceFromRack: (stripId, rackId, deviceId) => { get().record(); set((state) =>
+    mapRack(state, stripId, rackId, rack => ({
+      ...rack,
+      devices: rack.devices.filter(d => d.id !== deviceId),
+      macros: rack.macros.map(m => ({ ...m, mappings: m.mappings.filter(mp => mp.deviceId !== deviceId) }))
+    }))
+  ); },
 
-  updateRackDeviceParameter: (trackId, rackId, deviceId, paramName, val) => { get().record(`rack-device-${deviceId}`); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === rackId ? {
-        ...p,
-        devices: p.devices.map(d => d.id === deviceId ? {
-          ...d,
-          parameters: { ...d.parameters, [paramName]: val }
-        } : d)
-      } : p)
-    } : t)
-  })); },
+  updateRackDeviceParameter: (stripId, rackId, deviceId, paramName, val) => { get().record(`rack-device-${deviceId}`); set((state) =>
+    mapRack(state, stripId, rackId, rack => ({
+      ...rack,
+      devices: rack.devices.map(d => d.id === deviceId ? {
+        ...d,
+        parameters: { ...d.parameters, [paramName]: val }
+      } : d)
+    }))
+  ); },
 
   // Move a macro: store its value and push every mapped parameter to
   // min + (value/100) * (max - min).
-  updateMacroValue: (trackId, rackId, macroId, value) => { get().record(`macro-${macroId}`); set((state) => ({
-    tracks: state.tracks.map(t => {
-      if (t.id !== trackId) return t;
-      return {
-        ...t,
-        plugins: t.plugins.map(p => {
-          if (p.id !== rackId) return p;
-          const macros = p.macros.map(m => m.id === macroId ? { ...m, value } : m);
-          const macro = macros.find(m => m.id === macroId);
-          let devices = p.devices;
-          macro.mappings.forEach(mp => {
-            const mapped = Math.round((mp.min + (value / 100) * (mp.max - mp.min)) * 100) / 100;
-            devices = devices.map(d => d.id === mp.deviceId ? {
-              ...d,
-              parameters: { ...d.parameters, [mp.paramName]: mapped }
-            } : d);
-          });
-          return { ...p, macros, devices };
-        })
-      };
+  updateMacroValue: (stripId, rackId, macroId, value) => { get().record(`macro-${macroId}`); set((state) =>
+    mapRack(state, stripId, rackId, rack => {
+      const macros = rack.macros.map(m => m.id === macroId ? { ...m, value } : m);
+      const macro = macros.find(m => m.id === macroId);
+      let devices = rack.devices;
+      macro.mappings.forEach(mp => {
+        const mapped = Math.round((mp.min + (value / 100) * (mp.max - mp.min)) * 100) / 100;
+        devices = devices.map(d => d.id === mp.deviceId ? {
+          ...d,
+          parameters: { ...d.parameters, [mp.paramName]: mapped }
+        } : d);
+      });
+      return { ...rack, macros, devices };
     })
-  })); },
+  ); },
 
-  addMacroMapping: (trackId, rackId, macroId, deviceId, paramName, min = 0, max = 100) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === rackId ? {
-        ...p,
-        macros: p.macros.map(m => m.id === macroId ? {
-          ...m,
-          mappings: m.mappings.some(mp => mp.deviceId === deviceId && mp.paramName === paramName)
-            ? m.mappings
-            : [...m.mappings, { deviceId, paramName, min, max }]
-        } : m)
-      } : p)
-    } : t)
-  })); },
+  addMacroMapping: (stripId, rackId, macroId, deviceId, paramName, min = 0, max = 100) => { get().record(); set((state) =>
+    mapRack(state, stripId, rackId, rack => ({
+      ...rack,
+      macros: rack.macros.map(m => m.id === macroId ? {
+        ...m,
+        mappings: m.mappings.some(mp => mp.deviceId === deviceId && mp.paramName === paramName)
+          ? m.mappings
+          : [...m.mappings, { deviceId, paramName, min, max }]
+      } : m)
+    }))
+  ); },
 
-  removeMacroMapping: (trackId, rackId, macroId, index) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === rackId ? {
-        ...p,
-        macros: p.macros.map(m => m.id === macroId ? {
-          ...m,
-          mappings: m.mappings.filter((_, i) => i !== index)
-        } : m)
-      } : p)
-    } : t)
-  })); },
+  removeMacroMapping: (stripId, rackId, macroId, index) => { get().record(); set((state) =>
+    mapRack(state, stripId, rackId, rack => ({
+      ...rack,
+      macros: rack.macros.map(m => m.id === macroId ? {
+        ...m,
+        mappings: m.mappings.filter((_, i) => i !== index)
+      } : m)
+    }))
+  ); },
 
   saveRackPreset: (rack) => set((state) => ({
     savedRacks: [...state.savedRacks, { ...cloneRack(rack), name: `${rack.name} ${state.savedRacks.length + 1}` }]
   })),
 
-  addSavedRackToTrack: (trackId, presetIndex) => { get().record(); set((state) => {
+  addSavedRackToTrack: (stripId, presetIndex) => { get().record(); set((state) => {
     const preset = state.savedRacks[presetIndex];
     if (!preset) return {};
-    return {
-      tracks: state.tracks.map(t => t.id === trackId ? {
-        ...t,
-        plugins: [...t.plugins, cloneRack(preset)]
-      } : t)
-    };
+    return mapStripPlugins(state, stripId, plugins => [...plugins, cloneRack(preset)]);
   }); },
 
   // Region Actions

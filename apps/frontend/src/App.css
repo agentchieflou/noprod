@@ -1379,3 +1379,28 @@ body {
 .eq8-band-editor .param-value { width: 50px; }
 .eq8-band-editor .param-slider { height: 14px; }
 .eq8-band-editor .rack-map-select { flex: 1; }
+
+/* Per-return send knobs on each track */
+.send-dials {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.send-dials .mixer-dial {
+  width: 26px;
+}
+
+.track-header-box.return-master.selected {
+  outline: 1px solid var(--accent-blue);
+}
+
+.strip-kind {
+  font-size: 8px;
+  font-weight: normal;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 0 3px;
+  margin-left: 4px;
+}

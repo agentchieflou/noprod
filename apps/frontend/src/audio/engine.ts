@@ -115,20 +115,7 @@ const routeStrip = (strip: Strip, targetId: string) => {
   strip.outputTarget = targetId;
 };
 
-// Foundation return bus: one reverb return until the store models returns.
-const DEFAULT_RETURN_REVERB = { id: 'return-a-reverb', name: 'NoProd Reverb', type: 'audio-fx', kind: 'reverb', parameters: { 'Dry/Wet': 100, Decay: 2.5 } };
-let fallbackReturns: any[] = [];
-let fallbackReturnVolume = -1;
-const returnsOf = (state: any): any[] => {
-  if (state.returns) return state.returns;
-  if (state.reverbReturnVolume !== fallbackReturnVolume) {
-    fallbackReturnVolume = state.reverbReturnVolume;
-    fallbackReturns = [{ id: 'return-a', name: 'A-Reverb', volume: state.reverbReturnVolume, pan: 0, isMuted: false, plugins: [DEFAULT_RETURN_REVERB] }];
-  }
-  return fallbackReturns;
-};
-const sendLevel = (track: any, returnId: string) =>
-  track.sends?.[returnId] ?? (returnId === 'return-a' ? track.sendReverb || 0 : 0);
+const sendLevel = (track: any, returnId: string) => track.sends?.[returnId] ?? 0;
 
 let lastState: any = null;
 
@@ -136,7 +123,6 @@ export function syncEngine(state: any) {
   if (lastState
     && lastState.tracks === state.tracks
     && lastState.returns === state.returns
-    && lastState.reverbReturnVolume === state.reverbReturnVolume
     && lastState.masterPlugins === state.masterPlugins
     && lastState.masterVolume === state.masterVolume
     && lastState.masterPan === state.masterPan
@@ -144,7 +130,7 @@ export function syncEngine(state: any) {
   lastState = state;
 
   const tracks: any[] = state.tracks || [];
-  const returns = returnsOf(state);
+  const returns: any[] = state.returns || [];
   const live = new Set<string>([MASTER_ID]);
 
   // Master

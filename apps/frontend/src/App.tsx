@@ -4,7 +4,7 @@ import {
   Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2,
   Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine
 } from 'lucide-react';
-import { useDAWStore, createDefaultInstrument } from './store/useDAWStore';
+import { useDAWStore, createDefaultInstrument, RETURN_LETTERS } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
 import { detectTransients, estimateBpm, scheduleWarpedRegion } from './audio/warp';
 import PianoRoll from './components/PianoRoll';
@@ -271,11 +271,11 @@ const MidiRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }:
 function App() {
   const { 
     tracks, regions, isPlaying, isRecording, isMetronomeEnabled, viewMode,
-    selectedTrackId, selectedRegionId, masterVolume, reverbReturnVolume, sessionClips, vstScanPaths, bpm,
+    selectedTrackId, selectedRegionId, masterVolume, returns, sessionClips, vstScanPaths, bpm,
     togglePlayback, toggleRecording, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
     addTrack, removeTrack, addRegion, updateTrackColor, toggleArmTrack,
-    updateTrackVolume, updateTrackPan, updateTrackSendReverb, toggleMuteTrack, toggleSoloTrack,
-    setMasterVolume, setReverbReturnVolume, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
+    updateTrackVolume, updateTrackPan, updateTrackSend, toggleMuteTrack, toggleSoloTrack,
+    setMasterVolume, addReturn, removeReturn, updateReturn, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
     undo, redo, past, future,
     addMidiRegion, setTrackInstrument, updateInstrumentParameter,
@@ -556,7 +556,12 @@ function App() {
   }, [togglePlayback, undo, redo]);
 
   // Find selected track and region
-  const selectedTrack = tracks.find((t: any) => t.id === selectedTrackId);
+  // The device chain view edits whichever strip is selected: a track or a return
+  const returnStrips = returns.map((r: any, i: number) => ({
+    ...r, type: 'return', color: '#6b7280', name: `${RETURN_LETTERS[i]} ${r.name}`
+  }));
+  const selectedTrack = tracks.find((t: any) => t.id === selectedTrackId)
+    || returnStrips.find((r: any) => r.id === selectedTrackId);
   const selectedRegion = regions.find((r: any) => r.id === selectedRegionId);
 
   // Members of collapsed groups are hidden from the track lists (audio still plays)
@@ -759,8 +764,13 @@ function App() {
         const panNode = trackNode.querySelector('DeviceChain Mixer Pan Manual');
         const pan = panNode ? parseFloat(panNode.getAttribute('Value') || '0.0') : 0.0;
 
-        const sendNode = trackNode.querySelector('DeviceChain Mixer Sends TrackSendHolder Manual');
-        const sendReverb = sendNode ? parseFloat(sendNode.getAttribute('Value') || '0.0') : 0.0;
+        // One TrackSendHolder per return, in return order
+        const sends: { [returnId: string]: number } = {};
+        trackNode.querySelectorAll('DeviceChain Mixer Sends TrackSendHolder Send Manual')
+          .forEach((sendNode, i) => {
+            const ret = returns[i];
+            if (ret) sends[ret.id] = parseFloat(sendNode.getAttribute('Value') || '0') || 0;
+          });
 
         // Scanned plugins / VSTs under the track's device chain
         const plugins: any[] = [];
@@ -789,7 +799,7 @@ function App() {
           groupId: null,
           volume,
           pan,
-          sendReverb,
+          sends,
           color,
           instrument: type === 'midi' ? createDefaultInstrument() : null,
           plugins
@@ -1191,14 +1201,19 @@ function App() {
                         />
                       </div>
                       
-                      <div className="strip-val">
-                        <span style={{ fontSize: '9px' }}>REV</span>
-                        <input 
-                          type="range" min="0" max="1" step="0.1" 
-                          value={track.sendReverb} 
-                          onChange={(e) => updateTrackSendReverb(track.id, parseFloat(e.target.value))}
-                          className="mixer-dial"
-                        />
+                      {/* One send per return track (post-fader) */}
+                      <div className="send-dials">
+                        {returns.map((r: any, i: number) => (
+                          <div key={r.id} className="strip-val" title={`Send to ${RETURN_LETTERS[i]} ${r.name}`}>
+                            <span style={{ fontSize: '9px' }}>{RETURN_LETTERS[i]}</span>
+                            <input
+                              type="range" min="0" max="1" step="0.01"
+                              value={track.sends?.[r.id] ?? 0}
+                              onChange={(e) => updateTrackSend(track.id, r.id, parseFloat(e.target.value))}
+                              className="mixer-dial"
+                            />
+                          </div>
+                        ))}
                       </div>
                     </div>
                     
@@ -1215,20 +1230,47 @@ function App() {
                   </div>
                 ))}
 
-                {/* Return/Master Mixer Strip */}
-                <div className="track-header-box return-master">
-                  <div className="track-title-row">
-                    <span style={{ fontSize: '10px', fontWeight: 'bold' }}>A-REVERB (RETURN)</span>
+                {/* Return Tracks: each has its own device chain (click to edit) */}
+                {returnStrips.map((r: any) => (
+                  <div
+                    key={r.id}
+                    className={`track-header-box return-master ${selectedTrackId === r.id ? 'selected' : ''}`}
+                    onClick={() => setSelectedTrackId(r.id)}
+                  >
+                    <div className="track-title-row">
+                      <span style={{ fontSize: '10px', fontWeight: 'bold' }}>{r.name.toUpperCase()} <span className="strip-kind">RETURN</span></span>
+                      <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+                        <button className={`btn-mute ${r.isMuted ? 'muted' : ''}`} title="Mute Return"
+                          onClick={(e) => { e.stopPropagation(); updateReturn(r.id, { isMuted: !r.isMuted }); }}>M</button>
+                        <button className="btn-icon" title="Delete Return (removes every track's send to it)"
+                          onClick={(e) => { e.stopPropagation(); removeReturn(r.id); }}><Trash2 size={12} /></button>
+                      </div>
+                    </div>
+                    <div className="fader-row">
+                      <span style={{ fontSize: '9px' }}>PAN</span>
+                      <input
+                        type="range" min="-1" max="1" step="0.1"
+                        value={r.pan}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => updateReturn(r.id, { pan: parseFloat(e.target.value) })}
+                        className="mixer-dial"
+                      />
+                      <Volume2 size={12} />
+                      <input
+                        type="range" min="0" max="1" step="0.01"
+                        value={r.volume}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => updateReturn(r.id, { volume: parseFloat(e.target.value) })}
+                        className="mixer-fader"
+                      />
+                    </div>
                   </div>
-                  <div className="fader-row">
-                    <Volume2 size={12} />
-                    <input 
-                      type="range" min="0" max="1" step="0.01" 
-                      value={reverbReturnVolume} 
-                      onChange={(e) => setReverbReturnVolume(parseFloat(e.target.value))}
-                      className="mixer-fader"
-                    />
-                  </div>
+                ))}
+                <div className="track-list-actions">
+                  <button className="btn-add-track" style={{ backgroundColor: '#6b7280' }} onClick={addReturn}
+                    disabled={returns.length >= RETURN_LETTERS.length} title="Add Return Track">
+                    + Return
+                  </button>
                 </div>
               </div>
 
