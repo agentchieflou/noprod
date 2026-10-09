@@ -1984,3 +1984,7 @@ body {
 .take-name { color: var(--text-secondary); }
 .take-name.in-comp { color: #eab308; font-weight: bold; }
 .take-use { font-size: 9px; padding: 1px 6px; }
+
+/* Capture MIDI */
+.btn-transport.capture-btn { opacity: 0.55; }
+.btn-transport.capture-btn.capturable { opacity: 1; color: #eab308; }

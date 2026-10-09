@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type DragE
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
   Layers, FolderOpen, Radio, Music, CheckSquare, Square as SquareIcon, Sliders, Wand2,
-  Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X
+  Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
@@ -11,6 +11,7 @@ import ClipView from './components/ClipView';
 import SessionView from './components/SessionView';
 import TrackIO from './components/TrackIO';
 import TakeLane from './components/TakeLane';
+import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
 import { initMidi, onInputsChange, isComputerKeyboardEnabled, setComputerKeyboardEnabled, getComputerKeyboardOctave } from './audio/inputs';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
@@ -144,6 +145,8 @@ function App() {
   const [newDeviceIdx, setNewDeviceIdx] = useState(0);
   const [showIO, setShowIO] = useState(false);
   const keyboardMidi = useSyncExternalStore(onInputsChange, isComputerKeyboardEnabled);
+  // Capture lights up when there is uncaptured playing for an armed MIDI track
+  const capturable = useSyncExternalStore(onCaptureBufferChange, () => hasCapturable(useDAWStore.getState())) && tracks.length > 0;
 
   // AI Dictation (Orchestrator connection)
   const orchestratorWsRef = useRef<WebSocket | null>(null);
@@ -626,6 +629,16 @@ function App() {
         {/* Transport */}
         <button className={`btn-transport ${isRecording ? 'recording' : ''}`} onClick={handleRecord} title="Record (starts playback, after the count-in if one is set)">
           <Circle size={18} fill={isRecording ? 'var(--accent-red)' : 'none'} color={isRecording ? 'var(--accent-red)' : 'var(--text-primary)'} />
+        </button>
+        <button
+          className={`btn-transport capture-btn ${capturable ? 'capturable' : ''}`}
+          onClick={() => {
+            const n = captureMidi(useDAWStore.getState());
+            if (!n) alert('Nothing to capture: play something on an armed MIDI track (or one with monitoring In) first.');
+          }}
+          title="Capture MIDI: turn what you just played on armed MIDI tracks into a clip"
+        >
+          <ListMusic size={16} />
         </button>
         <button className={`btn-transport ${isPlaying ? 'playing' : ''}`} onClick={togglePlayback} title="Play">
           <Play size={18} />
