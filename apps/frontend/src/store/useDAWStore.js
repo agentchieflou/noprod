@@ -6,7 +6,7 @@ import { createDevice } from '../audio/devices';
 // state stays out so undoing never yanks the playhead or flips the view.
 const UNDOABLE_KEYS = [
   'tracks', 'regions', 'sessionClips', 'bpm', 'vstScanPaths',
-  'masterVolume', 'masterPan', 'returns', 'masterPlugins'
+  'masterVolume', 'masterPan', 'returns', 'masterPlugins', 'locators'
 ];
 const HISTORY_LIMIT = 100;
 // Continuous gestures (fader/dial/param drags) coalesce into one entry as long
@@ -132,6 +132,12 @@ export const useDAWStore = create((set, get) => ({
   returns: DEFAULT_RETURNS,
   masterPlugins: [],
   isLimiterEnabled: true, // Master bus brickwall limiter
+
+  // Arrangement loop brace (seconds) and named locators / cue points
+  isLoopEnabled: false,
+  loopStart: 0,
+  loopEnd: 8,
+  locators: [], // [{ id, time, name }]
 
   // Punch recording: auto start/stop recording at these timeline positions
   punchInTime: 4,
@@ -281,6 +287,20 @@ export const useDAWStore = create((set, get) => ({
   toggleLimiter: () => set((state) => ({ isLimiterEnabled: !state.isLimiterEnabled })),
 
   setRecording: (isRecording) => set({ isRecording }),
+
+  toggleLoop: () => set((state) => ({ isLoopEnabled: !state.isLoopEnabled })),
+  setLoopRegion: (loopStart, loopEnd) => set({ loopStart, loopEnd }),
+
+  addLocator: (time, name) => { get().record(); set((state) => ({
+    locators: [...state.locators, { id: uuidv4(), time, name: name || `Locator ${state.locators.length + 1}` }]
+      .sort((a, b) => a.time - b.time)
+  })); },
+  updateLocator: (id, patch) => { get().record('time' in patch ? `locator-${id}` : null); set((state) => ({
+    locators: state.locators.map(l => l.id === id ? { ...l, ...patch } : l).sort((a, b) => a.time - b.time)
+  })); },
+  removeLocator: (id) => { get().record(); set((state) => ({
+    locators: state.locators.filter(l => l.id !== id)
+  })); },
   togglePunch: () => set((state) => ({ isPunchEnabled: !state.isPunchEnabled })),
   setPunchRegion: (punchInTime, punchOutTime) => set({ punchInTime, punchOutTime }),
 

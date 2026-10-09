@@ -12,6 +12,7 @@
 import { audioContext, getStripInput } from './engine';
 import { triggerNote } from './synth';
 import { scheduleWarpedRegion } from './warp';
+import { beatsBetween } from './timeline';
 
 type Stoppable = { stop: (when?: number) => void };
 
@@ -84,9 +85,6 @@ const loopRange = (st: any): [number, number] | null => {
   return end - start > 0.01 ? [start, end] : null;
 };
 
-// Seconds per bar at a timeline position (time signature map from the store)
-export const beatSeconds = (bpm: number) => 60 / bpm;
-
 // Metronome: a short sine blip, accented on the first beat of each bar.
 // Goes straight to the output so master devices and the limiter don't color it.
 export const clickGain = audioContext.createGain();
@@ -106,16 +104,6 @@ function playClick(when: number, accent: boolean, sources: Stoppable[]) {
   osc.stop(when + 0.06);
   sources.push(osc);
 }
-
-// Beat grid for clicks: list of { time, accent } beat positions in [from, to)
-export type BeatGridFn = (from: number, to: number) => { time: number; accent: boolean }[];
-let beatGrid: BeatGridFn = (from, to) => {
-  const spb = beatSeconds(getState().bpm || 120);
-  const out = [];
-  for (let b = Math.ceil(from / spb - 1e-9); b * spb < to; b++) out.push({ time: b * spb, accent: b % 4 === 0 });
-  return out;
-};
-export const setBeatGrid = (fn: BeatGridFn) => { beatGrid = fn; };
 
 // --------------------------------------------------------------- scheduling
 
@@ -205,7 +193,7 @@ function tick() {
     const windowEndPos = Math.min(s.posEnd, s.posStart + (Math.min(horizon, segCtxEnd) - s.ctxStart));
     if (windowEndPos <= s.clickCursor) return;
     if (st.isMetronomeEnabled) {
-      beatGrid(s.clickCursor, windowEndPos).forEach((b) => {
+      beatsBetween(st.bpm || 120, s.clickCursor, windowEndPos).forEach((b) => {
         const when = s.ctxStart + (b.time - s.posStart);
         if (when >= now - 0.005) playClick(Math.max(now, when), b.accent, s.sources);
       });

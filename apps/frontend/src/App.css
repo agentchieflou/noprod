@@ -260,6 +260,8 @@ body {
 
 .track-list-actions {
   display: flex;
+  height: 40px; /* matches .arranger-ruler so track rows line up with headers */
+  box-sizing: border-box;
   padding: 0.5rem;
   gap: 4px;
   border-bottom: 1px solid var(--border-color);
@@ -420,12 +422,11 @@ body {
 
 .arranger-grid {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background-image: linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px);
-  background-size: 100px 100%;
+  top: 0; left: 0; bottom: 0;
   pointer-events: none;
-  min-width: 2000px;
 }
+.grid-bar { stroke: rgba(255,255,255,0.09); stroke-width: 1; }
+.grid-beat { stroke: rgba(255,255,255,0.035); stroke-width: 1; }
 
 .playhead {
   position: absolute;
@@ -441,7 +442,6 @@ body {
   height: 125px; /* Must match track header height */
   border-bottom: 1px solid var(--border-color);
   position: relative;
-  min-width: 2000px;
 }
 
 .arranger-track.drag-over {
@@ -1156,11 +1156,8 @@ body {
 
 /* Punch In/Out */
 .punch-strip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 14px;
+  position: relative;
+  height: 11px;
   background-color: rgba(0,0,0,0.35);
   border-bottom: 1px solid var(--border-color);
   cursor: ew-resize;
@@ -1404,3 +1401,101 @@ body {
   padding: 0 3px;
   margin-left: 4px;
 }
+
+/* Arrangement ruler: bar numbers + locators, loop brace, punch strip */
+.arranger-ruler {
+  position: sticky;
+  top: 0;
+  height: 40px;
+  z-index: 15;
+  background-color: #1a1a1a;
+  border-bottom: 1px solid var(--border-color);
+  user-select: none;
+}
+
+.ruler-bars {
+  position: relative;
+  height: 17px;
+  cursor: pointer;
+  border-bottom: 1px solid #262626;
+}
+
+.ruler-bar-num {
+  position: absolute;
+  top: 2px;
+  padding-left: 3px;
+  border-left: 1px solid #555;
+  font-size: 9px;
+  line-height: 12px;
+  font-family: monospace;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.ruler-locator {
+  position: absolute;
+  top: 1px;
+  height: 14px;
+  padding: 0 4px 0 6px;
+  font-size: 9px;
+  line-height: 14px;
+  white-space: nowrap;
+  color: #111;
+  background: #eab308;
+  border-radius: 0 3px 3px 0;
+  cursor: pointer;
+  z-index: 2;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+}
+.ruler-locator::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  border-left: 2px solid #fde047;
+}
+
+.ruler-loop-row {
+  position: relative;
+  height: 11px;
+  cursor: crosshair;
+  border-bottom: 1px solid #262626;
+}
+
+.loop-brace {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  background: rgba(156, 163, 175, 0.35);
+  border: 1px solid #6b7280;
+  border-radius: 2px;
+  cursor: grab;
+}
+.loop-brace.enabled {
+  background: rgba(234, 179, 8, 0.55);
+  border-color: #eab308;
+}
+.loop-brace-handle {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+}
+.loop-brace-handle.left { left: -2px; }
+.loop-brace-handle.right { right: -2px; }
+
+.loop-shade {
+  position: absolute;
+  top: 40px;
+  bottom: 0;
+  background: rgba(234, 179, 8, 0.05);
+  border-left: 1px solid rgba(234, 179, 8, 0.35);
+  border-right: 1px solid rgba(234, 179, 8, 0.35);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.locator-nav {
+  display: flex;
+  gap: 1px;
+}
+.locator-nav .btn-metronome { padding-left: 6px; padding-right: 6px; }

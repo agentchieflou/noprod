@@ -10,12 +10,13 @@ import { detectTransients, estimateBpm } from './audio/warp';
 import PianoRoll from './components/PianoRoll';
 import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
+import ArrangementRuler from './components/ArrangementRuler';
+import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
 import { DEVICE_DEFS, createDevice } from './audio/devices';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
 import { getPosition, isCountingIn, onTransportChange, setPosition as setTransportPosition, clickGain } from './audio/transport';
 import './App.css';
 
-const PIXELS_PER_SECOND = 50;
 
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
@@ -283,7 +284,8 @@ function App() {
     isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
     savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
     setTrackFrozen, unfreezeTrack, flattenTrack, updateRegionWarp,
-    punchInTime, punchOutTime, isPunchEnabled, togglePunch, setPunchRegion,
+    punchInTime, punchOutTime, isPunchEnabled, togglePunch,
+    isLoopEnabled, loopStart, loopEnd, toggleLoop, locators, addLocator,
     scannedPlugins, setScannedPlugins
   } = useDAWStore();
   const [isScanning, setIsScanning] = useState(false);
@@ -466,6 +468,24 @@ function App() {
     tracks.filter((t: any) => t.type === 'group' && t.isCollapsed).map((t: any) => t.id)
   );
   const visibleTracks = tracks.filter((t: any) => !(t.groupId && collapsedGroupIds.has(t.groupId)));
+
+  // Timeline extends past the last clip / loop / locator with room to work
+  const contentEnd = Math.max(
+    40,
+    ...regions.map((r: any) => r.startTime + r.duration + 16),
+    loopEnd + 16,
+    ...locators.map((l: any) => l.time + 16)
+  );
+  const timelineWidth = Math.ceil(contentEnd * PIXELS_PER_SECOND);
+
+  // Jump to the previous/next locator relative to the playhead
+  const jumpLocator = (dir: 1 | -1) => {
+    const pos = getPosition();
+    const target = dir > 0
+      ? locators.find((l: any) => l.time > pos + 0.01)
+      : [...locators].reverse().find((l: any) => l.time < pos - 0.05);
+    if (target) setTransportPosition(target.time);
+  };
 
   // Play session clip in real-time
   const playSessionClip = (trackId: string, slotIndex: number) => {
@@ -789,6 +809,20 @@ function App() {
           PUNCH
         </button>
 
+        {/* Arrangement loop + locators */}
+        <button
+          className={`btn-metronome ${isLoopEnabled ? 'active' : ''}`}
+          onClick={toggleLoop}
+          title={`Loop ${isLoopEnabled ? 'on' : 'off'} (${loopStart.toFixed(2)}s - ${loopEnd.toFixed(2)}s; drag on the ruler to set)`}
+        >
+          LOOP
+        </button>
+        <div className="locator-nav">
+          <button className="btn-metronome" onClick={() => jumpLocator(-1)} disabled={locators.length === 0} title="Previous locator">◀</button>
+          <button className="btn-metronome" onClick={() => addLocator(getPosition())} title="Add a locator at the playhead">SET</button>
+          <button className="btn-metronome" onClick={() => jumpLocator(1)} disabled={locators.length === 0} title="Next locator">▶</button>
+        </div>
+
         <div className="control-bpm">{bpm.toFixed(2)} BPM</div>
 
         <button className="btn-metronome" onClick={() => fileInputRef.current?.click()} title="Import Ableton Live Set (.als)">
@@ -894,43 +928,29 @@ function App() {
               
               {/* Arranger Track Grid (Moved to left) */}
               <div className="arranger-timeline" onClick={() => setSelectedRegionId(null)}>
-                <div className="arranger-grid" />
-                {/* Punch strip: drag to set the punch-in/out region */}
-                <div
-                  className="punch-strip"
-                  title="Drag to set punch-in/out region"
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                    const snap = 60 / bpm; // snap to beats
-                    const startT = Math.max(0, Math.round(((e.clientX - rect.left) / PIXELS_PER_SECOND) / snap) * snap);
-                    setPunchRegion(startT, startT + snap);
-                    const onMove = (me: MouseEvent) => {
-                      const endT = Math.max(startT + snap, Math.round(((me.clientX - rect.left) / PIXELS_PER_SECOND) / snap) * snap);
-                      setPunchRegion(startT, endT);
-                    };
-                    const onUp = () => {
-                      window.removeEventListener('mousemove', onMove);
-                      window.removeEventListener('mouseup', onUp);
-                    };
-                    window.addEventListener('mousemove', onMove);
-                    window.addEventListener('mouseup', onUp);
-                  }}
-                >
-                  <div
-                    className={`punch-region ${isPunchEnabled ? 'enabled' : ''}`}
-                    style={{
-                      left: `${punchInTime * PIXELS_PER_SECOND}px`,
-                      width: `${Math.max(2, (punchOutTime - punchInTime) * PIXELS_PER_SECOND)}px`
-                    }}
-                  />
-                </div>
+                {/* Bar / beat grid follows the tempo */}
+                <svg className="arranger-grid" width={timelineWidth} height="100%">
+                  {barsUntil(bpm, timelineWidth / PIXELS_PER_SECOND).map((b) => (
+                    <g key={b.index}>
+                      <line x1={b.time * PIXELS_PER_SECOND} x2={b.time * PIXELS_PER_SECOND} y1="0" y2="100%" className="grid-bar" />
+                      {b.length * PIXELS_PER_SECOND / b.numerator >= 12 && Array.from({ length: b.numerator - 1 }, (_, k) => {
+                        const x = (b.time + (k + 1) * (b.length / b.numerator)) * PIXELS_PER_SECOND;
+                        return <line key={k} x1={x} x2={x} y1="0" y2="100%" className="grid-beat" />;
+                      })}
+                    </g>
+                  ))}
+                </svg>
+                <ArrangementRuler width={timelineWidth} onSeek={setTransportPosition} />
+                {isLoopEnabled && (
+                  <div className="loop-shade" style={{ left: loopStart * PIXELS_PER_SECOND, width: (loopEnd - loopStart) * PIXELS_PER_SECOND }} />
+                )}
                 <div className="playhead" style={{ left: `${localPlaybackPosition * PIXELS_PER_SECOND}px` }} />
                 
                 {visibleTracks.map((track: any) => (
                   <div
                     key={track.id}
                     className={`arranger-track ${draggedOverTrack === track.id ? 'drag-over' : ''}`}
+                    style={{ width: timelineWidth }}
                     onDragOver={(e) => {
                       e.preventDefault();
                       setDraggedOverTrack(track.id);
