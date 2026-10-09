@@ -25,10 +25,11 @@ export default function ArrangementRuler({ width, onSeek }: Props) {
   const {
     bpm, isLoopEnabled, loopStart, loopEnd, setLoopRegion, toggleLoop,
     locators, addLocator, updateLocator, removeLocator,
-    punchInTime, punchOutTime, isPunchEnabled, setPunchRegion
+    punchInTime, punchOutTime, isPunchEnabled, setPunchRegion,
+    timeSignatures, setTimeSignature, removeTimeSignature
   } = useDAWStore();
 
-  const bars = barsUntil(bpm, width / PIXELS_PER_SECOND);
+  const bars = barsUntil(bpm, width / PIXELS_PER_SECOND, timeSignatures);
   const beat = beatSeconds(bpm);
   const timeAt = (clientX: number, el: Element) => Math.max(0, (clientX - el.getBoundingClientRect().left) / PIXELS_PER_SECOND);
 
@@ -99,6 +100,29 @@ export default function ArrangementRuler({ width, onSeek }: Props) {
         {bars.map((b) => (
           <span key={b.index} className="ruler-bar-num" style={{ left: b.time * PIXELS_PER_SECOND }}>{b.index + 1}</span>
         ))}
+        {/* Time signature changes: click to edit, right-click to remove */}
+        {timeSignatures.filter((sig: any) => sig.bar > 0 || sig.numerator !== 4 || sig.denominator !== 4).map((sig: any) => {
+          const bar = bars[sig.bar];
+          if (!bar) return null;
+          return (
+            <span
+              key={sig.bar}
+              className="ruler-sig"
+              style={{ left: bar.time * PIXELS_PER_SECOND + 14 }}
+              title={`${sig.numerator}/${sig.denominator} from bar ${sig.bar + 1} — click to edit${sig.bar > 0 ? ', right-click to remove' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                const v = window.prompt('Time signature (e.g. 3/4, 7/8)', `${sig.numerator}/${sig.denominator}`);
+                const m = v && /^\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*$/.exec(v);
+                if (m && [1, 2, 4, 8, 16].includes(parseInt(m[2])) && parseInt(m[1]) >= 1) setTimeSignature(sig.bar, parseInt(m[1]), parseInt(m[2]));
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); removeTimeSignature(sig.bar); }}
+            >
+              {sig.numerator}/{sig.denominator}
+            </span>
+          );
+        })}
         {locators.map((loc: any) => (
           <div
             key={loc.id}

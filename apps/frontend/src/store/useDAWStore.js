@@ -6,7 +6,7 @@ import { createDevice } from '../audio/devices';
 // state stays out so undoing never yanks the playhead or flips the view.
 const UNDOABLE_KEYS = [
   'tracks', 'regions', 'sessionClips', 'bpm', 'vstScanPaths',
-  'masterVolume', 'masterPan', 'returns', 'masterPlugins', 'locators'
+  'masterVolume', 'masterPan', 'returns', 'masterPlugins', 'locators', 'timeSignatures'
 ];
 const HISTORY_LIMIT = 100;
 // Continuous gestures (fader/dial/param drags) coalesce into one entry as long
@@ -124,6 +124,10 @@ export const useDAWStore = create((set, get) => ({
   selectedTrackId: null,
   selectedRegionId: null,
   bpm: 120,
+  // Time signature changes at bar boundaries (bar is 0-based; bar 0 always exists)
+  timeSignatures: [{ bar: 0, numerator: 4, denominator: 4 }],
+  // Bars of metronome count-in before recording starts (0 = off)
+  countInBars: 1,
   
   // Mix Bus Volumes
   masterVolume: 0.8,
@@ -256,7 +260,17 @@ export const useDAWStore = create((set, get) => ({
   toggleMetronome: () => set((state) => ({ isMetronomeEnabled: !state.isMetronomeEnabled })),
   setViewMode: (mode) => set({ viewMode: mode }),
   setPlaybackPosition: (pos) => set({ playbackPosition: pos }),
-  setBpm: (bpm) => { get().record('bpm'); set({ bpm }); },
+  setBpm: (bpm) => { get().record('bpm'); set({ bpm: Math.max(20, Math.min(999, bpm)) }); },
+
+  // Insert or replace the signature starting at `bar`
+  setTimeSignature: (bar, numerator, denominator) => { get().record(); set((state) => ({
+    timeSignatures: [...state.timeSignatures.filter(s => s.bar !== bar), { bar, numerator, denominator }]
+      .sort((a, b) => a.bar - b.bar)
+  })); },
+  removeTimeSignature: (bar) => { if (bar === 0) return; get().record(); set((state) => ({
+    timeSignatures: state.timeSignatures.filter(s => s.bar !== bar)
+  })); },
+  setCountInBars: (countInBars) => set({ countInBars }),
   
   setSelectedTrackId: (id) => set({ selectedTrackId: id }),
   setSelectedRegionId: (id) => set({ selectedRegionId: id }),

@@ -12,7 +12,7 @@
 import { audioContext, getStripInput } from './engine';
 import { triggerNote } from './synth';
 import { scheduleWarpedRegion } from './warp';
-import { beatsBetween } from './timeline';
+import { beatsBetween, barAt, barSeconds } from './timeline';
 
 type Stoppable = { stop: (when?: number) => void };
 
@@ -46,7 +46,9 @@ export function initTransport(store: { getState: () => any; subscribe: (fn: (s: 
   getState = store.getState;
   store.subscribe((st, prev) => {
     if (st.isPlaying !== prev.isPlaying) {
-      if (st.isPlaying) play(); else stop();
+      if (!st.isPlaying) stop();
+      else if (st.isRecording && st.countInBars > 0) playWithCountIn(st.countInBars);
+      else play();
       return;
     }
     if (!playing) return;
@@ -193,7 +195,7 @@ function tick() {
     const windowEndPos = Math.min(s.posEnd, s.posStart + (Math.min(horizon, segCtxEnd) - s.ctxStart));
     if (windowEndPos <= s.clickCursor) return;
     if (st.isMetronomeEnabled) {
-      beatsBetween(st.bpm || 120, s.clickCursor, windowEndPos).forEach((b) => {
+      beatsBetween(st.bpm || 120, s.clickCursor, windowEndPos, st.timeSignatures).forEach((b) => {
         const when = s.ctxStart + (b.time - s.posStart);
         if (when >= now - 0.005) playClick(Math.max(now, when), b.accent, s.sources);
       });
@@ -239,6 +241,20 @@ export function play(countInSeconds = 0, countInGrid?: { time: number; accent: b
   timer = setInterval(tick, TICK_MS);
   tick();
   notify();
+}
+
+// Count-in: N bars of clicks in the signature at the playhead, then play.
+export function playWithCountIn(bars: number) {
+  const st = getState();
+  const bpm = st.bpm || 120;
+  const sig = barAt(bpm, stoppedPosition, st.timeSignatures);
+  const barLen = barSeconds(bpm, sig);
+  const beat = barLen / sig.numerator;
+  const grid: { time: number; accent: boolean }[] = [];
+  for (let b = 0; b < bars; b++) {
+    for (let k = 0; k < sig.numerator; k++) grid.push({ time: b * barLen + k * beat, accent: k === 0 });
+  }
+  play(bars * barLen, grid);
 }
 
 export function stop() {

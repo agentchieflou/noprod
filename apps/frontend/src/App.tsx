@@ -11,6 +11,7 @@ import PianoRoll from './components/PianoRoll';
 import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
 import ArrangementRuler from './components/ArrangementRuler';
+import TempoControls from './components/TempoControls';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
 import { DEVICE_DEFS, createDevice } from './audio/devices';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
@@ -274,7 +275,7 @@ function App() {
   const { 
     tracks, regions, isPlaying, isRecording, isMetronomeEnabled, viewMode,
     selectedTrackId, selectedRegionId, masterVolume, returns, masterPlugins, sessionClips, vstScanPaths, bpm,
-    togglePlayback, toggleRecording, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
+    togglePlayback, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
     addTrack, removeTrack, addRegion, updateTrackColor, toggleArmTrack,
     updateTrackVolume, updateTrackPan, updateTrackSend, toggleMuteTrack, toggleSoloTrack,
     setMasterVolume, addReturn, removeReturn, updateReturn, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
@@ -285,7 +286,7 @@ function App() {
     savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
     setTrackFrozen, unfreezeTrack, flattenTrack, updateRegionWarp,
     punchInTime, punchOutTime, isPunchEnabled, togglePunch,
-    isLoopEnabled, loopStart, loopEnd, toggleLoop, locators, addLocator,
+    isLoopEnabled, loopStart, loopEnd, toggleLoop, locators, addLocator, timeSignatures,
     scannedPlugins, setScannedPlugins
   } = useDAWStore();
   const [isScanning, setIsScanning] = useState(false);
@@ -340,6 +341,7 @@ function App() {
   // Playhead display: the transport owns position and scheduling; this just
   // follows it (rAF while playing) and runs punch-in/out at the punch points.
   const [localPlaybackPosition, setLocalPlaybackPosition] = useState(0);
+  const [countingIn, setCountingIn] = useState(false);
 
   useEffect(() => onTransportChange(() => setLocalPlaybackPosition(Math.max(0, getPosition()))), []);
 
@@ -349,6 +351,7 @@ function App() {
     const updatePlayhead = () => {
       const currentPos = getPosition();
       setLocalPlaybackPosition(Math.max(0, currentPos));
+      setCountingIn(isCountingIn());
       const st = useDAWStore.getState();
       if (st.isPunchEnabled && !isCountingIn()) {
         if (currentPos >= st.punchInTime && currentPos < st.punchOutTime) {
@@ -360,8 +363,17 @@ function App() {
       raf = requestAnimationFrame(updatePlayhead);
     };
     updatePlayhead();
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); setCountingIn(false); };
   }, [isPlaying]);
+
+  // Record: arm recording and start the transport; the transport plays the
+  // count-in first when one is set. Pressing again while recording disarms.
+  const handleRecord = () => {
+    const st = useDAWStore.getState();
+    if (st.isRecording) { st.setRecording(false); return; }
+    st.setRecording(true);
+    if (!st.isPlaying) st.togglePlayback();
+  };
 
   // Stop; stopping again while stopped returns to zero
   const handleStop = () => {
@@ -770,10 +782,10 @@ function App() {
       {/* Ableton-style Control Bar */}
       <div className="control-bar">
         <div className="logo-section">NoProd</div>
-        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
+        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
         
         {/* Transport */}
-        <button className={`btn-transport ${isRecording ? 'recording' : ''}`} onClick={toggleRecording} title="Arm Session Record">
+        <button className={`btn-transport ${isRecording ? 'recording' : ''}`} onClick={handleRecord} title="Record (starts playback, after the count-in if one is set)">
           <Circle size={18} fill={isRecording ? 'var(--accent-red)' : 'none'} color={isRecording ? 'var(--accent-red)' : 'var(--text-primary)'} />
         </button>
         <button className={`btn-transport ${isPlaying ? 'playing' : ''}`} onClick={togglePlayback} title="Play">
@@ -783,7 +795,7 @@ function App() {
           <Square size={18} />
         </button>
 
-        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
+        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
 
         {/* Undo / Redo */}
         <button className="btn-transport" onClick={undo} disabled={past.length === 0} title="Undo (Ctrl+Z)">
@@ -793,7 +805,7 @@ function App() {
           <Redo2 size={16} />
         </button>
 
-        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
+        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
 
         {/* Metronome */}
         <button className={`btn-metronome ${isMetronomeEnabled ? 'active' : ''}`} onClick={toggleMetronome}>
@@ -823,10 +835,11 @@ function App() {
           <button className="btn-metronome" onClick={() => jumpLocator(1)} disabled={locators.length === 0} title="Next locator">▶</button>
         </div>
 
-        <div className="control-bpm">{bpm.toFixed(2)} BPM</div>
+        <TempoControls position={localPlaybackPosition} />
+        {countingIn && <span className="count-in-badge">COUNT-IN</span>}
 
         <button className="btn-metronome" onClick={() => fileInputRef.current?.click()} title="Import Ableton Live Set (.als)">
-          <FolderOpen size={14} style={{ marginRight: '5px' }} /> Import ALS
+          <FolderOpen size={14} style={{ marginRight: '4px' }} />ALS
         </button>
         <input
           type="file"
@@ -836,7 +849,7 @@ function App() {
           style={{ display: 'none' }}
         />
 
-        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
+        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
 
         {/* AI Dictation */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -847,7 +860,7 @@ function App() {
             onChange={(e) => setDictationInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleSendDictation(); }}
             className="vst-path-input"
-            style={{ width: '220px' }}
+            style={{ width: '130px' }}
           />
           <button
             className="btn-metronome"
@@ -875,8 +888,7 @@ function App() {
 
         {/* Master Controls */}
         <div className="master-fader">
-          <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>MASTER</span>
-          <Volume2 size={16} />
+          <Volume2 size={16} aria-label="Master volume" />
           <input
             type="range" min="0" max="1" step="0.01"
             value={masterVolume}
@@ -930,7 +942,7 @@ function App() {
               <div className="arranger-timeline" onClick={() => setSelectedRegionId(null)}>
                 {/* Bar / beat grid follows the tempo */}
                 <svg className="arranger-grid" width={timelineWidth} height="100%">
-                  {barsUntil(bpm, timelineWidth / PIXELS_PER_SECOND).map((b) => (
+                  {barsUntil(bpm, timelineWidth / PIXELS_PER_SECOND, timeSignatures).map((b) => (
                     <g key={b.index}>
                       <line x1={b.time * PIXELS_PER_SECOND} x2={b.time * PIXELS_PER_SECOND} y1="0" y2="100%" className="grid-bar" />
                       {b.length * PIXELS_PER_SECOND / b.numerator >= 12 && Array.from({ length: b.numerator - 1 }, (_, k) => {
