@@ -41,9 +41,13 @@ sink.connect(audioContext.destination);
 
 export function initRecorder(store: { getState: () => any; subscribe: (fn: (s: any, p: any) => void) => unknown }) {
   getState = store.getState;
+  // With punch on, capture the whole pass and crop to the punch range
+  // afterwards: the UI flips isRecording at the punch points a frame late,
+  // but the crop is sample-exact.
+  const recording = (s: any) => s.isPlaying && (s.isRecording || s.isPunchEnabled);
   store.subscribe((st, prev) => {
-    const active = st.isPlaying && st.isRecording;
-    const was = prev.isPlaying && prev.isRecording;
+    const active = recording(st);
+    const was = recording(prev);
     if (active && !was) startRecording(st);
     else if (!active && was) stopRecording();
   });
