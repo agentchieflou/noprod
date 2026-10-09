@@ -14,6 +14,10 @@ target_sources(GhostDAW PRIVATE
     src/main.cpp
 )
 
+# LPI plugin ABI header (vendored from v-loudio-t; see third_party/lpi/README.md)
+set(LPI_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lpi/include" CACHE PATH "Directory containing lpi/lpi.h")
+target_include_directories(GhostDAW PRIVATE "${LPI_INCLUDE_DIR}")
+
 target_compile_definitions(GhostDAW
     PUBLIC
         JUCE_WEB_BROWSER=0
@@ -31,3 +35,8 @@ target_link_libraries(GhostDAW
         juce::juce_audio_processors
         juce::juce_events
 )
+
+option(GHOSTDAW_BUILD_TESTS "Build the plugin-hosting tests and their test plugins" OFF)
+if(GHOSTDAW_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()

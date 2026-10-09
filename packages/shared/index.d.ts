@@ -25,6 +25,8 @@ export interface DictationCommand {
   text: string;
 }
 
+// Addresses a plugin on the Audio Core's master inserts by name. There is
+// one bus for now, so trackIndex is ignored (see SetPluginParameterCommand).
 export interface SetVstParameterEvent {
   type: 'SET_VST_PARAMETER';
   trackIndex: number;
@@ -33,5 +35,62 @@ export interface SetVstParameterEvent {
   value: number; // 0.0 to 1.0 normalized value
 }
 
+// ---- Native plugin hosting (Audio Core master inserts; apps/audio_core/src/PluginHost.h)
+// Frontend -> Orchestrator -> Audio Core. Every command except
+// SET_PLUGIN_PARAMETER is answered with AUDIO_CORE_STATE (or AUDIO_CORE_ERROR).
 
-export type IpcMessage = HapEvent | EvalCommand | DictationCommand | SetVstParameterEvent;
+export type PluginFormat = 'VST3' | 'AudioUnit' | 'LPI';
+
+export interface GetAudioCoreStateCommand { type: 'GET_AUDIO_CORE_STATE' }
+export interface ScanPluginsCommand { type: 'SCAN_PLUGINS'; paths?: string[] }
+export interface LoadPluginCommand { type: 'LOAD_PLUGIN'; path: string; format?: PluginFormat; pluginId?: string; index?: number }
+export interface RemovePluginCommand { type: 'REMOVE_PLUGIN'; slotId: string }
+export interface MovePluginCommand { type: 'MOVE_PLUGIN'; slotId: string; index: number }
+export interface SetPluginBypassCommand { type: 'SET_PLUGIN_BYPASS'; slotId: string; bypassed: boolean }
+export interface SetPluginParameterCommand {
+  type: 'SET_PLUGIN_PARAMETER';
+  slotId: string;
+  parameterIndex?: number;
+  parameterId?: string; // preferred over parameterIndex when given
+  value: number;        // in the parameter's own min..max range
+}
+
+export interface NativePluginParameter {
+  index: number; id: string; name: string;
+  min: number; max: number; default: number; value: number; text: string;
+  stepped: boolean; boolean: boolean; readOnly: boolean;
+}
+
+export interface NativeInsertSlot {
+  slotId: string; name: string; format: PluginFormat; path: string;
+  bypassed: boolean; latencySamples: number; parameters: NativePluginParameter[];
+}
+
+export interface AudioCoreStateEvent {
+  type: 'AUDIO_CORE_STATE';
+  sampleRate: number;
+  blockSize: number;
+  device?: { name: string; running: boolean };
+  outputPeak?: number; // post-insert peak since the previous state report
+  inserts: NativeInsertSlot[];
+  availablePlugins: Array<{ name: string; vendor: string; format: PluginFormat; path: string; pluginId: string }>;
+  scanFolders: string[];
+}
+
+export interface PluginParameterChangedEvent {
+  type: 'PLUGIN_PARAMETER_CHANGED';
+  slotId: string; parameterIndex: number; value: number; text: string;
+}
+
+export interface AudioCoreErrorEvent { type: 'AUDIO_CORE_ERROR'; message: string; request: string }
+
+// Sent by the Orchestrator when its Audio Core connection opens or drops
+export interface AudioCoreStatusEvent { type: 'AUDIO_CORE_STATUS'; connected: boolean }
+
+export type AudioCoreCommand =
+  | GetAudioCoreStateCommand | ScanPluginsCommand | LoadPluginCommand | RemovePluginCommand
+  | MovePluginCommand | SetPluginBypassCommand | SetPluginParameterCommand | SetVstParameterEvent;
+
+export type AudioCoreEvent = AudioCoreStateEvent | PluginParameterChangedEvent | AudioCoreErrorEvent | AudioCoreStatusEvent;
+
+export type IpcMessage = HapEvent | EvalCommand | DictationCommand | AudioCoreCommand | AudioCoreEvent;

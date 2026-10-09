@@ -1,9 +1,13 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <thread>
+#include <vector>
 #include <iostream>
 
 #include "Sha1.h"
@@ -11,13 +15,14 @@
 // Minimal WebSocket server. The Orchestrator (apps/orchestrator/index.js)
 // connects out to ws://localhost:8082 expecting the Audio Core to be
 // listening there, and auto-reconnects every 3s if the connection drops.
-// Each accepted connection is served on its own detached thread so the
-// accept loop is never blocked by a long-lived client (the real Orchestrator
-// connection is expected to stay open indefinitely).
+// Each accepted connection is served on its own thread so the accept loop
+// is never blocked by a long-lived client (the real Orchestrator connection
+// is expected to stay open indefinitely).
 //
-// Handles text frames only (no fragmentation, ping/pong): the Orchestrator's
-// `ws` library sends each message as a single unfragmented frame, which is
-// all this needs to support.
+// Receives unfragmented text frames (the Orchestrator's `ws` library sends
+// each message as a single frame) and answers pings. Sends text and binary
+// frames to every connected client (B6b); each client has its own write
+// lock, so any thread may send.
 class HapWebSocketServer : public juce::Thread
 {
 public:
@@ -30,8 +35,34 @@ public:
 
     ~HapWebSocketServer() override
     {
+        signalThreadShouldExit();
         listener.close();
         stopThread (2000);
+
+        // Unblock every client thread's read, then wait for them to finish
+        // before members they use go away.
+        {
+            std::lock_guard<std::mutex> lock (clientsLock);
+            for (auto& client : clients)
+                client->socket->close();
+        }
+        for (int i = 0; i < 200 && activeClients.load() > 0; ++i)
+            std::this_thread::sleep_for (std::chrono::milliseconds (10));
+    }
+
+    int getNumClients() const { return activeClients.load(); }
+
+    // Sends a text frame to every connected client.
+    void broadcastText (const juce::String& text)
+    {
+        auto utf8 = text.toUTF8();
+        broadcast (0x1, utf8.getAddress(), utf8.sizeInBytes() - 1);
+    }
+
+    // Sends a binary frame to every connected client.
+    void broadcastBinary (const void* data, size_t size)
+    {
+        broadcast (0x2, data, size);
     }
 
     void run() override
@@ -46,42 +77,112 @@ public:
 
         while (! threadShouldExit())
         {
-            std::shared_ptr<juce::StreamingSocket> client (listener.waitForNextConnection());
+            std::shared_ptr<juce::StreamingSocket> socket (listener.waitForNextConnection());
 
-            if (client == nullptr)
+            if (socket == nullptr)
                 continue; // listener was closed (shutdown) or a transient accept error
 
             std::cout << "HapWebSocketServer: client connected" << std::endl;
 
+            auto client = std::make_shared<Client>();
+            client->socket = socket;
+            ++activeClients;
+
             std::thread ([this, client]
             {
-                handleClient (*client);
+                handleClient (client);
+                removeClient (client);
                 std::cout << "HapWebSocketServer: client disconnected" << std::endl;
+                --activeClients;
             }).detach();
         }
     }
 
 private:
+    struct Client
+    {
+        std::shared_ptr<juce::StreamingSocket> socket;
+        std::mutex writeLock;
+    };
+
     int port;
     MessageCallback onMessage;
     juce::StreamingSocket listener;
+    std::mutex clientsLock;
+    std::vector<std::shared_ptr<Client>> clients;
+    std::atomic<int> activeClients { 0 };
 
     static constexpr const char* websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-    void handleClient (juce::StreamingSocket& socket)
+    void handleClient (const std::shared_ptr<Client>& client)
     {
-        if (! performHandshake (socket))
+        if (! performHandshake (*client->socket))
             return;
+
+        {
+            std::lock_guard<std::mutex> lock (clientsLock);
+            clients.push_back (client);
+        }
 
         while (! threadShouldExit())
         {
             juce::var message;
-            if (! readTextFrame (socket, message))
+            if (! readTextFrame (*client, message))
                 return;
 
             if (onMessage)
                 onMessage (message);
         }
+    }
+
+    void removeClient (const std::shared_ptr<Client>& client)
+    {
+        std::lock_guard<std::mutex> lock (clientsLock);
+        clients.erase (std::remove (clients.begin(), clients.end(), client), clients.end());
+    }
+
+    void broadcast (uint8_t opcode, const void* data, size_t size)
+    {
+        std::vector<std::shared_ptr<Client>> targets;
+        {
+            std::lock_guard<std::mutex> lock (clientsLock);
+            targets = clients;
+        }
+
+        for (auto& client : targets)
+            sendFrame (*client, opcode, data, size);
+    }
+
+    // Server-to-client frames are never masked (RFC 6455 5.1).
+    static bool sendFrame (Client& client, uint8_t opcode, const void* data, size_t size)
+    {
+        uint8_t header[10];
+        int headerSize = 2;
+        header[0] = static_cast<uint8_t> (0x80 | opcode); // FIN + opcode
+
+        if (size < 126)
+        {
+            header[1] = static_cast<uint8_t> (size);
+        }
+        else if (size <= 0xFFFF)
+        {
+            header[1] = 126;
+            header[2] = static_cast<uint8_t> (size >> 8);
+            header[3] = static_cast<uint8_t> (size & 0xFF);
+            headerSize = 4;
+        }
+        else
+        {
+            header[1] = 127;
+            for (int i = 0; i < 8; ++i)
+                header[2 + i] = static_cast<uint8_t> ((static_cast<uint64_t> (size) >> (56 - 8 * i)) & 0xFF);
+            headerSize = 10;
+        }
+
+        std::lock_guard<std::mutex> lock (client.writeLock);
+        if (client.socket->write (header, headerSize) != headerSize)
+            return false;
+        return size == 0 || client.socket->write (data, static_cast<int> (size)) == static_cast<int> (size);
     }
 
     bool performHandshake (juce::StreamingSocket& socket)
@@ -137,11 +238,14 @@ private:
         return socket.read (dest, numBytes, true) == numBytes;
     }
 
-    // Reads WebSocket frames until a text message arrives (skipping any
-    // ping/binary/continuation frames along the way). Returns false if the
-    // client disconnected, sent a close frame, or the connection errored.
-    bool readTextFrame (juce::StreamingSocket& socket, juce::var& outMessage)
+    // Reads WebSocket frames until a text message arrives, answering pings
+    // and skipping binary/pong/continuation frames along the way. Returns
+    // false if the client disconnected, sent a close frame, or the
+    // connection errored.
+    bool readTextFrame (Client& client, juce::var& outMessage)
     {
+        auto& socket = *client.socket;
+
         for (;;)
         {
             uint8_t header[2];
@@ -182,8 +286,17 @@ private:
                 for (size_t i = 0; i < payload.size(); ++i)
                     payload[i] = static_cast<uint8_t> (payload[i] ^ maskKey[i % 4]);
 
-            if (opcode == 0x8) // close
+            if (opcode == 0x8) // close: echo it back, then drop the connection
+            {
+                sendFrame (client, 0x8, payload.data(), juce::jmin<size_t> (payload.size(), 2));
                 return false;
+            }
+
+            if (opcode == 0x9) // ping
+            {
+                sendFrame (client, 0xA, payload.data(), payload.size());
+                continue;
+            }
 
             if (opcode == 0x1) // text frame
             {
@@ -192,7 +305,7 @@ private:
                 return true;
             }
 
-            // Unhandled opcode (binary, ping, pong, continuation) -- skip and read the next frame.
+            // Unhandled opcode (binary, pong, continuation) -- skip and read the next frame.
         }
     }
 };
