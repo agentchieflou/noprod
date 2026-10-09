@@ -94,7 +94,7 @@ const wet = (kind, overrides = {}) => {
   return { ...d, id: uuidv4(), parameters: { ...d.parameters, 'Dry/Wet': 100, ...overrides } };
 };
 
-const DEFAULT_RETURNS = [
+const createDefaultReturns = () => [
   { ...createReturn('Reverb', [wet('reverb')]), id: 'return-a' },
   { ...createReturn('Delay', [wet('delay', { Time: 0.375, Feedback: 35 })]), id: 'return-b' }
 ];
@@ -114,15 +114,9 @@ export const createDefaultInstrument = () => ({
   }
 });
 
-export const useDAWStore = create((set, get) => ({
-  // Global State
-  isPlaying: false,
-  isRecording: false,
-  isMetronomeEnabled: false,
-  viewMode: 'arrangement', // 'arrangement' | 'session'
-  playbackPosition: 0, // in seconds
-  selectedTrackId: null,
-  selectedRegionId: null,
+// A fresh project: everything that belongs in a saved project file. The
+// store starts from this, and New Project resets to it.
+export const createDefaultProject = () => ({
   bpm: 120,
   // Time signature changes at bar boundaries (bar is 0-based; bar 0 always exists)
   timeSignatures: [{ bar: 0, numerator: 4, denominator: 4 }],
@@ -133,7 +127,7 @@ export const useDAWStore = create((set, get) => ({
   masterVolume: 0.8,
   masterPan: 0.0, // -1 (left) to 1 (right)
   // Return tracks (A Reverb, B Delay by default) and the master device chain
-  returns: DEFAULT_RETURNS,
+  returns: createDefaultReturns(),
   masterPlugins: [],
   isLimiterEnabled: true, // Master bus brickwall limiter
 
@@ -153,16 +147,6 @@ export const useDAWStore = create((set, get) => ({
     'C:/Program Files/Common Files/VST3',
     'C:/Program Files/Steinberg/VstPlugins'
   ],
-
-  // Plugins found by scanning real folders (persisted in localStorage).
-  // [{ name, format, path }]
-  scannedPlugins: (() => {
-    try {
-      return JSON.parse(localStorage.getItem('noprod-scanned-plugins') || '[]');
-    } catch {
-      return [];
-    }
-  })(),
 
   // Tracks list
   tracks: [
@@ -211,6 +195,45 @@ export const useDAWStore = create((set, get) => ({
 
   // Saved Audio Effect Rack presets, reusable across tracks
   savedRacks: [],
+});
+
+export const PROJECT_KEYS = Object.keys(createDefaultProject());
+
+export const isProjectDirty = (state) =>
+  !state.savedSnapshot || PROJECT_KEYS.some(k => state[k] !== state.savedSnapshot[k]);
+
+const projectSlice = (state) => {
+  const out = {};
+  PROJECT_KEYS.forEach(k => { out[k] = state[k]; });
+  return out;
+};
+
+export const useDAWStore = create((set, get) => ({
+  // Global State
+  isPlaying: false,
+  isRecording: false,
+  isMetronomeEnabled: false,
+  viewMode: 'arrangement', // 'arrangement' | 'session'
+  playbackPosition: 0, // in seconds
+  selectedTrackId: null,
+  selectedRegionId: null,
+  // Project data (everything that is saved to / loaded from a project file)
+  ...createDefaultProject(),
+
+  // Plugins found by scanning real folders (persisted in localStorage, not per project).
+  // [{ name, format, path }]
+  scannedPlugins: (() => {
+    try {
+      return JSON.parse(localStorage.getItem('noprod-scanned-plugins') || '[]');
+    } catch {
+      return [];
+    }
+  })(),
+
+  // Project file state: name, and the project slice as of the last save/load
+  // (unsaved changes = any project key whose reference differs from it)
+  projectName: 'Untitled',
+  savedSnapshot: null,
 
   // Undo/Redo History
   past: [],
@@ -253,6 +276,29 @@ export const useDAWStore = create((set, get) => ({
       future: state.future.slice(0, -1)
     };
   }),
+
+  // Project file actions. Loading replaces the whole project, clears undo
+  // history and selection, and marks the result as saved.
+  loadProject: (project, projectName = 'Untitled') => set((state) => {
+    const next = { ...createDefaultProject(), ...project };
+    return {
+      ...next,
+      projectName,
+      savedSnapshot: projectSlice(next),
+      past: [],
+      future: [],
+      isPlaying: false,
+      isRecording: false,
+      selectedTrackId: null,
+      selectedRegionId: null,
+      viewMode: state.viewMode
+    };
+  }),
+  newProject: () => get().loadProject(createDefaultProject(), 'Untitled'),
+  markSaved: (projectName) => set((state) => ({
+    projectName: projectName || state.projectName,
+    savedSnapshot: projectSlice(state)
+  })),
 
   // Global Actions
   togglePlayback: () => set((state) => ({ isPlaying: !state.isPlaying })),
@@ -704,3 +750,6 @@ export const useDAWStore = create((set, get) => ({
     }
   })); }
 }));
+
+// The project the app opens with counts as saved until something changes
+useDAWStore.setState((state) => ({ savedSnapshot: projectSlice(state) }));

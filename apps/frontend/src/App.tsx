@@ -12,6 +12,7 @@ import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
 import ArrangementRuler from './components/ArrangementRuler';
 import TempoControls from './components/TempoControls';
+import FileMenu from './components/FileMenu';
 import AutomationLane from './components/AutomationLane';
 import { automationParams } from './audio/automation';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
@@ -792,6 +793,7 @@ function App() {
       {/* Ableton-style Control Bar */}
       <div className="control-bar">
         <div className="logo-section">NoProd</div>
+        <FileMenu onImportAls={() => fileInputRef.current?.click()} />
         <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
         
         {/* Transport */}
@@ -819,7 +821,7 @@ function App() {
 
         {/* Metronome */}
         <button className={`btn-metronome ${isMetronomeEnabled ? 'active' : ''}`} onClick={toggleMetronome}>
-          <Sliders size={14} style={{ marginRight: '5px' }} /> Click
+          Click
         </button>
 
         {/* Punch In/Out */}
@@ -848,9 +850,6 @@ function App() {
         <TempoControls position={localPlaybackPosition} />
         {countingIn && <span className="count-in-badge">COUNT-IN</span>}
 
-        <button className="btn-metronome" onClick={() => fileInputRef.current?.click()} title="Import Ableton Live Set (.als)">
-          <FolderOpen size={14} style={{ marginRight: '4px' }} />ALS
-        </button>
         <input
           type="file"
           ref={fileInputRef}
@@ -870,7 +869,7 @@ function App() {
             onChange={(e) => setDictationInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleSendDictation(); }}
             className="vst-path-input"
-            style={{ width: '130px' }}
+            style={{ width: '120px' }}
           />
           <button
             className="btn-metronome"
@@ -881,8 +880,11 @@ function App() {
             <Wand2 size={14} style={{ marginRight: '5px' }} />
             {dictationStatus === 'sending' ? 'Generating...' : 'Dictate'}
           </button>
-          <span style={{ fontSize: '10px', color: orchestratorConnected ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-            {orchestratorConnected ? '● orchestrator' : '○ offline'}
+          <span
+            style={{ fontSize: '10px', color: orchestratorConnected ? 'var(--accent-green)' : 'var(--accent-red)' }}
+            title={orchestratorConnected ? 'Orchestrator connected' : 'Orchestrator offline'}
+          >
+            {orchestratorConnected ? '●' : '○'}
           </span>
         </div>
 
