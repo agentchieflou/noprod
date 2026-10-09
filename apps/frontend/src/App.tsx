@@ -1,13 +1,14 @@
 import { Fragment, useEffect, useRef, useState, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
-  Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2,
+  Layers, FolderOpen, Radio, Music, CheckSquare, Square as SquareIcon, Sliders, Wand2,
   Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
 import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
 import ClipView from './components/ClipView';
+import SessionView from './components/SessionView';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
@@ -125,6 +126,7 @@ function App() {
     punchInTime, punchOutTime, isPunchEnabled, togglePunch,
     isLoopEnabled, loopStart, loopEnd, toggleLoop, locators, addLocator, timeSignatures,
     toggleAutomationView, setAutomationLanes, clearAutomation,
+    selectedSessionClip, updateSessionClip, updateClip,
     scannedPlugins, setScannedPlugins
   } = useDAWStore();
   const [isScanning, setIsScanning] = useState(false);
@@ -312,6 +314,9 @@ function App() {
     || returnStrips.find((r: any) => r.id === selectedTrackId)
     || (selectedTrackId === MASTER_STRIP_ID ? masterStrip : undefined);
   const selectedRegion = regions.find((r: any) => r.id === selectedRegionId);
+  const selectedSessionClipData = selectedSessionClip
+    ? sessionClips[selectedSessionClip.trackId]?.[selectedSessionClip.slot]
+    : null;
 
   // Members of collapsed groups are hidden from the track lists (audio still plays)
   const collapsedGroupIds = new Set(
@@ -342,17 +347,6 @@ function App() {
       ? locators.find((l: any) => l.time > pos + 0.01)
       : [...locators].reverse().find((l: any) => l.time < pos - 0.05);
     if (target) setTransportPosition(target.time);
-  };
-
-  // Play session clip in real-time
-  const playSessionClip = (trackId: string, slotIndex: number) => {
-    const clip = sessionClips[trackId]?.[slotIndex];
-    if (clip && clip.audioBuffer) {
-      const source = audioContext.createBufferSource();
-      source.buffer = clip.audioBuffer;
-      source.connect(getStripInput(trackId));
-      source.start();
-    }
   };
 
   // Toggle track selection for grouping
@@ -1127,70 +1121,13 @@ function App() {
 
             </div>
           ) : (
-            // Session View Launcher
-            <div className="session-view">
-              {visibleTracks.map((track: any) => (
-                <div key={track.id} className="session-track-column" style={{ borderTop: `4px solid ${track.color}` }}>
-                  <div className="session-track-header">{track.name}</div>
-                  
-                  {/* Slots */}
-                  {[0, 1, 2, 3].map(slotIndex => {
-                    const clip = sessionClips[track.id]?.[slotIndex];
-                    return (
-                      <div 
-                        key={slotIndex} 
-                        className={`session-clip-slot ${clip ? 'has-clip' : ''}`}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={(e) => handleDrop(e, track.id, slotIndex)}
-                        style={{ backgroundColor: clip ? `${track.color}40` : '' }}
-                      >
-                        {clip ? (
-                          <div className="clip-launcher-btn" onClick={() => playSessionClip(track.id, slotIndex)}>
-                            <Play size={10} fill="#fff" />
-                            <span style={{ fontSize: '10px', overflow: 'hidden' }}>{clip.name}</span>
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>Empty</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                  
-                  {/* Track Activator / Volume */}
-                  <div className="session-track-mixer">
-                    <button className={`btn-mute ${track.isMuted ? 'muted' : ''}`} onClick={() => toggleMuteTrack(track.id)}>Activator</button>
-                    <input 
-                      type="range" min="0" max="1" step="0.01" 
-                      value={track.volume} 
-                      onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
-                      className="session-volume"
-                    />
-                  </div>
-                </div>
-              ))}
-              
-              {/* Scene Launcher Column */}
-              <div className="session-track-column scene-launcher">
-                <div className="session-track-header">Scenes</div>
-                {[0, 1, 2, 3].map(slotIndex => (
-                  <button 
-                    key={slotIndex} 
-                    className="btn-scene-launch" 
-                    onClick={() => {
-                      tracks.forEach((t: any) => playSessionClip(t.id, slotIndex));
-                    }}
-                  >
-                    <ArrowRight size={12} style={{ marginRight: '4px' }} /> Scene {slotIndex + 1}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <SessionView tracks={visibleTracks} onDropFile={handleDrop} onOpenClip={() => setActiveTab('clip')} />
           )}
         </div>
       </div>
 
       {/* Bottom Detail panel */}
-      <div className={`bottom-detail-panel ${activeTab === 'clip' && selectedRegion?.type === 'midi' ? 'tall' : ''}`}>
+      <div className={`bottom-detail-panel ${activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi' ? 'tall' : ''}`}>
         <div className="detail-tabs">
           <button className={`detail-tab ${activeTab === 'devices' ? 'active' : ''}`} onClick={() => setActiveTab('devices')}>Device Chain</button>
           <button className={`detail-tab ${activeTab === 'clip' ? 'active' : ''}`} onClick={() => setActiveTab('clip')}>Clip View</button>
@@ -1330,9 +1267,19 @@ function App() {
           
           {activeTab === 'clip' && (
             <div className="clip-properties-view">
-              {selectedRegion ? (
+              {selectedSessionClipData ? (
                 <ClipView
+                  key={`${selectedSessionClip.trackId}-${selectedSessionClip.slot}`}
+                  region={selectedSessionClipData}
+                  onChange={(patch: any) => updateSessionClip(selectedSessionClip.trackId, selectedSessionClip.slot, patch)}
+                  trackColor={tracks.find((t: any) => t.id === selectedSessionClip.trackId)?.color || '#3b82f6'}
+                  onAudition={(pitch: number) => auditionNote(tracks.find((t: any) => t.id === selectedSessionClip.trackId), pitch)}
+                />
+              ) : selectedRegion ? (
+                <ClipView
+                  key={selectedRegion.id}
                   region={selectedRegion}
+                  onChange={(patch: any) => updateClip(selectedRegion.id, patch)}
                   trackColor={tracks.find((t: any) => t.id === selectedRegion.trackId)?.color || '#3b82f6'}
                   onAudition={(pitch: number) => auditionNote(tracks.find((t: any) => t.id === selectedRegion.trackId), pitch)}
                 />

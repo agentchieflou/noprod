@@ -8,7 +8,8 @@ const SAMPLE_W = 620;
 const SAMPLE_H = 132;
 
 interface Props {
-  region: any;
+  region: any;                       // an arrangement clip or a session clip
+  onChange: (patch: any) => void;    // writes clip properties back to the store
   trackColor: string;
   onAudition: (pitch: number) => void;
 }
@@ -17,8 +18,7 @@ const round = (v: number, step = 0.001) => Math.round(v / step) * step;
 
 // Full-buffer sample display: the playing range highlighted, a draggable
 // start marker and (when looping) a draggable/resizable loop brace.
-function SampleDisplay({ region, color }: { region: any; color: string }) {
-  const { updateClip } = useDAWStore();
+function SampleDisplay({ region, color, onChange }: { region: any; color: string; onChange: (patch: any) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const buf: AudioBuffer = region.audioBuffer;
   const total = buf.duration;
@@ -66,7 +66,7 @@ function SampleDisplay({ region, color }: { region: any; color: string }) {
     const s = round(Math.min(t, looping ? le - 0.01 : total - 0.05));
     // keep the clip's end in place when not looping
     const dur = looping ? region.duration : Math.max(0.05, contentEnd - s);
-    updateClip(region.id, { startOffset: s, duration: dur });
+    onChange({ startOffset: s, duration: dur });
   });
 
   const moveLoop = (mode: 'move' | 'start' | 'end') => (e: React.MouseEvent) => {
@@ -74,11 +74,11 @@ function SampleDisplay({ region, color }: { region: any; color: string }) {
     drag(e, (t, dt) => {
       if (mode === 'move') {
         const d = Math.max(-s0, Math.min(total - e0, dt));
-        updateClip(region.id, { loopStart: round(s0 + d), loopEnd: round(e0 + d) });
+        onChange({ loopStart: round(s0 + d), loopEnd: round(e0 + d) });
       } else if (mode === 'start') {
-        updateClip(region.id, { loopStart: round(Math.min(t, e0 - 0.01)) });
+        onChange({ loopStart: round(Math.min(t, e0 - 0.01)) });
       } else {
-        updateClip(region.id, { loopEnd: round(Math.max(t, s0 + 0.01)) });
+        onChange({ loopEnd: round(Math.max(t, s0 + 0.01)) });
       }
     });
   };
@@ -106,11 +106,11 @@ function SampleDisplay({ region, color }: { region: any; color: string }) {
 // Clip View: per-clip properties (gain, transpose/detune, loop, warp) next to
 // the sample display (audio) or the piano roll (MIDI). Every change updates
 // the clip in the store, which playback and the arrangement visuals follow.
-export default function ClipView({ region, trackColor, onAudition }: Props) {
-  const { updateClip, bpm } = useDAWStore();
+export default function ClipView({ region, onChange, trackColor, onAudition }: Props) {
+  const bpm = useDAWStore((s: any) => s.bpm);
   const isMidi = region.type === 'midi';
   const buf: AudioBuffer | undefined = region.audioBuffer;
-  const set = (patch: any) => updateClip(region.id, patch);
+  const set = onChange;
   const length = clipTimelineLength(region, bpm);
 
   const toggleLoop = () => {
@@ -210,9 +210,10 @@ export default function ClipView({ region, trackColor, onAudition }: Props) {
 
       <div className="clip-editor">
         {isMidi ? (
-          <PianoRoll region={region} trackColor={trackColor} bpm={bpm} onAudition={onAudition} />
+          <PianoRoll region={region} trackColor={trackColor} bpm={bpm} onAudition={onAudition}
+            onNotesChange={(notes: any[]) => onChange({ notes })} />
         ) : buf ? (
-          <SampleDisplay region={region} color={trackColor} />
+          <SampleDisplay region={region} color={trackColor} onChange={onChange} />
         ) : null}
       </div>
     </div>

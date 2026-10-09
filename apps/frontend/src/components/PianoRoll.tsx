@@ -15,10 +15,12 @@ interface PianoRollProps {
   trackColor: string;
   bpm: number;
   onAudition: (pitch: number) => void;
+  onNotesChange?: (notes: any[]) => void; // defaults to editing an arrangement clip
 }
 
-export default function PianoRoll({ region, trackColor, bpm, onAudition }: PianoRollProps) {
-  const { updateRegionNotes } = useDAWStore();
+export default function PianoRoll({ region, trackColor, bpm, onAudition, onNotesChange }: PianoRollProps) {
+  const { updateRegionNotes: updateArrangementNotes } = useDAWStore();
+  const updateRegionNotes = (id: string, next: any[]) => (onNotesChange ? onNotesChange(next) : updateArrangementNotes(id, next));
   const gridRef = useRef<HTMLDivElement>(null);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
 

@@ -20,6 +20,7 @@ interface Segment {
   posStart: number;
   posEnd: number;        // Infinity when not looping
   sources: Stoppable[];
+  trackSources: Map<string, Stoppable[]>; // arrangement clips per track, for session takeover
   clickCursor: number;   // next timeline position to consider for a metronome click
 }
 
@@ -33,6 +34,32 @@ let segments: Segment[] = [];
 let timer: ReturnType<typeof setInterval> | null = null;
 let countInEnd = 0;      // ctx time at which a count-in finishes (0 = none)
 const listeners = new Set<() => void>();
+
+// Tracks currently playing a Session View clip: their arrangement clips stay
+// silent until Back to Arrangement (as in Ableton).
+export const sessionOwnedTracks = new Set<string>();
+
+// A session clip is taking over `trackId` at context time `atCtx`
+export function releaseTrackFromArrangement(trackId: string, atCtx: number) {
+  sessionOwnedTracks.add(trackId);
+  segments.forEach((s) => (s.trackSources.get(trackId) || []).forEach((src) => {
+    try { src.stop(atCtx); } catch { /* already stopped */ }
+  }));
+}
+
+// Context time of the next launch point after now: next beat or bar of the
+// arrangement grid while playing (immediately when quantization is off)
+export function nextQuantizedTime(quantization: string): number {
+  const now = audioContext.currentTime;
+  if (!playing || quantization === 'none') return now + 0.03;
+  const st = getState();
+  const pos = getPosition();
+  const grid = quantization === '1/4'
+    ? beatsBetween(st.bpm || 120, pos + 0.01, pos + 8, st.timeSignatures).map((b) => b.time)
+    : beatsBetween(st.bpm || 120, pos + 0.01, pos + 32, st.timeSignatures).filter((b) => b.accent).map((b) => b.time);
+  const next = grid[0];
+  return next === undefined ? now + 0.03 : now + (next - pos);
+}
 
 // What a frozen/unfrozen track plays changes the schedule; mixer moves don't.
 const frozenSig = (st: any) => (st.tracks || []).map((t: any) => (t.isFrozen ? t.id : '')).join(',');
@@ -119,7 +146,7 @@ function playClick(when: number, accent: boolean, sources: Stoppable[]) {
 
 function scheduleSegment(ctxStart: number, posStart: number, posEnd: number): Segment {
   const st = getState();
-  const seg: Segment = { ctxStart, posStart, posEnd, sources: [], clickCursor: posStart };
+  const seg: Segment = { ctxStart, posStart, posEnd, sources: [], trackSources: new Map(), clickCursor: posStart };
   const at = (pos: number) => ctxStart + (pos - posStart);
   const tracks: any[] = st.tracks || [];
   const trackById = new Map(tracks.map((t) => [t.id, t]));
@@ -139,15 +166,17 @@ function scheduleSegment(ctxStart: number, posStart: number, posEnd: number): Se
   // Clips: each plays the part of itself overlapping this segment
   (st.regions || []).forEach((region: any) => {
     const track = trackById.get(region.trackId);
-    if (!track || track.isFrozen) return;
+    if (!track || track.isFrozen || sessionOwnedTracks.has(region.trackId)) return;
     const start = region.startTime;
     const end = start + clipTimelineLength(region, st.bpm || 120);
     const a = Math.max(posStart, start), b = Math.min(posEnd, end);
     if (b <= a) return;
-    seg.sources.push(...scheduleClip(
+    const srcs = scheduleClip(
       audioContext, region, track.instrument?.parameters, getStripInput(region.trackId),
       at(a), a - start, b - start, st.bpm || 120
-    ));
+    );
+    seg.sources.push(...srcs);
+    seg.trackSources.set(region.trackId, [...(seg.trackSources.get(region.trackId) || []), ...srcs]);
   });
 
   segments.push(seg);
@@ -261,7 +290,7 @@ export function play(countInSeconds = 0, countInGrid?: { time: number; accent: b
   const startCtx = audioContext.currentTime + 0.05;
   countInEnd = 0;
   if (countInSeconds > 0 && countInGrid) {
-    const pre: Segment = { ctxStart: startCtx, posStart: stoppedPosition - countInSeconds, posEnd: stoppedPosition, sources: [], clickCursor: Infinity };
+    const pre: Segment = { ctxStart: startCtx, posStart: stoppedPosition - countInSeconds, posEnd: stoppedPosition, sources: [], trackSources: new Map(), clickCursor: Infinity };
     countInGrid.forEach((b) => playClick(startCtx + b.time, b.accent, pre.sources));
     segments.push(pre);
     countInEnd = startCtx + countInSeconds;

@@ -6,7 +6,7 @@ import { createDevice } from '../audio/devices';
 // state stays out so undoing never yanks the playhead or flips the view.
 const UNDOABLE_KEYS = [
   'tracks', 'regions', 'sessionClips', 'bpm', 'vstScanPaths',
-  'masterVolume', 'masterPan', 'returns', 'masterPlugins', 'locators', 'timeSignatures'
+  'masterVolume', 'masterPan', 'returns', 'masterPlugins', 'locators', 'timeSignatures', 'scenes'
 ];
 const HISTORY_LIMIT = 100;
 // Continuous gestures (fader/dial/param drags) coalesce into one entry as long
@@ -99,6 +99,29 @@ const createDefaultReturns = () => [
   { ...createReturn('Delay', [wet('delay', { Time: 0.375, Feedback: 35 })]), id: 'return-b' }
 ];
 
+// Session View scenes: an optional name, tempo / time-signature override
+// applied on launch, and a follow action fired N bars after launch.
+// follow.action: 'next' | 'previous' | 'first' | 'random' | 'again' | 'stop'
+export const createScene = () => ({
+  id: uuidv4(),
+  name: '',
+  tempo: null,
+  signature: null, // { numerator, denominator } or null
+  follow: { enabled: false, bars: 4, action: 'next' }
+});
+
+// Session clips use the same clip properties as arrangement clips and loop
+// over their whole content by default.
+const normalizeSessionClip = (clip) => ({
+  id: uuidv4(),
+  startOffset: 0,
+  loopEnabled: true,
+  loopStart: 0,
+  loopEnd: clip.duration,
+  ...clip,
+  file: clip.file || clip.name || 'Clip'
+});
+
 // Default instrument attached to new MIDI tracks so their clips are audible.
 export const createDefaultInstrument = () => ({
   id: uuidv4(),
@@ -190,8 +213,10 @@ export const createDefaultProject = () => ({
   // Arrangement Regions
   regions: [], // { id, trackId, file, audioBuffer, startTime, duration }
 
-  // Session View Grid slots: { [trackId]: { [slotIndex]: clipData } }
+  // Session View Grid slots: { [trackId]: { [sceneIndex]: clipData } }
   sessionClips: {},
+  scenes: Array.from({ length: 8 }, createScene),
+  launchQuantization: '1 bar', // '1 bar' | '1/4' | 'none'
 
   // Saved Audio Effect Rack presets, reusable across tracks
   savedRacks: [],
@@ -319,7 +344,8 @@ export const useDAWStore = create((set, get) => ({
   setCountInBars: (countInBars) => set({ countInBars }),
   
   setSelectedTrackId: (id) => set({ selectedTrackId: id }),
-  setSelectedRegionId: (id) => set({ selectedRegionId: id }),
+  // Selecting an arrangement clip deselects any session clip (one clip in Clip View)
+  setSelectedRegionId: (id) => set(id ? { selectedRegionId: id, selectedSessionClip: null } : { selectedRegionId: id }),
   
   setMasterVolume: (vol) => { get().record('master-volume'); set({ masterVolume: vol }); },
   setMasterPan: (pan) => { get().record('master-pan'); set({ masterPan: pan }); },
@@ -746,10 +772,65 @@ export const useDAWStore = create((set, get) => ({
       ...state.sessionClips,
       [trackId]: {
         ...(state.sessionClips[trackId] || {}),
-        [slotIndex]: clipData
+        [slotIndex]: normalizeSessionClip(clipData)
       }
     }
-  })); }
+  })); },
+
+  updateSessionClip: (trackId, slotIndex, patch) => {
+    get().record(`session-clip-${trackId}-${slotIndex}-${Object.keys(patch).sort().join()}`);
+    set((state) => ({
+      sessionClips: {
+        ...state.sessionClips,
+        [trackId]: {
+          ...state.sessionClips[trackId],
+          [slotIndex]: { ...state.sessionClips[trackId][slotIndex], ...patch }
+        }
+      }
+    }));
+  },
+
+  removeSessionClip: (trackId, slotIndex) => { get().record(); set((state) => {
+    const { [slotIndex]: _removed, ...rest } = state.sessionClips[trackId] || {};
+    return {
+      sessionClips: { ...state.sessionClips, [trackId]: rest },
+      selectedSessionClip: null
+    };
+  }); },
+
+  // A one-bar looping MIDI clip in an empty slot of a MIDI track
+  createSessionMidiClip: (trackId, slotIndex) => {
+    const bar = (60 / get().bpm) * 4;
+    get().setSessionClip(trackId, slotIndex, {
+      type: 'midi', file: 'MIDI Clip', audioBuffer: null, duration: bar, loopEnd: bar, notes: []
+    });
+  },
+
+  selectedSessionClip: null, // { trackId, slot } shown in Clip View
+  setSelectedSessionClip: (sel) => set({ selectedSessionClip: sel }),
+
+  // Scene Actions
+  addScene: () => { get().record(); set((state) => ({ scenes: [...state.scenes, createScene()] })); },
+
+  // Removing a scene shifts the clips of later scenes up one row
+  removeScene: (index) => { if (get().scenes.length <= 1) return; get().record(); set((state) => {
+    const sessionClips = {};
+    Object.entries(state.sessionClips).forEach(([trackId, slots]) => {
+      sessionClips[trackId] = {};
+      Object.entries(slots).forEach(([k, clip]) => {
+        const i = Number(k);
+        if (i < index) sessionClips[trackId][i] = clip;
+        else if (i > index) sessionClips[trackId][i - 1] = clip;
+      });
+    });
+    return { scenes: state.scenes.filter((_, i) => i !== index), sessionClips, selectedSessionClip: null };
+  }); },
+
+  updateScene: (index, patch) => { get().record(`scene-${index}-${Object.keys(patch).join()}`); set((state) => ({
+    scenes: state.scenes.map((sc, i) => i === index ? { ...sc, ...patch } : sc)
+  })); },
+
+  setLaunchQuantization: (launchQuantization) => set({ launchQuantization })
 }));
 
 // The project the app opens with counts as saved until something changes

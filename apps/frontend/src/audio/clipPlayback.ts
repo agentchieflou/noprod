@@ -91,7 +91,8 @@ const WARP_GRAINS: Record<string, { grain: number; jitter: number }> = {
  */
 export function scheduleClip(
   ctx: BaseAudioContext, clip: any, instrumentParams: any, dest: AudioNode,
-  when: number, from: number, to: number, bpm: number
+  when: number, from: number, to: number, bpm: number,
+  opts: { noteStartsOnly?: boolean } = {}
 ): Stoppable[] {
   const sources: Stoppable[] = [];
   if (to <= from) return sources;
@@ -104,7 +105,11 @@ export function scheduleClip(
     if (!instrumentParams || !clip.notes) return sources;
     const occurrences = expandMidiNotes(clip);
     occurrences.forEach((o) => {
-      const a = Math.max(from, o.start), b = Math.min(to, o.end);
+      // noteStartsOnly: a caller scheduling a clip in consecutive windows wants
+      // each note exactly once (in the window where it starts), at full length
+      if (opts.noteStartsOnly && (o.start < from || o.start >= to)) return;
+      const a = opts.noteStartsOnly ? o.start : Math.max(from, o.start);
+      const b = opts.noteStartsOnly ? o.end : Math.min(to, o.end);
       if (b <= a) return;
       sources.push(triggerNote(ctx, out, instrumentParams, o.pitch, when + (a - from), b - a, o.velocity));
     });
