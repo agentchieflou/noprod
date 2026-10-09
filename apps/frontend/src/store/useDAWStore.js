@@ -669,8 +669,9 @@ export const useDAWStore = create((set, get) => ({
     regions: state.regions.map(r => r.id === id ? { ...r, startTime, duration, startOffset } : r)
   })); },
 
-  // Warp properties: { warpEnabled, warpMode, originalBpm, transients }
-  updateRegionWarp: (id, patch) => { get().record(`region-warp-${id}`); set((state) => ({
+  // Clip properties (Clip View): { file, gain, transpose, detune, loopEnabled,
+  // loopStart, loopEnd, startOffset, duration, warpEnabled, warpMode, originalBpm, transients }
+  updateClip: (id, patch) => { get().record(`clip-${id}-${Object.keys(patch).sort().join()}`); set((state) => ({
     regions: state.regions.map(r => r.id === id ? { ...r, ...patch } : r)
   })); },
 

@@ -10,8 +10,7 @@
 // lookahead from a timer since a segment without a loop has no end.
 
 import { audioContext, getStripInput, getAutomationTargets, setAutomationPlaying } from './engine';
-import { triggerNote } from './synth';
-import { scheduleWarpedRegion } from './warp';
+import { scheduleClip, clipTimelineLength } from './clipPlayback';
 import { beatsBetween, barAt, barSeconds } from './timeline';
 
 type Stoppable = { stop: (when?: number) => void };
@@ -137,46 +136,18 @@ function scheduleSegment(ctxStart: number, posStart: number, posEnd: number): Se
     seg.sources.push(src);
   });
 
+  // Clips: each plays the part of itself overlapping this segment
   (st.regions || []).forEach((region: any) => {
     const track = trackById.get(region.trackId);
     if (!track || track.isFrozen) return;
-    const dest = getStripInput(region.trackId);
-
-    if (region.type === 'midi') {
-      if (!track.instrument || !region.notes) return;
-      const regionEnd = region.startTime + region.duration;
-      region.notes.forEach((note: any) => {
-        const s = region.startTime + note.start;
-        const e = Math.min(regionEnd, s + note.duration);
-        const a = Math.max(posStart, s), b = Math.min(posEnd, e);
-        if (b <= a) return;
-        seg.sources.push(triggerNote(audioContext, dest, track.instrument.parameters, note.pitch, at(a), b - a, note.velocity ?? 1));
-      });
-      return;
-    }
-
-    if (!region.audioBuffer) return;
-
-    // Warped clips: granular time-stretch to follow the project tempo
-    if (region.warpEnabled && region.originalBpm) {
-      const ratio = (st.bpm || 120) / region.originalBpm;
-      const warpedEnd = region.startTime + region.duration / ratio;
-      const a = Math.max(posStart, region.startTime), b = Math.min(posEnd, warpedEnd);
-      if (b <= a) return;
-      seg.sources.push(...scheduleWarpedRegion(
-        audioContext, [dest], region, at(a), a - region.startTime, ratio, b - region.startTime
-      ));
-      return;
-    }
-
-    const a = Math.max(posStart, region.startTime);
-    const b = Math.min(posEnd, region.startTime + region.duration);
+    const start = region.startTime;
+    const end = start + clipTimelineLength(region, st.bpm || 120);
+    const a = Math.max(posStart, start), b = Math.min(posEnd, end);
     if (b <= a) return;
-    const src = audioContext.createBufferSource();
-    src.buffer = region.audioBuffer;
-    src.connect(dest);
-    src.start(at(a), (region.startOffset || 0) + (a - region.startTime), b - a);
-    seg.sources.push(src);
+    seg.sources.push(...scheduleClip(
+      audioContext, region, track.instrument?.parameters, getStripInput(region.trackId),
+      at(a), a - start, b - start, st.bpm || 120
+    ));
   });
 
   segments.push(seg);

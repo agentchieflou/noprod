@@ -6,8 +6,9 @@ import {
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { triggerNote, midiNoteName } from './audio/synth';
-import { detectTransients, estimateBpm } from './audio/warp';
-import PianoRoll from './components/PianoRoll';
+import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
+import ClipView from './components/ClipView';
+import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
 import ArrangementRuler from './components/ArrangementRuler';
@@ -25,7 +26,7 @@ import './App.css';
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
   (window as any).__dawStore = useDAWStore;
-  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext };
+  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser };
 }
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 
@@ -50,114 +51,6 @@ const BROWSER_PLUGINS = [
   { name: 'FabFilter Pro-Q 3', type: 'vst', parameters: { 'Freq': 440, 'Gain': 0.0, 'Q': 1.0 } },
   { name: 'Antares AutoTune', type: 'vst', parameters: { 'Retune Speed': 20, 'Humanize': 60, 'Key': 'C min' } },
 ];
-
-const AudioRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void, onOpenClip?: () => void }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { updateRegionPosition, updateRegionTrim, bpm } = useDAWStore();
-
-  // Warped clips render at their tempo-stretched length
-  const stretchRatio = region.warpEnabled && region.originalBpm ? bpm / region.originalBpm : 1;
-  const displayDuration = region.duration / stretchRatio;
-  const displayWidth = displayDuration * PIXELS_PER_SECOND;
-
-  useEffect(() => {
-    if (!canvasRef.current || !region.audioBuffer) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const data = region.audioBuffer.getChannelData(0);
-    // Render the sub-portion of the waveform based on startOffset and duration
-    const startSample = Math.floor((region.startOffset || 0) * region.audioBuffer.sampleRate);
-    const endSample = Math.floor(((region.startOffset || 0) + region.duration) * region.audioBuffer.sampleRate);
-    const subsetData = data.subarray(startSample, endSample);
-
-    const step = Math.ceil(subsetData.length / canvas.width);
-    const amp = canvas.height / 2;
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = trackColor || 'var(--accent-blue)';
-    
-    for (let i = 0; i < canvas.width; i++) {
-      let min = 1.0;
-      let max = -1.0;
-      for (let j = 0; j < step; j++) {
-        const datum = subsetData[(i * step) + j];
-        if (datum < min) min = datum;
-        if (datum > max) max = datum;
-      }
-      ctx.fillRect(i, (1 + min) * amp, 1, Math.max(1, (max - min) * amp));
-    }
-  }, [region, trackColor]);
-
-  const handleMouseDown = (e: React.MouseEvent, type: 'move' | 'trim-left' | 'trim-right') => {
-    e.stopPropagation();
-    onClick();
-    
-    const startX = e.clientX;
-    const startValTime = region.startTime;
-    const startValDuration = region.duration;
-    const startValOffset = region.startOffset || 0;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const deltaTime = deltaX / PIXELS_PER_SECOND;
-
-      if (type === 'move') {
-        const newStartTime = Math.max(0, startValTime + deltaTime);
-        updateRegionPosition(region.id, newStartTime);
-      } else if (type === 'trim-left') {
-        const allowedDeltaTime = Math.min(startValDuration - 0.2, deltaTime);
-        const newStartTime = Math.max(0, startValTime + allowedDeltaTime);
-        const newDuration = startValDuration - allowedDeltaTime;
-        const newOffset = Math.max(0, startValOffset + allowedDeltaTime);
-        updateRegionTrim(region.id, newStartTime, newDuration, newOffset);
-      } else if (type === 'trim-right') {
-        const newDuration = Math.max(0.2, startValDuration + deltaTime);
-        updateRegionTrim(region.id, startValTime, newDuration, startValOffset);
-      }
-    };
-
-    const handleMouseUp = () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
-
-  return (
-    <div
-      className={`audio-region ${isSelected ? 'selected' : ''}`}
-      onMouseDown={(e) => handleMouseDown(e, 'move')}
-      onDoubleClick={(e) => { e.stopPropagation(); onOpenClip?.(); }}
-      style={{
-        width: `${displayWidth}px`,
-        left: `${region.startTime * PIXELS_PER_SECOND}px`,
-        borderColor: isSelected ? '#fff' : trackColor
-      }}
-    >
-      <div
-        className="trim-handle left-handle"
-        onMouseDown={(e) => handleMouseDown(e, 'trim-left')}
-      />
-      <canvas ref={canvasRef} width={displayWidth} height={80} style={{ display: 'block', opacity: 0.8 }} />
-      {region.warpEnabled && (region.transients || []).map((t: number, i: number) => {
-        const rel = (t - (region.startOffset || 0)) / region.duration;
-        if (rel < 0 || rel > 1) return null;
-        return <div key={i} className="warp-marker" style={{ left: `${rel * 100}%` }} />;
-      })}
-      <div style={{ position: 'absolute', top: 4, left: 12, color: '#fff', fontSize: '10px', textShadow: '0 0 4px #000', fontWeight: 'bold', pointerEvents: 'none' }}>
-        {region.warpEnabled ? '⇌ ' : ''}{region.file}
-      </div>
-      <div 
-        className="trim-handle right-handle" 
-        onMouseDown={(e) => handleMouseDown(e, 'trim-right')} 
-      />
-    </div>
-  );
-};
 
 // Live peak meter + clip LED + limiter gain-reduction readout for the master bus.
 // Writes straight to the DOM from a rAF loop; only the latching clip LED is React state.
@@ -215,65 +108,6 @@ const MasterMeter = ({ limiterEnabled }: { limiterEnabled: boolean }) => {
   );
 };
 
-const MidiRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void, onOpenClip?: () => void }) => {
-  const { updateRegionPosition } = useDAWStore();
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onClick();
-    const startX = e.clientX;
-    const startValTime = region.startTime;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaTime = (moveEvent.clientX - startX) / PIXELS_PER_SECOND;
-      updateRegionPosition(region.id, Math.max(0, startValTime + deltaTime));
-    };
-    const handleMouseUp = () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
-
-  // Map the clip's pitch span onto its height so the pattern silhouette reads at a glance
-  const notes = region.notes || [];
-  const pitches = notes.map((n: any) => n.pitch);
-  const minPitch = pitches.length ? Math.min(...pitches) - 2 : 48;
-  const maxPitch = pitches.length ? Math.max(...pitches) + 2 : 72;
-  const pitchSpan = Math.max(1, maxPitch - minPitch);
-
-  return (
-    <div
-      className={`audio-region midi-region ${isSelected ? 'selected' : ''}`}
-      onMouseDown={handleMouseDown}
-      onDoubleClick={(e) => { e.stopPropagation(); onOpenClip?.(); }}
-      style={{
-        width: `${region.duration * PIXELS_PER_SECOND}px`,
-        left: `${region.startTime * PIXELS_PER_SECOND}px`,
-        borderColor: isSelected ? '#fff' : trackColor,
-        backgroundColor: `${trackColor}30`
-      }}
-    >
-      {notes.map((note: any) => (
-        <div
-          key={note.id}
-          className="midi-note-bar"
-          style={{
-            left: `${(note.start / region.duration) * 100}%`,
-            width: `${Math.max(1, (note.duration / region.duration) * 100)}%`,
-            top: `${(1 - (note.pitch - minPitch) / pitchSpan) * 90}%`,
-            backgroundColor: trackColor
-          }}
-        />
-      ))}
-      <div style={{ position: 'absolute', top: 4, left: 12, color: '#fff', fontSize: '10px', textShadow: '0 0 4px #000', fontWeight: 'bold', pointerEvents: 'none' }}>
-        {region.file} {notes.length === 0 ? '(empty)' : ''}
-      </div>
-    </div>
-  );
-};
-
 function App() {
   const { 
     tracks, regions, isPlaying, isRecording, isMetronomeEnabled, viewMode,
@@ -287,7 +121,7 @@ function App() {
     addMidiRegion, setTrackInstrument, updateInstrumentParameter,
     isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
     savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
-    setTrackFrozen, unfreezeTrack, flattenTrack, updateRegionWarp,
+    setTrackFrozen, unfreezeTrack, flattenTrack,
     punchInTime, punchOutTime, isPunchEnabled, togglePunch,
     isLoopEnabled, loopStart, loopEnd, toggleLoop, locators, addLocator, timeSignatures,
     toggleAutomationView, setAutomationLanes, clearAutomation,
@@ -575,21 +409,14 @@ function App() {
       alert('Nothing to freeze: this track has no clips.');
       return;
     }
-    const end = Math.max(...trackRegions.map((r: any) => r.startTime + r.duration)) + 0.5; // headroom for release tails
+    const end = Math.max(...trackRegions.map((r: any) => r.startTime + clipTimelineLength(r, bpm))) + 0.5; // headroom for release tails
     const sampleRate = audioContext.sampleRate;
     const offline = new OfflineAudioContext(2, Math.ceil(sampleRate * end), sampleRate);
 
+    // Same clip renderer as playback, so gain/transpose/loop/warp are baked in
     trackRegions.forEach((region: any) => {
-      if (region.type === 'midi' && region.notes && track.instrument) {
-        region.notes.forEach((note: any) => {
-          triggerNote(offline, offline.destination, track.instrument.parameters, note.pitch, region.startTime + note.start, note.duration, note.velocity ?? 1);
-        });
-      } else if (region.audioBuffer) {
-        const src = offline.createBufferSource();
-        src.buffer = region.audioBuffer;
-        src.connect(offline.destination);
-        src.start(region.startTime, region.startOffset || 0, region.duration);
-      }
+      scheduleClip(offline, region, track.instrument?.parameters, offline.destination,
+        region.startTime, 0, clipTimelineLength(region, bpm), bpm);
     });
 
     const rendered = await offline.startRendering();
@@ -1503,86 +1330,14 @@ function App() {
           
           {activeTab === 'clip' && (
             <div className="clip-properties-view">
-              {selectedRegion && selectedRegion.type === 'midi' ? (
-                <PianoRoll
+              {selectedRegion ? (
+                <ClipView
                   region={selectedRegion}
-                  trackColor={tracks.find((t: any) => t.id === selectedRegion.trackId)?.color || 'var(--accent-green)'}
-                  bpm={bpm}
+                  trackColor={tracks.find((t: any) => t.id === selectedRegion.trackId)?.color || '#3b82f6'}
                   onAudition={(pitch: number) => auditionNote(tracks.find((t: any) => t.id === selectedRegion.trackId), pitch)}
                 />
-              ) : selectedRegion ? (
-                <div style={{ display: 'flex', gap: '2rem' }}>
-                  <div>
-                    <h5>Selected Clip</h5>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{selectedRegion.file}</div>
-                  </div>
-                  <div className="clip-control-box">
-                    <span className="clip-control-label">Transpose</span>
-                    <input type="number" min="-24" max="24" defaultValue="0" className="clip-input" />
-                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>st</span>
-                  </div>
-                  <div className="clip-control-box">
-                    <span className="clip-control-label">Gain</span>
-                    <input type="number" min="-60" max="6" defaultValue="0" className="clip-input" />
-                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>dB</span>
-                  </div>
-                  <div className="clip-control-box">
-                    <span className="clip-control-label">Loop</span>
-                    <button className="btn-view active">ON</button>
-                  </div>
-                  {selectedRegion.audioBuffer && (
-                    <div className="clip-control-box warp-box">
-                      <span className="clip-control-label">Warp</span>
-                      <button
-                        className={`btn-view ${selectedRegion.warpEnabled ? 'active' : ''}`}
-                        title="Warp: time-stretch this clip to follow the project tempo"
-                        onClick={() => {
-                          if (selectedRegion.warpEnabled) {
-                            updateRegionWarp(selectedRegion.id, { warpEnabled: false });
-                          } else {
-                            const transients = selectedRegion.transients || detectTransients(selectedRegion.audioBuffer);
-                            const originalBpm = selectedRegion.originalBpm || estimateBpm(transients, bpm);
-                            updateRegionWarp(selectedRegion.id, {
-                              warpEnabled: true,
-                              warpMode: selectedRegion.warpMode || 'beats',
-                              originalBpm,
-                              transients
-                            });
-                          }
-                        }}
-                      >
-                        {selectedRegion.warpEnabled ? 'ON' : 'OFF'}
-                      </button>
-                      {selectedRegion.warpEnabled && (
-                        <>
-                          <select
-                            className="rack-map-select"
-                            value={selectedRegion.warpMode || 'beats'}
-                            onChange={(e) => updateRegionWarp(selectedRegion.id, { warpMode: e.target.value })}
-                          >
-                            <option value="beats">Beats</option>
-                            <option value="tones">Tones</option>
-                            <option value="texture">Texture</option>
-                          </select>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>Orig BPM</span>
-                            <input
-                              type="number" min="40" max="240" step="0.1"
-                              className="clip-input"
-                              value={selectedRegion.originalBpm}
-                              onChange={(e) => updateRegionWarp(selectedRegion.id, { originalBpm: parseFloat(e.target.value) || 120 })}
-                            />
-                          </div>
-                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>
-                            {(selectedRegion.transients || []).length} transients · ×{(bpm / selectedRegion.originalBpm).toFixed(2)} stretch
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
               ) : (
-                <div className="detail-empty-message">No clip selected. Double click or click an audio block on the timeline to edit.</div>
+                <div className="detail-empty-message">No clip selected. Click a clip on the timeline (double-click opens it here).</div>
               )}
             </div>
           )}
