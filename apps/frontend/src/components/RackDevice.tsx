@@ -1,6 +1,15 @@
 import { useState } from 'react';
 import { Trash2, Save, Plus } from 'lucide-react';
 import { useDAWStore } from '../store/useDAWStore';
+import { getDeviceDef } from '../audio/devices';
+import DeviceCard from './DeviceCard';
+
+// Macros can only sweep continuous parameters (not toggles or choice lists)
+const mappableParams = (device: any): string[] => {
+  const def = getDeviceDef(device);
+  if (!def) return Object.keys(device.parameters || {});
+  return def.params.filter(p => !p.kind || p.kind === 'number').map(p => p.name);
+};
 
 interface RackDeviceProps {
   trackId: string;
@@ -65,7 +74,7 @@ export default function RackDevice({ trackId, rack, browserPlugins, onRemove }: 
                   >
                     <option value="">Map to…</option>
                     {rack.devices.flatMap((d: any) =>
-                      Object.keys(d.parameters).map(paramName => (
+                      mappableParams(d).map(paramName => (
                         <option key={`${d.id}::${paramName}`} value={`${d.id}::${paramName}`}>
                           {d.name}: {paramName}
                         </option>
@@ -79,7 +88,10 @@ export default function RackDevice({ trackId, rack, browserPlugins, onRemove }: 
                       const sel = pendingMap[macro.id];
                       if (!sel) return;
                       const [deviceId, paramName] = sel.split('::');
-                      addMacroMapping(trackId, rack.id, macro.id, deviceId, paramName);
+                      // Map across the parameter's real range (e.g. 20Hz..20kHz), not a fixed 0..100
+                      const spec = getDeviceDef(rack.devices.find((d: any) => d.id === deviceId))
+                        ?.params.find(p => p.name === paramName);
+                      addMacroMapping(trackId, rack.id, macro.id, deviceId, paramName, spec?.min ?? 0, spec?.max ?? 100);
                       setPendingMap({ ...pendingMap, [macro.id]: '' });
                     }}
                   >
@@ -94,26 +106,13 @@ export default function RackDevice({ trackId, rack, browserPlugins, onRemove }: 
         {/* Chained devices */}
         <div className="rack-devices">
           {rack.devices.map((device: any) => (
-            <div key={device.id} className="device-card rack-inner-device">
-              <div className="device-card-header">
-                <span>{device.name}</span>
-                <button className="btn-icon" onClick={() => removeDeviceFromRack(trackId, rack.id, device.id)}><Trash2 size={11} /></button>
-              </div>
-              <div className="device-card-params">
-                {Object.keys(device.parameters).map((paramName) => (
-                  <div key={paramName} className="param-slider-row">
-                    <span style={{ fontSize: '9px' }}>{paramName}</span>
-                    <input
-                      type="range" min="0" max="100"
-                      value={Number(device.parameters[paramName]) || 0}
-                      onChange={(e) => updateRackDeviceParameter(trackId, rack.id, device.id, paramName, parseFloat(e.target.value))}
-                      className="param-slider"
-                    />
-                    <span style={{ fontSize: '9px', width: '24px', textAlign: 'right' }}>{device.parameters[paramName]}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <DeviceCard
+              key={device.id}
+              device={device}
+              className="rack-inner-device"
+              onChange={(paramName, val) => updateRackDeviceParameter(trackId, rack.id, device.id, paramName, val)}
+              onRemove={() => removeDeviceFromRack(trackId, rack.id, device.id)}
+            />
           ))}
 
           <div className="rack-add-device">

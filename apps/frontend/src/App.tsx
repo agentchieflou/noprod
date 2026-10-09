@@ -9,35 +9,14 @@ import { triggerNote, midiNoteName } from './audio/synth';
 import { detectTransients, estimateBpm, scheduleWarpedRegion } from './audio/warp';
 import PianoRoll from './components/PianoRoll';
 import RackDevice from './components/RackDevice';
+import DeviceCard from './components/DeviceCard';
+import { DEVICE_DEFS, createDevice } from './audio/devices';
+import { audioContext, masterAnalyser, masterLimiter, syncEngine, getStripInput } from './audio/engine';
 import './App.css';
 
-// Global AudioContext & Effects
-const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-
-// Mock Reverb via Feedback Delay Network
-const reverbReturnNode = audioContext.createDelay(1.0);
-reverbReturnNode.delayTime.value = 0.35;
-const reverbFeedback = audioContext.createGain();
-reverbFeedback.gain.value = 0.5;
-const reverbReturnGain = audioContext.createGain();
-
-reverbReturnNode.connect(reverbFeedback);
-reverbFeedback.connect(reverbReturnNode);
-reverbReturnNode.connect(reverbReturnGain);
-
-// Master bus: limiter (brickwall-configured compressor) -> analyser -> output.
-// The analyser stays in the chain even when the limiter is bypassed so the
-// meter always reflects what actually hits the speakers.
-const masterLimiter = audioContext.createDynamicsCompressor();
-masterLimiter.threshold.value = -1;
-masterLimiter.knee.value = 0;
-masterLimiter.ratio.value = 20;
-masterLimiter.attack.value = 0.001;
-masterLimiter.release.value = 0.1;
-const masterAnalyser = audioContext.createAnalyser();
-masterAnalyser.fftSize = 2048;
-masterLimiter.connect(masterAnalyser);
-masterAnalyser.connect(audioContext.destination);
+// Keep the audio graph (strips, device chains, sends, routing) in step with the store
+syncEngine(useDAWStore.getState());
+useDAWStore.subscribe(syncEngine);
 
 let activeSources: any[] = [];
 const PIXELS_PER_SECOND = 50;
@@ -62,11 +41,12 @@ const PRESET_COLORS = [
   '#6b7280'  // Grey
 ];
 
+// Add Device choices: stock devices with real DSP first, then third-party
+// plugins (passed through untouched until Audio Core hosts them natively).
 const BROWSER_PLUGINS = [
+  ...Object.keys(DEVICE_DEFS).map(createDevice),
   { name: 'FabFilter Pro-Q 3', type: 'vst', parameters: { 'Freq': 440, 'Gain': 0.0, 'Q': 1.0 } },
   { name: 'Antares AutoTune', type: 'vst', parameters: { 'Retune Speed': 20, 'Humanize': 60, 'Key': 'C min' } },
-  { name: 'NoProd Reverb', type: 'audio-fx', parameters: { 'Dry/Wet': 30, 'Decay': 2.5 } },
-  { name: 'NoProd Delay', type: 'audio-fx', parameters: { 'Time': 0.25, 'Feedback': 40 } },
 ];
 
 const AudioRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void, onOpenClip?: () => void }) => {
@@ -317,6 +297,7 @@ function App() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [newVstPathInput, setNewVstPathInput] = useState('');
+  const [newDeviceIdx, setNewDeviceIdx] = useState(0);
 
   // AI Dictation (Orchestrator connection)
   const orchestratorWsRef = useRef<WebSocket | null>(null);
@@ -357,69 +338,6 @@ function App() {
     ws.send(JSON.stringify({ type: 'DICTATION', text: dictationInput.trim() }));
   };
 
-  // Audio Nodes Setup
-  const masterGainRef = useRef<GainNode | null>(null);
-  const trackGainsRef = useRef<{ [key: string]: GainNode }>({});
-  const trackSendsRef = useRef<{ [key: string]: GainNode }>({});
-
-  useEffect(() => {
-    if (!masterGainRef.current) {
-      masterGainRef.current = audioContext.createGain();
-    }
-    masterGainRef.current.gain.value = masterVolume;
-  }, [masterVolume]);
-
-  // Route the master bus and reverb return through the limiter (or bypass it).
-  // The analyser stays last in the chain either way so metering is always live.
-  useEffect(() => {
-    const mg = masterGainRef.current;
-    if (!mg) return;
-    mg.disconnect();
-    reverbReturnGain.disconnect();
-    const entry = isLimiterEnabled ? masterLimiter : masterAnalyser;
-    mg.connect(entry);
-    reverbReturnGain.connect(entry);
-  }, [isLimiterEnabled]);
-
-  useEffect(() => {
-    reverbReturnGain.gain.value = reverbReturnVolume;
-  }, [reverbReturnVolume]);
-
-  // Tracks whose current gain-node destination is a group bus (by target id),
-  // so we only re-patch the graph when a track's routing actually changes.
-  const trackRoutingRef = useRef<{ [key: string]: string }>({});
-
-  useEffect(() => {
-    // Pass 1: ensure every track (including groups) has gain/send nodes
-    tracks.forEach((t: any) => {
-      if (!trackGainsRef.current[t.id]) {
-        trackGainsRef.current[t.id] = audioContext.createGain();
-      }
-      trackGainsRef.current[t.id].gain.value = t.isMuted ? 0 : t.volume;
-
-      if (!trackSendsRef.current[t.id]) {
-        trackSendsRef.current[t.id] = audioContext.createGain();
-        trackSendsRef.current[t.id].connect(reverbReturnNode);
-      }
-      trackSendsRef.current[t.id].gain.value = t.sendReverb * t.volume;
-    });
-
-    // Pass 2: patch each track into its group's bus (real summing) or master
-    tracks.forEach((t: any) => {
-      const gain = trackGainsRef.current[t.id];
-      const targetId = t.groupId && trackGainsRef.current[t.groupId] ? t.groupId : 'master';
-      if (trackRoutingRef.current[t.id] !== targetId) {
-        gain.disconnect();
-        if (targetId === 'master') {
-          if (masterGainRef.current) gain.connect(masterGainRef.current);
-        } else {
-          gain.connect(trackGainsRef.current[targetId]);
-        }
-        trackRoutingRef.current[t.id] = targetId;
-      }
-    });
-  }, [tracks]);
-
   // Playback & Playhead Engine
   const animationRef = useRef<number | undefined>(undefined);
   const [localPlaybackPosition, setLocalPlaybackPosition] = useState(0);
@@ -442,10 +360,7 @@ function App() {
         if (durationLeft <= 0) return;
         const source = audioContext.createBufferSource();
         source.buffer = t.frozenBuffer;
-        const trackGain = trackGainsRef.current[t.id];
-        const trackSend = trackSendsRef.current[t.id];
-        if (trackGain) source.connect(trackGain);
-        if (trackSend) source.connect(trackSend);
+        source.connect(getStripInput(t.id));
         source.start(audioContext.currentTime, Math.max(0, currentPlayheadTime), durationLeft);
         activeSources.push(source);
       });
@@ -455,8 +370,7 @@ function App() {
         if (region.type !== 'midi' || !region.notes) return;
         const track = useDAWStore.getState().tracks.find((t: any) => t.id === region.trackId);
         if (!track || !track.instrument || track.isFrozen) return;
-        const trackGain = trackGainsRef.current[region.trackId];
-        const trackSend = trackSendsRef.current[region.trackId];
+        const stripInput = getStripInput(region.trackId);
 
         region.notes.forEach((note: any) => {
           const absStart = region.startTime + note.start;
@@ -466,12 +380,7 @@ function App() {
           const startDelay = Math.max(0, absStart - currentPlayheadTime);
           const playDuration = absEnd - Math.max(absStart, currentPlayheadTime);
           const when = audioContext.currentTime + startDelay;
-          if (trackGain) {
-            activeSources.push(triggerNote(audioContext, trackGain, track.instrument.parameters, note.pitch, when, playDuration, note.velocity ?? 1));
-          }
-          if (trackSend) {
-            activeSources.push(triggerNote(audioContext, trackSend, track.instrument.parameters, note.pitch, when, playDuration, (note.velocity ?? 1) * 0.5));
-          }
+          activeSources.push(triggerNote(audioContext, stripInput, track.instrument.parameters, note.pitch, when, playDuration, note.velocity ?? 1));
         });
       });
 
@@ -488,13 +397,8 @@ function App() {
           const outputOffset = Math.max(0, currentPlayheadTime - region.startTime);
           if (outputOffset >= warpedDur) return;
           const startDelay = Math.max(0, region.startTime - currentPlayheadTime);
-          const dests: AudioNode[] = [];
-          const tg = trackGainsRef.current[region.trackId];
-          const ts = trackSendsRef.current[region.trackId];
-          if (tg) dests.push(tg);
-          if (ts) dests.push(ts);
           const grains = scheduleWarpedRegion(
-            audioContext, dests, region,
+            audioContext, [getStripInput(region.trackId)], region,
             audioContext.currentTime + startDelay, outputOffset, ratio
           );
           activeSources.push(...grains);
@@ -504,12 +408,7 @@ function App() {
         if (region.audioBuffer) {
           const source = audioContext.createBufferSource();
           source.buffer = region.audioBuffer;
-          
-          const trackGain = trackGainsRef.current[region.trackId];
-          const trackSend = trackSendsRef.current[region.trackId];
-          
-          if (trackGain) source.connect(trackGain);
-          if (trackSend) source.connect(trackSend);
+          source.connect(getStripInput(region.trackId));
 
           // Play offset inside the buffer, including startOffset and resume offset
           const actualBufferOffset = (region.startOffset || 0) + Math.max(0, currentPlayheadTime - region.startTime);
@@ -676,12 +575,7 @@ function App() {
     if (clip && clip.audioBuffer) {
       const source = audioContext.createBufferSource();
       source.buffer = clip.audioBuffer;
-      
-      const trackGain = trackGainsRef.current[trackId];
-      const trackSend = trackSendsRef.current[trackId];
-      if (trackGain) source.connect(trackGain);
-      if (trackSend) source.connect(trackSend);
-      
+      source.connect(getStripInput(trackId));
       source.start();
     }
   };
@@ -724,10 +618,7 @@ function App() {
   const auditionNote = (track: any, pitch: number) => {
     if (!track?.instrument) return;
     if (audioContext.state === 'suspended') audioContext.resume();
-    const trackGain = trackGainsRef.current[track.id];
-    if (trackGain) {
-      triggerNote(audioContext, trackGain, track.instrument.parameters, pitch, audioContext.currentTime, 0.35);
-    }
+    triggerNote(audioContext, getStripInput(track.id), track.instrument.parameters, pitch, audioContext.currentTime, 0.35);
   };
 
   // Freeze: render the track's clips offline (instrument included for MIDI),
@@ -1430,9 +1321,14 @@ function App() {
                   )}
                   <div style={{ marginRight: '1rem', borderRight: '1px solid var(--border-color)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
                     <h5 style={{ color: selectedTrack.color }}>{selectedTrack.name} Device Chain</h5>
-                    <button className="btn-add-track" onClick={() => addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[0])}>
-                      <Plus size={12} /> Add Device
-                    </button>
+                    <div style={{ display: 'flex', gap: '3px' }}>
+                      <select className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(parseInt(e.target.value))} title="Device to add">
+                        {BROWSER_PLUGINS.map((p: any, i: number) => <option key={p.name} value={i}>{p.name}</option>)}
+                      </select>
+                      <button className="btn-add-track" onClick={() => addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[newDeviceIdx])}>
+                        <Plus size={12} /> Add
+                      </button>
+                    </div>
                     <button className="btn-add-track" style={{ backgroundColor: '#a855f7' }} onClick={() => addRackToTrack(selectedTrack.id)}>
                       <Plus size={12} /> Add Rack
                     </button>
@@ -1527,26 +1423,12 @@ function App() {
                           onRemove={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}
                         />
                       ) : (
-                      <div key={plugin.id} className="device-card">
-                        <div className="device-card-header">
-                          <span>{plugin.name}</span>
-                          <button className="btn-icon" onClick={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}><Trash2 size={12} /></button>
-                        </div>
-                        <div className="device-card-params">
-                          {Object.keys(plugin.parameters).map((paramName) => (
-                            <div key={paramName} className="param-slider-row">
-                              <span style={{ fontSize: '10px' }}>{paramName}</span>
-                              <input 
-                                type="range" min="0" max="100" 
-                                value={plugin.parameters[paramName]} 
-                                onChange={(e) => updateDeviceParameter(selectedTrack.id, plugin.id, paramName, parseFloat(e.target.value))}
-                                className="param-slider"
-                              />
-                              <span style={{ fontSize: '10px', width: '20px', textAlign: 'right' }}>{plugin.parameters[paramName]}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                        <DeviceCard
+                          key={plugin.id}
+                          device={plugin}
+                          onChange={(paramName, val) => updateDeviceParameter(selectedTrack.id, plugin.id, paramName, val)}
+                          onRemove={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}
+                        />
                       )
                     ))}
                   </div>

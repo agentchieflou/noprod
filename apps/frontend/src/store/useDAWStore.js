@@ -479,7 +479,7 @@ export const useDAWStore = create((set, get) => ({
     })
   })); },
 
-  addMacroMapping: (trackId, rackId, macroId, deviceId, paramName) => { get().record(); set((state) => ({
+  addMacroMapping: (trackId, rackId, macroId, deviceId, paramName, min = 0, max = 100) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? {
       ...t,
       plugins: t.plugins.map(p => p.id === rackId ? {
@@ -488,7 +488,7 @@ export const useDAWStore = create((set, get) => ({
           ...m,
           mappings: m.mappings.some(mp => mp.deviceId === deviceId && mp.paramName === paramName)
             ? m.mappings
-            : [...m.mappings, { deviceId, paramName, min: 0, max: 100 }]
+            : [...m.mappings, { deviceId, paramName, min, max }]
         } : m)
       } : p)
     } : t)

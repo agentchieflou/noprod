@@ -658,6 +658,8 @@ body {
 
 .param-slider {
   flex: 1;
+  min-width: 0;
+  width: 0;
   accent-color: var(--accent-blue);
 }
 
@@ -1171,4 +1173,34 @@ body {
 .btn-metronome.punch-active {
   background-color: var(--accent-red);
   border-color: var(--accent-red);
+}
+
+/* Spec-driven device parameters */
+.param-name {
+  font-size: 10px;
+  width: 58px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.param-value {
+  font-size: 10px;
+  width: 52px;
+  text-align: right;
+  font-family: monospace;
+  flex-shrink: 0;
+}
+
+.param-toggle {
+  font-size: 9px;
+  padding: 1px 8px;
+}
+
+.device-note {
+  font-size: 9px;
+  color: var(--text-secondary);
+  padding: 0 6px 6px;
+  font-style: italic;
 }
