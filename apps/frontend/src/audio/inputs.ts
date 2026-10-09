@@ -1,8 +1,9 @@
-// Inputs: audio interfaces (getUserMedia), MIDI devices (Web MIDI) and the
-// computer keyboard as a MIDI keyboard. Tracks choose an input in their I/O
-// section; the engine monitors audio inputs through the track strip, and MIDI
-// is played live through armed (or monitor-In) MIDI tracks' instruments.
-// Every MIDI event is also published on a bus for recording / capture.
+// Inputs: audio interfaces (getUserMedia) and MIDI devices (Web MIDI); the
+// computer keyboard publishes onto the same MIDI bus (computerKeyboard.ts).
+// Tracks choose an input in their I/O section; the engine monitors audio
+// inputs through the track strip, and MIDI is played live through the
+// instruments of the tracks each event targets. Every MIDI event is also
+// published on a bus for recording / capture.
 
 import { audioContext, getStripInput } from './engine';
 import { startVoice } from './synth';
@@ -90,11 +91,13 @@ export interface MidiEvent {
   channel: number;   // 1..16
   source: string;    // MIDI input id, or 'computer'
   time: number;      // audio-context time
+  targets?: string[]; // explicit track ids (the computer keyboard plays the selected track)
 }
 
 const midiListeners = new Set<(e: MidiEvent) => void>();
 export const onMidiEvent = (fn: (e: MidiEvent) => void) => { midiListeners.add(fn); return () => { midiListeners.delete(fn); }; };
 const publish = (e: MidiEvent) => midiListeners.forEach((fn) => fn(e));
+export const publishMidi = publish;
 
 export interface MidiDevice { id: string; name: string }
 let midiDevices: MidiDevice[] = [];
@@ -125,57 +128,6 @@ export async function initMidi() {
   } catch { /* MIDI permission denied or unsupported */ }
 }
 
-// ------------------------------------------------------- computer keyboard
-
-// Ableton's layout: A-K white keys from C, W E T Y U black keys, Z/X octave
-// down/up, C/V velocity down/up.
-const KEY_TO_SEMITONE: Record<string, number> = {
-  a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14, p: 15, ';': 16
-};
-let octave = 4;
-let keyboardVelocity = 0.8;
-const heldKeys = new Map<string, number>();
-let computerKeyboardEnabled = false;
-export const isComputerKeyboardEnabled = () => computerKeyboardEnabled;
-export const getComputerKeyboardOctave = () => octave;
-
-export function setComputerKeyboardEnabled(on: boolean) {
-  computerKeyboardEnabled = on;
-  if (!on) {
-    heldKeys.forEach((pitch) => publish({ type: 'off', pitch, velocity: 0, channel: 1, source: 'computer', time: audioContext.currentTime }));
-    heldKeys.clear();
-  }
-  notifyInputs();
-}
-
-const typing = (e: KeyboardEvent) => {
-  const t = e.target as HTMLElement;
-  return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable;
-};
-
-window.addEventListener('keydown', (e) => {
-  if (!computerKeyboardEnabled || e.repeat || e.ctrlKey || e.metaKey || e.altKey || typing(e)) return;
-  const k = e.key.toLowerCase();
-  if (k === 'z') { octave = Math.max(0, octave - 1); notifyInputs(); return; }
-  if (k === 'x') { octave = Math.min(8, octave + 1); notifyInputs(); return; }
-  if (k === 'c') { keyboardVelocity = Math.max(0.1, keyboardVelocity - 0.1); return; }
-  if (k === 'v') { keyboardVelocity = Math.min(1, keyboardVelocity + 0.1); return; }
-  const semi = KEY_TO_SEMITONE[k];
-  if (semi === undefined || heldKeys.has(k)) return;
-  const pitch = (octave + 1) * 12 + semi;
-  heldKeys.set(k, pitch);
-  if (audioContext.state === 'suspended') audioContext.resume();
-  publish({ type: 'on', pitch, velocity: keyboardVelocity, channel: 1, source: 'computer', time: audioContext.currentTime });
-});
-
-window.addEventListener('keyup', (e) => {
-  const k = e.key.toLowerCase();
-  const pitch = heldKeys.get(k);
-  if (pitch === undefined) return;
-  heldKeys.delete(k);
-  publish({ type: 'off', pitch, velocity: 0, channel: 1, source: 'computer', time: audioContext.currentTime });
-});
-
 // ------------------------------------------------------ live MIDI playing
 
 // Does a MIDI track take this event? (input: 'all' | 'computer' | device id | 'none')
@@ -193,14 +145,22 @@ export const isMonitoring = (track: any) => {
   return m === 'in' || (m === 'auto' && !!track.isArmed);
 };
 
+// The MIDI tracks an event plays on: its explicit targets, else every armed
+// (or monitor-In) MIDI track whose input takes it
+export function midiEventTargets(state: any, e: MidiEvent): any[] {
+  const tracks: any[] = state.tracks || [];
+  if (e.targets) return tracks.filter((t) => e.targets!.includes(t.id) && t.type === 'midi');
+  return tracks.filter((t) => t.type === 'midi' && isMonitoring(t) && trackAcceptsMidi(t, e));
+}
+
 // One input note can sound several notes (Chord effect), so voices are kept per input key
 const liveVoices = new Map<string, { release: (at: number) => void }[]>();
 
 export function initLiveMidi(store: { getState: () => any }) {
   onMidiEvent((e) => {
     const st = store.getState();
-    (st.tracks || []).forEach((t: any) => {
-      if (t.type !== 'midi' || !t.instrument || !isMonitoring(t) || !trackAcceptsMidi(t, e)) return;
+    midiEventTargets(st, e).forEach((t: any) => {
+      if (!t.instrument) return;
       const key = `${t.id}:${e.source}:${e.pitch}`;
       liveVoices.get(key)?.forEach((v) => v.release(e.time));
       liveVoices.delete(key);

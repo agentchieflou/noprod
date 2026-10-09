@@ -2097,3 +2097,99 @@ body {
   padding: 4px 6px;
   font-size: 10px;
 }
+
+/* Computer keyboard panel */
+.kb-panel {
+  display: flex;
+  gap: 12px;
+  height: 150px;
+  flex-shrink: 0;
+  background: #1c1c1c;
+  border-top: 2px solid var(--bg-dark);
+  padding: 8px 12px;
+  line-height: 1.2;
+  user-select: none;
+}
+.kb-controls {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+}
+.kb-title { display: flex; align-items: center; gap: 4px; }
+.kb-title b { color: #10b981; }
+.kb-warn { color: #f59e0b; }
+.kb-close { margin-left: auto; }
+.kb-row { display: flex; align-items: center; gap: 6px; }
+.kb-segment { display: flex; }
+.kb-segment button {
+  font-size: 10px;
+  padding: 2px 7px;
+  background: #262626;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.kb-segment button.active { background: #10b981; color: #111; border-color: #10b981; }
+.kb-label { color: var(--text-secondary); width: 52px; }
+.kb-value { font-family: monospace; min-width: 26px; text-align: center; }
+.kb-velocity { max-width: 140px; }
+.kb-check { display: flex; align-items: center; gap: 3px; }
+.kb-help { font-size: 9px; color: #777; }
+
+.kb-keys { flex: 1; min-width: 0; display: flex; }
+.kb-piano { position: relative; flex: 1; height: 100%; }
+.kb-white, .kb-black {
+  position: absolute;
+  top: 0;
+  box-sizing: border-box;
+  border-radius: 0 0 4px 4px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+.kb-white {
+  height: 100%;
+  background: #e5e7eb;
+  border: 1px solid #555;
+  color: #333;
+  padding-bottom: 4px;
+}
+.kb-black {
+  height: 60%;
+  background: #1f1f1f;
+  border: 1px solid #000;
+  color: #ccc;
+  z-index: 2;
+  padding-bottom: 3px;
+}
+.kb-white.lit { background: #34d399; }
+.kb-black.lit { background: #059669; }
+.kb-key-label { font-size: 10px; font-weight: bold; font-family: monospace; white-space: nowrap; }
+.kb-note-label { font-size: 8px; color: #888; }
+
+.kb-pads { flex: 1; display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+.kb-pad-row { display: flex; gap: 6px; }
+.kb-pad {
+  flex: 1;
+  min-width: 0;
+  height: 54px;
+  background: #2a2a2a;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  cursor: pointer;
+  touch-action: none;
+}
+.kb-pad.drums { height: 74px; }
+.kb-pad.lit { background: #10b981; color: #111; border-color: #34d399; }
+.kb-pad-name { font-size: 12px; font-weight: bold; }

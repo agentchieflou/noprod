@@ -15,7 +15,9 @@ import TakeLane from './components/TakeLane';
 import BrowserSidebar, { SAMPLE_DRAG_TYPE } from './components/BrowserSidebar';
 import { getFile } from './browser/library';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
-import { initMidi, onInputsChange, isComputerKeyboardEnabled, setComputerKeyboardEnabled, getComputerKeyboardOctave } from './audio/inputs';
+import { initMidi } from './audio/inputs';
+import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
+import KeyboardPanel from './components/KeyboardPanel';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
@@ -149,7 +151,7 @@ function App() {
   const [newVstPathInput, setNewVstPathInput] = useState('');
   const [newDeviceIdx, setNewDeviceIdx] = useState('audio:0');
   const [showIO, setShowIO] = useState(false);
-  const keyboardMidi = useSyncExternalStore(onInputsChange, isComputerKeyboardEnabled);
+  const keyboardMidi = useSyncExternalStore(subscribeKeyboard, () => getKeyboardState().enabled);
   // Capture lights up when there is uncaptured playing for an armed MIDI track
   const capturable = useSyncExternalStore(onCaptureBufferChange, () => hasCapturable(useDAWStore.getState())) && tracks.length > 0;
 
@@ -882,8 +884,8 @@ function App() {
                   <button className={`btn-add-track io-toggle ${showIO ? 'active' : ''}`} onClick={() => setShowIO(!showIO)}
                     title="Show each track's input, output and monitoring">I/O</button>
                   <button className={`btn-add-track io-toggle ${keyboardMidi ? 'active' : ''}`}
-                    onClick={() => setComputerKeyboardEnabled(!keyboardMidi)}
-                    title={`Computer MIDI keyboard ${keyboardMidi ? 'on' : 'off'}: A-K play notes (W E T Y U sharps), Z/X octave (now ${getComputerKeyboardOctave()}), C/V velocity`}>⌨</button>
+                    onClick={() => setKeyboardEnabled(!keyboardMidi)}
+                    title={`Computer MIDI keyboard ${keyboardMidi ? 'on' : 'off'}: play the selected MIDI track from your keyboard`}>⌨</button>
                 </div>
 
                 {visibleTracks.map((track: any) => (
@@ -1162,6 +1164,8 @@ function App() {
           )}
         </div>
       </div>
+
+      {keyboardMidi && <KeyboardPanel />}
 
       {/* Bottom Detail panel */}
       <div className={`bottom-detail-panel ${activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi' ? 'tall' : ''}`}>

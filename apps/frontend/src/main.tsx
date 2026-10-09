@@ -8,6 +8,7 @@ import { initSession } from './audio/session'
 import { initLiveMidi } from './audio/inputs'
 import { initRecorder } from './audio/recorder'
 import { initCapture } from './audio/capture'
+import { initComputerKeyboard } from './audio/computerKeyboard'
 import { useDAWStore } from './store/useDAWStore'
 
 // The audio engine registers its worklets before the first render so device
@@ -16,7 +17,8 @@ initTransport(useDAWStore)
 initSession(useDAWStore)
 initLiveMidi(useDAWStore)
 initRecorder(useDAWStore)
-initCapture()
+initCapture(useDAWStore)
+initComputerKeyboard(useDAWStore)
 initEngine(useDAWStore).finally(() => {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

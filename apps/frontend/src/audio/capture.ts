@@ -1,7 +1,7 @@
-// Capture MIDI: every incoming MIDI event is buffered in the background, so
-// after playing something without recording, Capture turns the most recent
-// phrase into a clip on each armed (or monitor-In) MIDI track that accepts
-// that input.
+// Capture MIDI: every incoming MIDI event is buffered in the background
+// together with the tracks it played on (armed / monitor-In MIDI tracks, or
+// the track the computer keyboard plays), so after playing something without
+// recording, Capture turns the most recent phrase into a clip on each of them.
 //
 // - Played while the transport ran: the clip lands where the notes were
 //   played, stretched to whole bars.
@@ -11,12 +11,12 @@
 // - In Session View the clip goes into the track's first empty slot, looped.
 
 import { audioContext } from './engine';
-import { onMidiEvent, trackAcceptsMidi, isMonitoring, type MidiEvent } from './inputs';
+import { onMidiEvent, midiEventTargets, type MidiEvent } from './inputs';
 import { isPlaying, getPosition } from './transport';
 import { barAt, barSeconds } from './timeline';
 import { estimateBpm } from './warp';
 
-interface Buffered extends MidiEvent { pos: number | null }
+interface Buffered extends MidiEvent { pos: number | null; trackIds: string[] }
 
 const MAX_EVENTS = 4000;
 const PHRASE_GAP = 4; // seconds of silence that separate phrases
@@ -26,22 +26,20 @@ let capturedUpTo = 0; // ctx time; events before it were already captured
 const listeners = new Set<() => void>();
 export const onCaptureBufferChange = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 
-export function initCapture() {
+export function initCapture(store: { getState: () => any }) {
   onMidiEvent((e) => {
-    buffer.push({ ...e, pos: isPlaying() ? getPosition() : null });
+    const trackIds = midiEventTargets(store.getState(), e).map((t: any) => t.id);
+    buffer.push({ ...e, pos: isPlaying() ? getPosition() : null, trackIds });
     if (buffer.length > MAX_EVENTS) buffer = buffer.slice(-MAX_EVENTS / 2);
     listeners.forEach((fn) => fn());
   });
 }
 
-// Is there uncaptured playing that some armed MIDI track would take?
+// Is there uncaptured playing on some track that still exists?
 export function hasCapturable(state: any): boolean {
-  const tracks = captureTargets(state);
-  return buffer.some((e) => e.type === 'on' && e.time > capturedUpTo && tracks.some((t: any) => trackAcceptsMidi(t, e)));
+  const ids = new Set((state.tracks || []).map((t: any) => t.id));
+  return buffer.some((e) => e.type === 'on' && e.time > capturedUpTo && e.trackIds.some((id) => ids.has(id)));
 }
-
-const captureTargets = (state: any) =>
-  (state.tracks || []).filter((t: any) => t.type === 'midi' && isMonitoring(t));
 
 // The latest phrase: walk back from the newest note-on until a long gap
 function latestPhrase(events: Buffered[]): Buffered[] {
@@ -71,7 +69,8 @@ function toNotes(events: Buffered[], now: number) {
 export function captureMidi(state: any): number {
   const now = audioContext.currentTime;
   const fresh = buffer.filter((e) => e.time > capturedUpTo);
-  const targets = captureTargets(state);
+  const playedOn = new Set(fresh.flatMap((e) => e.trackIds));
+  const targets = (state.tracks || []).filter((t: any) => t.type === 'midi' && playedOn.has(t.id));
   let created = 0;
 
   // Empty project + stopped: take the tempo from the playing first
@@ -80,7 +79,7 @@ export function captureMidi(state: any): number {
   let bpm = state.bpm;
 
   targets.forEach((track: any) => {
-    const phrase = latestPhrase(fresh.filter((e) => trackAcceptsMidi(track, e)));
+    const phrase = latestPhrase(fresh.filter((e) => e.trackIds.includes(track.id)));
     const notes = toNotes(phrase, now);
     if (!notes.length) return;
 
