@@ -4,7 +4,7 @@
 // kept in sync with the store by syncEngine(), which only touches nodes whose
 // backing state actually changed.
 
-import { createDeviceDSP, deviceKind, resolvedParameters, type DeviceDSP } from './devices';
+import { createDeviceDSP, deviceKind, resolvedParameters, loadDeviceWorklets, type DeviceDSP } from './devices';
 
 export const audioContext: AudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
 
@@ -221,6 +221,18 @@ export function syncEngine(state: any) {
 export const getStripInput = (id: string): AudioNode => (strips.get(id) || strips.get(MASTER_ID))!.input;
 
 export const getDeviceDSP = (deviceId: string): DeviceDSP | undefined => dsps.get(deviceId);
+
+// Register worklet-based devices, then keep the graph in step with the store.
+// Worklet failures are non-fatal: those devices fall back to pass-through.
+export async function initEngine(store: { getState: () => any; subscribe: (fn: (s: any) => void) => unknown }) {
+  try {
+    await loadDeviceWorklets(audioContext);
+  } catch (err) {
+    console.warn('Audio worklets unavailable; dynamics devices will pass audio through', err);
+  }
+  syncEngine(store.getState());
+  store.subscribe(syncEngine);
+}
 
 export const resumeAudio = () => {
   if (audioContext.state === 'suspended') return audioContext.resume();

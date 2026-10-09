@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Trash2 } from 'lucide-react';
+import { DeviceExtra } from './DeviceVisuals';
 import {
   getDeviceDef, resolvedParameters, formatParam, valueToSlider, sliderToValue, SLIDER_STEPS,
   type ParamSpec, type ParamValue
@@ -57,12 +58,12 @@ export default function DeviceCard({ device, onChange, onRemove, className = '',
   const params = resolvedParameters(device);
 
   return (
-    <div className={`device-card ${className}`}>
+    <div className={`device-card device-${def?.kind || 'generic'} ${className}`}>
       <div className="device-card-header">
         <span>{device.name}</span>
         <button className="btn-icon" title="Remove device" onClick={onRemove}><Trash2 size={12} /></button>
       </div>
-      {extra}
+      {extra ?? <DeviceExtra device={device} />}
       <div className="device-card-params">
         {def
           ? def.params.map((spec) => (

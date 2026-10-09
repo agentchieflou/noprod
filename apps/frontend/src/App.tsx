@@ -11,12 +11,8 @@ import PianoRoll from './components/PianoRoll';
 import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
 import { DEVICE_DEFS, createDevice } from './audio/devices';
-import { audioContext, masterAnalyser, masterLimiter, syncEngine, getStripInput } from './audio/engine';
+import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
 import './App.css';
-
-// Keep the audio graph (strips, device chains, sends, routing) in step with the store
-syncEngine(useDAWStore.getState());
-useDAWStore.subscribe(syncEngine);
 
 let activeSources: any[] = [];
 const PIXELS_PER_SECOND = 50;

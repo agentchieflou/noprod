@@ -5,6 +5,8 @@
 // Third-party 'vst' entries have no kind and pass audio through untouched
 // (native hosting is audio_core's job, not the browser's).
 
+import dynamicsProcessorUrl from './worklets/dynamics-processor.js?url';
+
 export type ParamValue = number | boolean | string;
 
 export interface ParamSpec {
@@ -77,6 +79,61 @@ const createMix = (ctx: BaseAudioContext) => {
     { param: wet.gain, map: (v) => Math.max(0, Math.min(1, v / 100)) }
   ];
   return { input, output, wet, setMix, targets };
+};
+
+// ---------------------------------------------------------------- Dynamics
+
+// AudioWorklet modules must be registered on a context before devices that use
+// them can be created there (done once at startup for the live context).
+export const loadDeviceWorklets = (ctx: BaseAudioContext) => ctx.audioWorklet.addModule(dynamicsProcessorUrl);
+
+// Wrap the shared dynamics worklet: AudioParams are exposed by name for
+// automation and the processor reports its current gain reduction.
+const createDynamics = (ctx: BaseAudioContext) => {
+  const node = new AudioWorkletNode(ctx, 'noprod-dynamics', {
+    numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2]
+  });
+  let gr = 0;
+  node.port.onmessage = (e) => { gr = e.data.gr; };
+  const param = (name: string) => node.parameters.get(name)!;
+  return { node, param, getReduction: () => gr };
+};
+
+const compressorDef: DeviceDef = {
+  kind: 'compressor',
+  name: 'Compressor',
+  description: 'Dynamics compressor with knee, makeup gain and gain-reduction metering',
+  params: [
+    { name: 'Threshold', min: -60, max: 0, step: 0.1, unit: 'dB', default: -18 },
+    { name: 'Ratio', min: 1, max: 20, step: 0.1, unit: ':1', default: 4 },
+    { name: 'Attack', min: 0.1, max: 300, log: true, unit: 'ms', default: 10 },
+    { name: 'Release', min: 10, max: 1000, log: true, unit: 'ms', default: 100 },
+    { name: 'Knee', min: 0, max: 40, step: 0.1, unit: 'dB', default: 6 },
+    { name: 'Makeup', min: 0, max: 24, step: 0.1, unit: 'dB', default: 0 },
+    { name: 'Dry/Wet', min: 0, max: 100, step: 1, unit: '%', default: 100 }
+  ],
+  create(ctx) {
+    const dyn = createDynamics(ctx);
+    const map: Record<string, ParamTarget> = {
+      Threshold: { param: dyn.param('threshold'), map: (v) => v },
+      Ratio: { param: dyn.param('ratio'), map: (v) => v },
+      Attack: { param: dyn.param('attack'), map: (v) => v / 1000 },
+      Release: { param: dyn.param('release'), map: (v) => v / 1000 },
+      Knee: { param: dyn.param('knee'), map: (v) => v },
+      Makeup: { param: dyn.param('makeup'), map: (v) => v },
+      'Dry/Wet': { param: dyn.param('mix'), map: (v) => v / 100 }
+    };
+    return {
+      input: dyn.node,
+      output: dyn.node,
+      update(p) {
+        Object.entries(map).forEach(([name, t]) => setParam(t.param, t.map(num(p[name], 0))));
+      },
+      targets: (name) => (map[name] ? [map[name]] : []),
+      getReduction: dyn.getReduction,
+      dispose() { dyn.node.disconnect(); dyn.node.port.onmessage = null; }
+    };
+  }
 };
 
 // ---------------------------------------------------------------- Reverb
@@ -159,6 +216,7 @@ const delayDef: DeviceDef = {
 };
 
 export const DEVICE_DEFS: Record<string, DeviceDef> = {
+  compressor: compressorDef,
   reverb: reverbDef,
   delay: delayDef
 };
@@ -226,7 +284,13 @@ export const sliderToValue = (spec: ParamSpec, pos: number) => {
 export const createDeviceDSP = (ctx: BaseAudioContext, device: any): DeviceDSP | null => {
   const def = getDeviceDef(device);
   if (!def) return null;
-  const dsp = def.create(ctx);
-  dsp.update(resolvedParameters(device));
-  return dsp;
+  try {
+    const dsp = def.create(ctx);
+    dsp.update(resolvedParameters(device));
+    return dsp;
+  } catch (err) {
+    // e.g. a worklet module not registered on this context: pass audio through
+    console.warn(`Could not create ${def.name} DSP`, err);
+    return null;
+  }
 };
