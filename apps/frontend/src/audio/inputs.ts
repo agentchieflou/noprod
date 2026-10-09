@@ -6,6 +6,7 @@
 
 import { audioContext, getStripInput } from './engine';
 import { startVoice } from './synth';
+import { applyMidiEffects } from './midiEffects';
 
 // ------------------------------------------------------------------ audio
 
@@ -192,7 +193,8 @@ export const isMonitoring = (track: any) => {
   return m === 'in' || (m === 'auto' && !!track.isArmed);
 };
 
-const liveVoices = new Map<string, { release: (at: number) => void }>();
+// One input note can sound several notes (Chord effect), so voices are kept per input key
+const liveVoices = new Map<string, { release: (at: number) => void }[]>();
 
 export function initLiveMidi(store: { getState: () => any }) {
   onMidiEvent((e) => {
@@ -200,13 +202,11 @@ export function initLiveMidi(store: { getState: () => any }) {
     (st.tracks || []).forEach((t: any) => {
       if (t.type !== 'midi' || !t.instrument || !isMonitoring(t) || !trackAcceptsMidi(t, e)) return;
       const key = `${t.id}:${e.source}:${e.pitch}`;
-      if (e.type === 'on') {
-        liveVoices.get(key)?.release(e.time);
-        liveVoices.set(key, startVoice(audioContext, getStripInput(t.id), t.instrument.parameters, e.pitch, e.time, e.velocity));
-      } else {
-        liveVoices.get(key)?.release(e.time);
-        liveVoices.delete(key);
-      }
+      liveVoices.get(key)?.forEach((v) => v.release(e.time));
+      liveVoices.delete(key);
+      if (e.type !== 'on') return;
+      const played = applyMidiEffects([{ pitch: e.pitch, velocity: e.velocity, start: e.time, end: e.time + 1 }], t.midiEffects);
+      liveVoices.set(key, played.map((n) => startVoice(audioContext, getStripInput(t.id), t.instrument.parameters, n.pitch, e.time, n.velocity)));
     });
   });
 }

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
-  Layers, FolderOpen, Radio, Music, CheckSquare, Square as SquareIcon, Sliders, Wand2,
+  Layers, CheckSquare, Square as SquareIcon, Sliders, Wand2,
   Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
@@ -12,6 +12,8 @@ import SessionView from './components/SessionView';
 import TrackIO from './components/TrackIO';
 import InstrumentCard from './components/InstrumentCard';
 import TakeLane from './components/TakeLane';
+import BrowserSidebar, { SAMPLE_DRAG_TYPE } from './components/BrowserSidebar';
+import { getFile } from './browser/library';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
 import { initMidi, onInputsChange, isComputerKeyboardEnabled, setComputerKeyboardEnabled, getComputerKeyboardOctave } from './audio/inputs';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
@@ -24,6 +26,7 @@ import AutomationLane from './components/AutomationLane';
 import { automationParams } from './audio/automation';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
 import { DEVICE_DEFS, createDevice } from './audio/devices';
+import { MIDI_EFFECT_DEFS, createMidiEffect } from './audio/midiEffects';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
 import { getPosition, isCountingIn, onTransportChange, setPosition as setTransportPosition, clickGain } from './audio/transport';
 import './App.css';
@@ -133,6 +136,7 @@ function App() {
     toggleAutomationView, setAutomationLanes, clearAutomation,
     selectedSessionClip, updateSessionClip, updateClip,
     compTakeRange, removeTakeLane, toggleTakesView,
+    addMidiEffect, removeMidiEffect, updateMidiEffectParameter,
     scannedPlugins, setScannedPlugins
   } = useDAWStore();
   const [isScanning, setIsScanning] = useState(false);
@@ -143,7 +147,7 @@ function App() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [newVstPathInput, setNewVstPathInput] = useState('');
-  const [newDeviceIdx, setNewDeviceIdx] = useState(0);
+  const [newDeviceIdx, setNewDeviceIdx] = useState('audio:0');
   const [showIO, setShowIO] = useState(false);
   const keyboardMidi = useSyncExternalStore(onInputsChange, isComputerKeyboardEnabled);
   // Capture lights up when there is uncaptured playing for an armed MIDI track
@@ -241,7 +245,9 @@ function App() {
     const clientX = e.clientX;
     const rect = currentTarget ? (currentTarget as HTMLElement).getBoundingClientRect() : null;
 
-    const file = e.dataTransfer.files[0];
+    // Samples dragged from the Browser carry a library reference, not a File
+    const fromBrowser = e.dataTransfer.getData(SAMPLE_DRAG_TYPE);
+    const file = fromBrowser ? await getFile(JSON.parse(fromBrowser).id) : e.dataTransfer.files[0];
     if (!file) return;
 
     // Case insensitive validation for WAV, MP3, OGG, M4A
@@ -420,7 +426,7 @@ function App() {
     // Same clip renderer as playback, so gain/transpose/loop/warp are baked in
     trackRegions.forEach((region: any) => {
       scheduleClip(offline, region, track.instrument?.parameters, offline.destination,
-        region.startTime, 0, clipTimelineLength(region, bpm), bpm);
+        region.startTime, 0, clipTimelineLength(region, bpm), bpm, { midiEffects: track.midiEffects });
     });
 
     const rendered = await offline.startRendering();
@@ -761,30 +767,7 @@ function App() {
 
       <div className="main-workspace">
         {/* Browser Sidebar */}
-        <div className="browser-sidebar">
-          <div className="browser-header">
-            <h4>Browser</h4>
-          </div>
-          <div className="browser-categories">
-            <button className="btn-category active">
-              <FolderOpen size={14} /> All Sounds
-            </button>
-            <button className="btn-category">
-              <Radio size={14} /> Plug-ins (VSTs)
-            </button>
-            <button className="btn-category">
-              <Sliders size={14} /> Audio FX
-            </button>
-          </div>
-          <div className="browser-list">
-            <div className="browser-item">
-              <Music size={14} style={{ marginRight: '6px' }} /> Sample_DrumLoop.wav
-            </div>
-            <div className="browser-item">
-              <Music size={14} style={{ marginRight: '6px' }} /> Synth_Bass.wav
-            </div>
-          </div>
-        </div>
+        <BrowserSidebar onShowPluginScan={() => setActiveTab('vst-paths')} />
 
         {/* Timeline / Grid - Tracks moved to the right! */}
         <div className="timeline-section">
@@ -1202,10 +1185,21 @@ function App() {
                   <div style={{ marginRight: '1rem', borderRight: '1px solid var(--border-color)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
                     <h5 style={{ color: selectedTrack.color }}>{selectedTrack.name} Device Chain</h5>
                     <div style={{ display: 'flex', gap: '3px' }}>
-                      <select className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(parseInt(e.target.value))} title="Device to add">
-                        {BROWSER_PLUGINS.map((p: any, i: number) => <option key={p.name} value={i}>{p.name}</option>)}
+                      <select className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(e.target.value)} title="Device to add">
+                        <optgroup label="Audio Effects">
+                          {BROWSER_PLUGINS.map((p: any, i: number) => <option key={p.name} value={`audio:${i}`}>{p.name}</option>)}
+                        </optgroup>
+                        {selectedTrack.type === 'midi' && (
+                          <optgroup label="MIDI Effects">
+                            {Object.values(MIDI_EFFECT_DEFS).map((d) => <option key={d.kind} value={`midi:${d.kind}`}>{d.name}</option>)}
+                          </optgroup>
+                        )}
                       </select>
-                      <button className="btn-add-track" onClick={() => addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[newDeviceIdx])}>
+                      <button className="btn-add-track" onClick={() => {
+                        const [group, key] = newDeviceIdx.split(':');
+                        if (group === 'midi') addMidiEffect(selectedTrack.id, createMidiEffect(key));
+                        else addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[parseInt(key)] || BROWSER_PLUGINS[0]);
+                      }}>
                         <Plus size={12} /> Add
                       </button>
                     </div>
@@ -1234,6 +1228,16 @@ function App() {
                     )}
                   </div>
                   
+                  {/* MIDI effects run before the instrument */}
+                  {selectedTrack.type === 'midi' && (selectedTrack.midiEffects || []).map((fx: any) => (
+                    <DeviceCard
+                      key={fx.id}
+                      device={fx}
+                      onChange={(name, val) => updateMidiEffectParameter(selectedTrack.id, fx.id, name, val)}
+                      onRemove={() => removeMidiEffect(selectedTrack.id, fx.id)}
+                    />
+                  ))}
+
                   {/* Instrument Card (MIDI tracks) */}
                   {selectedTrack.type === 'midi' && (
                     selectedTrack.instrument ? (

@@ -173,7 +173,7 @@ function scheduleSegment(ctxStart: number, posStart: number, posEnd: number): Se
     if (b <= a) return;
     const srcs = scheduleClip(
       audioContext, region, track.instrument?.parameters, getStripInput(region.trackId),
-      at(a), a - start, b - start, st.bpm || 120
+      at(a), a - start, b - start, st.bpm || 120, { midiEffects: track.midiEffects }
     );
     seg.sources.push(...srcs);
     seg.trackSources.set(region.trackId, [...(seg.trackSources.get(region.trackId) || []), ...srcs]);

@@ -611,6 +611,33 @@ export const useDAWStore = create((set, get) => ({
     tracks: state.tracks.map(t => t.id === trackId ? { ...t, automationLanes, showAutomation: automationLanes.length > 0 } : t)
   })),
 
+  // MIDI effect chain (MIDI tracks): track.midiEffects, applied before the instrument
+  addMidiEffect: (trackId, effect) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, midiEffects: [...(t.midiEffects || []), { ...effect, id: uuidv4() }] } : t)
+  })); },
+  removeMidiEffect: (trackId, effectId) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, midiEffects: (t.midiEffects || []).filter(f => f.id !== effectId) } : t)
+  })); },
+  updateMidiEffectParameter: (trackId, effectId, name, value) => { get().record(`midi-fx-${effectId}`); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      midiEffects: (t.midiEffects || []).map(f => f.id === effectId ? { ...f, parameters: { ...f.parameters, [name]: value } } : f)
+    } : t)
+  })); },
+
+  // A new MIDI track playing `instrument` (Browser: Sounds / Drums / Instruments)
+  addMidiTrackWithInstrument: (instrument, name) => { get().record(); set((state) => {
+    const id = uuidv4();
+    return {
+      tracks: [...state.tracks, {
+        id, name: name || `${state.tracks.length + 1} ${instrument.name}`, type: 'midi', routing: 'master', groupId: null,
+        volume: 0.8, pan: 0, sends: {}, isMuted: false, isSoloed: false, isArmed: false, color: '#10b981',
+        instrument: { ...instrument, id: uuidv4() }, plugins: []
+      }],
+      selectedTrackId: id
+    };
+  }); },
+
   // Instrument Actions (MIDI tracks)
   setTrackInstrument: (trackId, instrument) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? { ...t, instrument } : t)

@@ -262,7 +262,7 @@ function tick() {
       }
       pc.sources.push(...scheduleClip(
         audioContext, pc.clip, track?.instrument?.parameters, getStripInput(trackId),
-        pc.startCtx + pc.cursor, pc.cursor, to, bpm, { noteStartsOnly: true }
+        pc.startCtx + pc.cursor, pc.cursor, to, bpm, { noteStartsOnly: true, midiEffects: track?.midiEffects }
       ));
       pc.cursor = to;
     }

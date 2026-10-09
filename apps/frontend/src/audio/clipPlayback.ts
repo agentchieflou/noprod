@@ -13,6 +13,7 @@
 
 import { triggerNote } from './synth';
 import { dbToGain } from './devices';
+import { applyMidiEffects } from './midiEffects';
 
 type Stoppable = { stop: (when?: number) => void };
 
@@ -92,7 +93,7 @@ const WARP_GRAINS: Record<string, { grain: number; jitter: number }> = {
 export function scheduleClip(
   ctx: BaseAudioContext, clip: any, instrumentParams: any, dest: AudioNode,
   when: number, from: number, to: number, bpm: number,
-  opts: { noteStartsOnly?: boolean } = {}
+  opts: { noteStartsOnly?: boolean; midiEffects?: any[] } = {}
 ): Stoppable[] {
   const sources: Stoppable[] = [];
   if (to <= from) return sources;
@@ -103,7 +104,7 @@ export function scheduleClip(
 
   if (clip.type === 'midi') {
     if (!instrumentParams || !clip.notes) return sources;
-    const occurrences = expandMidiNotes(clip);
+    const occurrences = applyMidiEffects(expandMidiNotes(clip), opts.midiEffects);
     occurrences.forEach((o) => {
       // noteStartsOnly: a caller scheduling a clip in consecutive windows wants
       // each note exactly once (in the window where it starts), at full length

@@ -6,6 +6,7 @@
 // (native hosting is audio_core's job, not the browser's).
 
 import dynamicsProcessorUrl from './worklets/dynamics-processor.js?url';
+import { MIDI_EFFECT_DEFS } from './midiEffects';
 import recorderProcessorUrl from './worklets/recorder-processor.js?url';
 import onsetProcessorUrl from './worklets/onset-processor.js?url';
 
@@ -523,6 +524,10 @@ export const getDeviceDef = (device: any): DeviceDef | null => {
   const k = deviceKind(device);
   return k ? DEVICE_DEFS[k] || null : null;
 };
+
+// Parameter specs for any device card: audio effects and MIDI effects
+export const getParamSpecs = (device: any): ParamSpec[] | null =>
+  device?.type === 'midi-fx' ? MIDI_EFFECT_DEFS[device.kind]?.params ?? null : getDeviceDef(device)?.params ?? null;
 
 export const defaultParameters = (def: DeviceDef) => {
   const out: Record<string, ParamValue> = {};
