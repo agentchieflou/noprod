@@ -1,11 +1,56 @@
 import { useEffect, useRef } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
+import { useState } from 'react';
 import { clipTimelineLength } from '../audio/clipPlayback';
+import { convertClipToMidi, type ConvertMode } from '../audio/audioToMidi';
 import { detectTransients, estimateBpm } from '../audio/warp';
 import PianoRoll from './PianoRoll';
 
 const SAMPLE_W = 620;
 const SAMPLE_H = 132;
+
+// Audio-to-MIDI: converts an arrangement clip onto a new MIDI track
+function ConvertToMidi({ region }: { region: any }) {
+  const [busy, setBusy] = useState<ConvertMode | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const run = async (mode: ConvertMode) => {
+    const st = useDAWStore.getState();
+    setBusy(mode);
+    setResult(null);
+    try {
+      const notes = await convertClipToMidi(region, mode, st.bpm);
+      if (!notes.length) { setResult('No notes found'); return; }
+      const source = st.tracks.find((t: any) => t.id === region.trackId);
+      st.addConvertedMidiTrack({
+        sourceTrackId: region.trackId,
+        name: `${region.file} (${mode})`,
+        kit: mode === 'drums' ? 'drums' : 'synth',
+        startTime: region.startTime,
+        duration: clipTimelineLength(region, st.bpm),
+        notes
+      });
+      setResult(`${notes.length} notes → new track after ${source?.name ?? 'source'}`);
+    } catch (err: any) {
+      setResult(`Failed: ${err.message || err}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="clip-prop-box">
+      <span className="clip-control-label">Convert to MIDI</span>
+      <div style={{ display: 'flex', gap: 3 }}>
+        {(['melody', 'harmony', 'drums'] as ConvertMode[]).map((m) => (
+          <button key={m} className="btn-view convert-btn" disabled={!!busy} onClick={() => run(m)}
+            title={m === 'melody' ? 'Extract the lead line (monophonic)' : m === 'harmony' ? 'Extract chords / polyphony' : 'Extract kick, snare and hi-hats onto a drum kit'}>
+            {busy === m ? '…' : m[0].toUpperCase() + m.slice(1)}
+          </button>
+        ))}
+      </div>
+      {result && <span className="clip-meta">{result}</span>}
+    </div>
+  );
+}
 
 interface Props {
   region: any;                       // an arrangement clip or a session clip
@@ -186,6 +231,8 @@ export default function ClipView({ region, onChange, trackColor, onAudition }: P
             </>
           )}
         </div>
+
+        {!isMidi && buf && region.trackId && <ConvertToMidi region={region} />}
 
         {!isMidi && buf && (
           <div className="clip-prop-box">

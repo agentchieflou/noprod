@@ -1993,3 +1993,29 @@ body {
 .follow-btn { font-size: 10px; padding-left: 5px; padding-right: 5px; }
 .follow-input { width: 90px; }
 .follow-readout { font-family: monospace; font-size: 10px; color: #2dd4bf; white-space: nowrap; }
+
+/* Instrument card */
+.instrument-select { font-weight: bold; max-width: 150px; }
+.drum-pads {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+  padding: 6px;
+}
+.drum-pad {
+  font-size: 9px;
+  padding: 8px 2px;
+  background: #2a2a2a;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.drum-pad:active { background: #eab308; color: #111; }
+.convert-btn { font-size: 9px; padding: 2px 5px; }
+.track-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}

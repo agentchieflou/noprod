@@ -124,6 +124,14 @@ const normalizeSessionClip = (clip) => ({
   file: clip.file || clip.name || 'Clip'
 });
 
+// NoProd Drums: a synthesized drum kit (GM-style note map, see synth.ts)
+export const createDrumKit = () => ({
+  id: uuidv4(),
+  name: 'NoProd Drums',
+  type: 'instrument',
+  parameters: { Kit: 'drums', Tune: 0, Decay: 1, Gain: 0.8 }
+});
+
 // Default instrument attached to new MIDI tracks so their clips are audible.
 export const createDefaultInstrument = () => ({
   id: uuidv4(),
@@ -446,6 +454,30 @@ export const useDAWStore = create((set, get) => ({
           plugins: [],
         }
       ]
+    };
+  }); },
+
+  // Audio-to-MIDI: a new MIDI track right after `sourceTrackId` holding one
+  // clip with the converted notes (drums get the drum kit)
+  addConvertedMidiTrack: ({ sourceTrackId, name, kit, startTime, duration, notes }) => { get().record(); set((state) => {
+    const id = uuidv4();
+    const regionId = uuidv4();
+    const track = {
+      id, name, type: 'midi', routing: 'master', groupId: null, volume: 0.8, pan: 0, sends: {},
+      isMuted: false, isSoloed: false, isArmed: false, color: '#10b981',
+      instrument: kit === 'drums' ? createDrumKit() : createDefaultInstrument(), plugins: []
+    };
+    const at = state.tracks.findIndex(t => t.id === sourceTrackId);
+    const tracks = [...state.tracks];
+    tracks.splice(at < 0 ? tracks.length : at + 1, 0, track);
+    return {
+      tracks,
+      regions: [...state.regions, {
+        id: regionId, trackId: id, type: 'midi', file: name, audioBuffer: null, startTime, duration, startOffset: 0,
+        notes: notes.map((n, i) => ({ id: `cv-${i}-${regionId.slice(0, 6)}`, ...n }))
+      }],
+      selectedRegionId: regionId,
+      selectedTrackId: id
     };
   }); },
 

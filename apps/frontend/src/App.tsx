@@ -5,11 +5,12 @@ import {
   Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
-import { triggerNote, midiNoteName } from './audio/synth';
+import { triggerNote } from './audio/synth';
 import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
 import ClipView from './components/ClipView';
 import SessionView from './components/SessionView';
 import TrackIO from './components/TrackIO';
+import InstrumentCard from './components/InstrumentCard';
 import TakeLane from './components/TakeLane';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
 import { initMidi, onInputsChange, isComputerKeyboardEnabled, setComputerKeyboardEnabled, getComputerKeyboardOctave } from './audio/inputs';
@@ -123,7 +124,7 @@ function App() {
     setMasterVolume, addReturn, removeReturn, updateReturn, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
     undo, redo, past, future,
-    addMidiRegion, setTrackInstrument, updateInstrumentParameter,
+    addMidiRegion, setTrackInstrument,
     isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
     savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
     setTrackFrozen, unfreezeTrack, flattenTrack,
@@ -966,7 +967,7 @@ function App() {
                           )}
                         </div>
                         
-                        <span>{track.name}</span>
+                        <span className="track-name" title={track.name}>{track.name}</span>
                         {track.type === 'group' && (
                           <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>
                             ({tracks.filter((m: any) => m.groupId === track.id).length})
@@ -1236,52 +1237,7 @@ function App() {
                   {/* Instrument Card (MIDI tracks) */}
                   {selectedTrack.type === 'midi' && (
                     selectedTrack.instrument ? (
-                      <div className="device-card instrument-card">
-                        <div className="device-card-header">
-                          <span>{selectedTrack.instrument.name}</span>
-                          <span style={{ fontSize: '9px', color: 'var(--accent-green)' }}>INSTRUMENT</span>
-                        </div>
-                        <div className="device-card-params">
-                          <div className="param-slider-row">
-                            <span style={{ fontSize: '10px' }}>Waveform</span>
-                            <select
-                              className="clip-input"
-                              value={selectedTrack.instrument.parameters.Waveform}
-                              onChange={(e) => updateInstrumentParameter(selectedTrack.id, 'Waveform', e.target.value)}
-                            >
-                              <option value="sawtooth">Sawtooth</option>
-                              <option value="square">Square</option>
-                              <option value="sine">Sine</option>
-                              <option value="triangle">Triangle</option>
-                            </select>
-                          </div>
-                          {['Attack', 'Decay', 'Sustain', 'Release', 'Gain'].map((paramName) => (
-                            <div key={paramName} className="param-slider-row">
-                              <span style={{ fontSize: '10px' }}>{paramName}</span>
-                              <input
-                                type="range" min="0" max="1" step="0.01"
-                                value={selectedTrack.instrument.parameters[paramName]}
-                                onChange={(e) => updateInstrumentParameter(selectedTrack.id, paramName, parseFloat(e.target.value))}
-                                className="param-slider"
-                              />
-                              <span style={{ fontSize: '10px', width: '28px', textAlign: 'right' }}>{Number(selectedTrack.instrument.parameters[paramName]).toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                        {/* Audition keyboard: one octave from C4 */}
-                        <div className="audition-keys">
-                          {[60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71].map(pitch => (
-                            <button
-                              key={pitch}
-                              className={`audition-key ${midiNoteName(pitch).includes('#') ? 'black-key' : ''}`}
-                              onMouseDown={() => auditionNote(selectedTrack, pitch)}
-                              title={midiNoteName(pitch)}
-                            >
-                              {midiNoteName(pitch).includes('#') ? '' : midiNoteName(pitch)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                      <InstrumentCard track={selectedTrack} onAudition={(pitch: number) => auditionNote(selectedTrack, pitch)} />
                     ) : (
                       <button className="btn-add-track" style={{ backgroundColor: '#10b981', alignSelf: 'flex-start' }}
                         onClick={() => setTrackInstrument(selectedTrack.id, createDefaultInstrument())}>
