@@ -5,7 +5,7 @@
 // a take: the store puts it on a new take lane and comps it into the track.
 
 import { audioContext } from './engine';
-import { getAudioInputNode, openAudioInput, onMidiEvent, trackAcceptsMidi, type MidiEvent } from './inputs';
+import { getAudioInputNode, openAudioInput, onMidiEvent, midiEventTargets, type MidiEvent } from './inputs';
 import { getSegments, onSegmentScheduled, getCountInEnd, type SegmentInfo } from './transport';
 
 interface AudioCapture {
@@ -90,12 +90,13 @@ function startRecording(st: any) {
     }
   });
 
+  // MIDI goes to whichever tracks the event plays on (armed tracks, or the
+  // track the computer keyboard is playing), created on first note
   r.cleanup.push(onMidiEvent((e) => {
-    const s = getState();
-    r.captures.forEach((cap, trackId) => {
-      if (cap.kind !== 'midi') return;
-      const track = s.tracks.find((t: any) => t.id === trackId);
-      if (track && trackAcceptsMidi(track, e)) cap.events.push(e);
+    midiEventTargets(getState(), e).forEach((t: any) => {
+      let cap = r.captures.get(t.id);
+      if (!cap) { cap = { kind: 'midi', events: [] }; r.captures.set(t.id, cap); }
+      if (cap.kind === 'midi') cap.events.push(e);
     });
   }));
   rec = r;
