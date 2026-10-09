@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { getDeviceDSP } from '../audio/engine';
-import { deviceKind, resolvedParameters } from '../audio/devices';
+import { deviceKind, resolvedParameters, type ParamValue } from '../audio/devices';
 
 // Live gain-reduction bar for dynamics devices; reads the DSP straight from a
 // rAF loop and writes to the DOM so metering never re-renders React.
@@ -57,9 +57,71 @@ export function TransferCurve({ threshold, ratio, knee, size = 54 }: { threshold
   );
 }
 
+const RESPONSE_POINTS = 240;
+export const RESPONSE_FREQS = (() => {
+  const f = new Float32Array(RESPONSE_POINTS);
+  for (let i = 0; i < RESPONSE_POINTS; i++) f[i] = 20 * Math.pow(1000, i / (RESPONSE_POINTS - 1));
+  return f;
+})();
+export const freqToX = (f: number, width: number) => (Math.log(f / 20) / Math.log(1000)) * width;
+export const xToFreq = (x: number, width: number) => 20 * Math.pow(1000, Math.max(0, Math.min(1, x / width)));
+
+// Frequency-response curve read from the device's live DSP (log 20Hz-20kHz).
+// `version` is anything that changes when the response does (the device object).
+export function ResponseCurve({ deviceId, version, width = 200, height = 64, rangeDb = 18, color = '#3b82f6' }:
+  { deviceId: string; version: unknown; width?: number; height?: number; rangeDb?: number; color?: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const dsp = getDeviceDSP(deviceId);
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, width, height);
+    const yOf = (db: number) => height / 2 - (Math.max(-rangeDb, Math.min(rangeDb, db)) / rangeDb) * (height / 2 - 2);
+    // grid: 0 dB line + decade markers
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, yOf(0)); ctx.lineTo(width, yOf(0));
+    [100, 1000, 10000].forEach((f) => { const x = freqToX(f, width); ctx.moveTo(x, 0); ctx.lineTo(x, height); });
+    ctx.stroke();
+    if (!dsp?.getResponse) return;
+    const db = dsp.getResponse(RESPONSE_FREQS);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < db.length; i++) {
+      const x = (i / (db.length - 1)) * width;
+      if (i === 0) ctx.moveTo(x, yOf(db[i])); else ctx.lineTo(x, yOf(db[i]));
+    }
+    ctx.stroke();
+  }, [deviceId, version, width, height, rangeDb, color]);
+  return <canvas ref={canvasRef} width={width} height={height} className="response-curve" />;
+}
+
 // Device-specific visuals shown above a device card's parameters.
-export function DeviceExtra({ device }: { device: any }) {
+export function DeviceExtra({ device, onChange }: { device: any; onChange: (paramName: string, value: ParamValue) => void }) {
   const kind = deviceKind(device);
+  if (kind === 'eq3') {
+    const p = resolvedParameters(device);
+    return (
+      <div className="device-visuals eq3-visuals">
+        <ResponseCurve deviceId={device.id} version={device} width={196} height={56} rangeDb={24} />
+        <div className="eq3-kills">
+          {(['Lo', 'Mid', 'Hi'] as const).map((band) => (
+            <button
+              key={band}
+              className={`eq3-kill ${p[`Kill ${band}`] ? 'killed' : ''}`}
+              title={`${p[`Kill ${band}`] ? 'Restore' : 'Kill'} the ${band.toLowerCase()} band`}
+              onClick={() => onChange(`Kill ${band}`, !p[`Kill ${band}`])}
+            >
+              {band === 'Hi' ? 'H' : band === 'Mid' ? 'M' : 'L'}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
   if (kind === 'compressor') {
     const p = resolvedParameters(device);
     return (

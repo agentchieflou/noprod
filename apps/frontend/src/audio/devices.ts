@@ -20,6 +20,7 @@ export interface ParamSpec {
   options?: string[];   // enum choices
   default: ParamValue;
   minLabel?: string;    // shown when the value sits at min (e.g. '-inf')
+  hidden?: boolean;     // drawn by the device's own visuals instead of the generic list
 }
 
 // One automation/modulation target: an AudioParam plus a mapping from the
@@ -136,6 +137,117 @@ const compressorDef: DeviceDef = {
   }
 };
 
+// ---------------------------------------------------------------- EQ Three
+
+// Complex response of a chain of biquads (multiplied), for display.
+const chainResponse = (filters: BiquadFilterNode[], freqs: Float32Array) => {
+  const re = new Float32Array(freqs.length).fill(1);
+  const im = new Float32Array(freqs.length);
+  const mag = new Float32Array(freqs.length);
+  const ph = new Float32Array(freqs.length);
+  filters.forEach((f) => {
+    f.getFrequencyResponse(freqs as Float32Array<ArrayBuffer>, mag as Float32Array<ArrayBuffer>, ph as Float32Array<ArrayBuffer>);
+    for (let i = 0; i < freqs.length; i++) {
+      const a = mag[i] * Math.cos(ph[i]), b = mag[i] * Math.sin(ph[i]);
+      const r = re[i] * a - im[i] * b;
+      im[i] = re[i] * b + im[i] * a;
+      re[i] = r;
+    }
+  });
+  return { re, im };
+};
+
+// 20*log10(1/sqrt(2)): a Butterworth (maximally flat) lowpass/highpass in Web Audio's dB-Q units
+const BUTTERWORTH_Q_DB = -3.0103;
+
+const toDb = (re: number, im: number) => 20 * Math.log10(Math.max(1e-6, Math.hypot(re, im)));
+
+// 3-band DJ EQ on a Linkwitz-Riley 4th-order crossover. The low band gets an
+// allpass at the high crossover so all three bands stay phase-matched and sum
+// flat when every gain is at 0 dB.
+const eqThreeDef: DeviceDef = {
+  kind: 'eq3',
+  name: 'EQ Three',
+  description: '3-band EQ with kill switches',
+  params: [
+    { name: 'GainLo', min: -48, max: 6, step: 0.1, unit: 'dB', default: 0, minLabel: '-inf' },
+    { name: 'GainMid', min: -48, max: 6, step: 0.1, unit: 'dB', default: 0, minLabel: '-inf' },
+    { name: 'GainHi', min: -48, max: 6, step: 0.1, unit: 'dB', default: 0, minLabel: '-inf' },
+    { name: 'FreqLo', min: 50, max: 5000, log: true, unit: 'Hz', default: 250 },
+    { name: 'FreqHi', min: 200, max: 18000, log: true, unit: 'Hz', default: 2500 },
+    { name: 'Kill Lo', kind: 'bool', default: false, hidden: true },
+    { name: 'Kill Mid', kind: 'bool', default: false, hidden: true },
+    { name: 'Kill Hi', kind: 'bool', default: false, hidden: true }
+  ],
+  create(ctx) {
+    // Butterworth sections. Web Audio takes lowpass/highpass Q in dB but
+    // allpass Q as a plain ratio, hence the two spellings of Q = 1/sqrt(2).
+    const bq = (type: BiquadFilterType) => {
+      const f = ctx.createBiquadFilter();
+      f.type = type;
+      f.Q.value = type === 'allpass' ? Math.SQRT1_2 : BUTTERWORTH_Q_DB;
+      return f;
+    };
+    const input = ctx.createGain();
+    const output = ctx.createGain();
+    const lowLp = [bq('lowpass'), bq('lowpass')];
+    const lowAp = bq('allpass');
+    const splitHp = [bq('highpass'), bq('highpass')];
+    const midLp = [bq('lowpass'), bq('lowpass')];
+    const highHp = [bq('highpass'), bq('highpass')];
+    const gLo = ctx.createGain(), gMid = ctx.createGain(), gHi = ctx.createGain();
+    const chain = (nodes: AudioNode[]) => nodes.reduce((a, b) => { a.connect(b); return b; });
+    chain([input, ...lowLp, lowAp, gLo, output]);
+    chain([input, ...splitHp]);
+    chain([splitHp[1], ...midLp, gMid, output]);
+    chain([splitHp[1], ...highHp, gHi, output]);
+    const loFilters = [...lowLp, ...splitHp];
+    const hiFilters = [lowAp, ...midLp, ...highHp];
+    const kills = { lo: false, mid: false, hi: false };
+    const bandGain = (killed: boolean) => (v: number) => (killed ? 0 : dbToGain(v, -48));
+    return {
+      input,
+      output,
+      update(p) {
+        kills.lo = p['Kill Lo'] === true;
+        kills.mid = p['Kill Mid'] === true;
+        kills.hi = p['Kill Hi'] === true;
+        setParam(gLo.gain, bandGain(kills.lo)(num(p.GainLo, 0)));
+        setParam(gMid.gain, bandGain(kills.mid)(num(p.GainMid, 0)));
+        setParam(gHi.gain, bandGain(kills.hi)(num(p.GainHi, 0)));
+        const fl = num(p.FreqLo, 250), fh = num(p.FreqHi, 2500);
+        loFilters.forEach((f) => setParam(f.frequency, fl));
+        hiFilters.forEach((f) => setParam(f.frequency, fh));
+      },
+      targets(name) {
+        if (name === 'GainLo') return [{ param: gLo.gain, map: (v) => bandGain(kills.lo)(v) }];
+        if (name === 'GainMid') return [{ param: gMid.gain, map: (v) => bandGain(kills.mid)(v) }];
+        if (name === 'GainHi') return [{ param: gHi.gain, map: (v) => bandGain(kills.hi)(v) }];
+        if (name === 'FreqLo') return loFilters.map((f) => ({ param: f.frequency, map: (v: number) => v }));
+        if (name === 'FreqHi') return hiFilters.map((f) => ({ param: f.frequency, map: (v: number) => v }));
+        return [];
+      },
+      getResponse(freqs) {
+        const bands = [
+          { r: chainResponse([...lowLp, lowAp], freqs), g: gLo.gain.value },
+          { r: chainResponse([...splitHp, ...midLp], freqs), g: gMid.gain.value },
+          { r: chainResponse([...splitHp, ...highHp], freqs), g: gHi.gain.value }
+        ];
+        const out = new Float32Array(freqs.length);
+        for (let i = 0; i < freqs.length; i++) {
+          let re = 0, im = 0;
+          bands.forEach(({ r, g }) => { re += r.re[i] * g; im += r.im[i] * g; });
+          out[i] = toDb(re, im);
+        }
+        return out;
+      },
+      dispose() {
+        [input, ...lowLp, lowAp, ...splitHp, ...midLp, ...highHp, gLo, gMid, gHi, output].forEach((n) => n.disconnect());
+      }
+    };
+  }
+};
+
 // ---------------------------------------------------------------- Reverb
 
 // Exponentially decaying stereo noise: a cheap but convincing room tail.
@@ -217,6 +329,7 @@ const delayDef: DeviceDef = {
 
 export const DEVICE_DEFS: Record<string, DeviceDef> = {
   compressor: compressorDef,
+  eq3: eqThreeDef,
   reverb: reverbDef,
   delay: delayDef
 };
