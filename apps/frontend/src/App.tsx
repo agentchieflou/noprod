@@ -1,50 +1,41 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
-  Layers, FolderOpen, Radio, Music, ArrowRight, CheckSquare, Square as SquareIcon, Sliders, Wand2,
-  Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine
+  Layers, CheckSquare, Square as SquareIcon, Sliders, Wand2,
+  Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic
 } from 'lucide-react';
-import { useDAWStore, createDefaultInstrument } from './store/useDAWStore';
-import { triggerNote, midiNoteName } from './audio/synth';
-import { detectTransients, estimateBpm, scheduleWarpedRegion } from './audio/warp';
-import PianoRoll from './components/PianoRoll';
+import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
+import { triggerNote } from './audio/synth';
+import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
+import ClipView from './components/ClipView';
+import SessionView from './components/SessionView';
+import TrackIO from './components/TrackIO';
+import InstrumentCard from './components/InstrumentCard';
+import TakeLane from './components/TakeLane';
+import BrowserSidebar, { SAMPLE_DRAG_TYPE } from './components/BrowserSidebar';
+import { getFile } from './browser/library';
+import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
+import { initMidi, onInputsChange, isComputerKeyboardEnabled, setComputerKeyboardEnabled, getComputerKeyboardOctave } from './audio/inputs';
+import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
+import DeviceCard from './components/DeviceCard';
+import ArrangementRuler from './components/ArrangementRuler';
+import TempoControls from './components/TempoControls';
+import FileMenu from './components/FileMenu';
+import AutomationLane from './components/AutomationLane';
+import { automationParams } from './audio/automation';
+import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
+import { DEVICE_DEFS, createDevice } from './audio/devices';
+import { MIDI_EFFECT_DEFS, createMidiEffect } from './audio/midiEffects';
+import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
+import { getPosition, isCountingIn, onTransportChange, setPosition as setTransportPosition, clickGain } from './audio/transport';
 import './App.css';
 
-// Global AudioContext & Effects
-const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-
-// Mock Reverb via Feedback Delay Network
-const reverbReturnNode = audioContext.createDelay(1.0);
-reverbReturnNode.delayTime.value = 0.35;
-const reverbFeedback = audioContext.createGain();
-reverbFeedback.gain.value = 0.5;
-const reverbReturnGain = audioContext.createGain();
-
-reverbReturnNode.connect(reverbFeedback);
-reverbFeedback.connect(reverbReturnNode);
-reverbReturnNode.connect(reverbReturnGain);
-
-// Master bus: limiter (brickwall-configured compressor) -> analyser -> output.
-// The analyser stays in the chain even when the limiter is bypassed so the
-// meter always reflects what actually hits the speakers.
-const masterLimiter = audioContext.createDynamicsCompressor();
-masterLimiter.threshold.value = -1;
-masterLimiter.knee.value = 0;
-masterLimiter.ratio.value = 20;
-masterLimiter.attack.value = 0.001;
-masterLimiter.release.value = 0.1;
-const masterAnalyser = audioContext.createAnalyser();
-masterAnalyser.fftSize = 2048;
-masterLimiter.connect(masterAnalyser);
-masterAnalyser.connect(audioContext.destination);
-
-let activeSources: any[] = [];
-const PIXELS_PER_SECOND = 50;
 
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
   (window as any).__dawStore = useDAWStore;
+  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser };
 }
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 
@@ -62,120 +53,13 @@ const PRESET_COLORS = [
   '#6b7280'  // Grey
 ];
 
+// Add Device choices: stock devices with real DSP first, then third-party
+// plugins (passed through untouched until Audio Core hosts them natively).
 const BROWSER_PLUGINS = [
+  ...Object.keys(DEVICE_DEFS).map(createDevice),
   { name: 'FabFilter Pro-Q 3', type: 'vst', parameters: { 'Freq': 440, 'Gain': 0.0, 'Q': 1.0 } },
   { name: 'Antares AutoTune', type: 'vst', parameters: { 'Retune Speed': 20, 'Humanize': 60, 'Key': 'C min' } },
-  { name: 'NoProd Reverb', type: 'audio-fx', parameters: { 'Dry/Wet': 30, 'Decay': 2.5 } },
-  { name: 'NoProd Delay', type: 'audio-fx', parameters: { 'Time': 0.25, 'Feedback': 40 } },
 ];
-
-const AudioRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void, onOpenClip?: () => void }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { updateRegionPosition, updateRegionTrim, bpm } = useDAWStore();
-
-  // Warped clips render at their tempo-stretched length
-  const stretchRatio = region.warpEnabled && region.originalBpm ? bpm / region.originalBpm : 1;
-  const displayDuration = region.duration / stretchRatio;
-  const displayWidth = displayDuration * PIXELS_PER_SECOND;
-
-  useEffect(() => {
-    if (!canvasRef.current || !region.audioBuffer) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const data = region.audioBuffer.getChannelData(0);
-    // Render the sub-portion of the waveform based on startOffset and duration
-    const startSample = Math.floor((region.startOffset || 0) * region.audioBuffer.sampleRate);
-    const endSample = Math.floor(((region.startOffset || 0) + region.duration) * region.audioBuffer.sampleRate);
-    const subsetData = data.subarray(startSample, endSample);
-
-    const step = Math.ceil(subsetData.length / canvas.width);
-    const amp = canvas.height / 2;
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = trackColor || 'var(--accent-blue)';
-    
-    for (let i = 0; i < canvas.width; i++) {
-      let min = 1.0;
-      let max = -1.0;
-      for (let j = 0; j < step; j++) {
-        const datum = subsetData[(i * step) + j];
-        if (datum < min) min = datum;
-        if (datum > max) max = datum;
-      }
-      ctx.fillRect(i, (1 + min) * amp, 1, Math.max(1, (max - min) * amp));
-    }
-  }, [region, trackColor]);
-
-  const handleMouseDown = (e: React.MouseEvent, type: 'move' | 'trim-left' | 'trim-right') => {
-    e.stopPropagation();
-    onClick();
-    
-    const startX = e.clientX;
-    const startValTime = region.startTime;
-    const startValDuration = region.duration;
-    const startValOffset = region.startOffset || 0;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const deltaTime = deltaX / PIXELS_PER_SECOND;
-
-      if (type === 'move') {
-        const newStartTime = Math.max(0, startValTime + deltaTime);
-        updateRegionPosition(region.id, newStartTime);
-      } else if (type === 'trim-left') {
-        const allowedDeltaTime = Math.min(startValDuration - 0.2, deltaTime);
-        const newStartTime = Math.max(0, startValTime + allowedDeltaTime);
-        const newDuration = startValDuration - allowedDeltaTime;
-        const newOffset = Math.max(0, startValOffset + allowedDeltaTime);
-        updateRegionTrim(region.id, newStartTime, newDuration, newOffset);
-      } else if (type === 'trim-right') {
-        const newDuration = Math.max(0.2, startValDuration + deltaTime);
-        updateRegionTrim(region.id, startValTime, newDuration, startValOffset);
-      }
-    };
-
-    const handleMouseUp = () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
-
-  return (
-    <div
-      className={`audio-region ${isSelected ? 'selected' : ''}`}
-      onMouseDown={(e) => handleMouseDown(e, 'move')}
-      onDoubleClick={(e) => { e.stopPropagation(); onOpenClip?.(); }}
-      style={{
-        width: `${displayWidth}px`,
-        left: `${region.startTime * PIXELS_PER_SECOND}px`,
-        borderColor: isSelected ? '#fff' : trackColor
-      }}
-    >
-      <div
-        className="trim-handle left-handle"
-        onMouseDown={(e) => handleMouseDown(e, 'trim-left')}
-      />
-      <canvas ref={canvasRef} width={displayWidth} height={80} style={{ display: 'block', opacity: 0.8 }} />
-      {region.warpEnabled && (region.transients || []).map((t: number, i: number) => {
-        const rel = (t - (region.startOffset || 0)) / region.duration;
-        if (rel < 0 || rel > 1) return null;
-        return <div key={i} className="warp-marker" style={{ left: `${rel * 100}%` }} />;
-      })}
-      <div style={{ position: 'absolute', top: 4, left: 12, color: '#fff', fontSize: '10px', textShadow: '0 0 4px #000', fontWeight: 'bold', pointerEvents: 'none' }}>
-        {region.warpEnabled ? '⇌ ' : ''}{region.file}
-      </div>
-      <div 
-        className="trim-handle right-handle" 
-        onMouseDown={(e) => handleMouseDown(e, 'trim-right')} 
-      />
-    </div>
-  );
-};
 
 // Live peak meter + clip LED + limiter gain-reduction readout for the master bus.
 // Writes straight to the DOM from a rAF loop; only the latching clip LED is React state.
@@ -233,80 +117,26 @@ const MasterMeter = ({ limiterEnabled }: { limiterEnabled: boolean }) => {
   );
 };
 
-const MidiRegionNode = ({ region, trackColor, isSelected, onClick, onOpenClip }: { region: any, trackColor: string, isSelected: boolean, onClick: () => void, onOpenClip?: () => void }) => {
-  const { updateRegionPosition } = useDAWStore();
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onClick();
-    const startX = e.clientX;
-    const startValTime = region.startTime;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaTime = (moveEvent.clientX - startX) / PIXELS_PER_SECOND;
-      updateRegionPosition(region.id, Math.max(0, startValTime + deltaTime));
-    };
-    const handleMouseUp = () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
-
-  // Map the clip's pitch span onto its height so the pattern silhouette reads at a glance
-  const notes = region.notes || [];
-  const pitches = notes.map((n: any) => n.pitch);
-  const minPitch = pitches.length ? Math.min(...pitches) - 2 : 48;
-  const maxPitch = pitches.length ? Math.max(...pitches) + 2 : 72;
-  const pitchSpan = Math.max(1, maxPitch - minPitch);
-
-  return (
-    <div
-      className={`audio-region midi-region ${isSelected ? 'selected' : ''}`}
-      onMouseDown={handleMouseDown}
-      onDoubleClick={(e) => { e.stopPropagation(); onOpenClip?.(); }}
-      style={{
-        width: `${region.duration * PIXELS_PER_SECOND}px`,
-        left: `${region.startTime * PIXELS_PER_SECOND}px`,
-        borderColor: isSelected ? '#fff' : trackColor,
-        backgroundColor: `${trackColor}30`
-      }}
-    >
-      {notes.map((note: any) => (
-        <div
-          key={note.id}
-          className="midi-note-bar"
-          style={{
-            left: `${(note.start / region.duration) * 100}%`,
-            width: `${Math.max(1, (note.duration / region.duration) * 100)}%`,
-            top: `${(1 - (note.pitch - minPitch) / pitchSpan) * 90}%`,
-            backgroundColor: trackColor
-          }}
-        />
-      ))}
-      <div style={{ position: 'absolute', top: 4, left: 12, color: '#fff', fontSize: '10px', textShadow: '0 0 4px #000', fontWeight: 'bold', pointerEvents: 'none' }}>
-        {region.file} {notes.length === 0 ? '(empty)' : ''}
-      </div>
-    </div>
-  );
-};
-
 function App() {
   const { 
     tracks, regions, isPlaying, isRecording, isMetronomeEnabled, viewMode,
-    selectedTrackId, selectedRegionId, masterVolume, reverbReturnVolume, sessionClips, vstScanPaths, bpm,
-    togglePlayback, toggleRecording, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
+    selectedTrackId, selectedRegionId, masterVolume, returns, masterPlugins, sessionClips, vstScanPaths, bpm,
+    togglePlayback, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
     addTrack, removeTrack, addRegion, updateTrackColor, toggleArmTrack,
-    updateTrackVolume, updateTrackPan, updateTrackSendReverb, toggleMuteTrack, toggleSoloTrack,
-    setMasterVolume, setReverbReturnVolume, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
+    updateTrackVolume, updateTrackPan, updateTrackSend, toggleMuteTrack, toggleSoloTrack,
+    setMasterVolume, addReturn, removeReturn, updateReturn, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
     undo, redo, past, future,
-    addMidiRegion, setTrackInstrument, updateInstrumentParameter,
+    addMidiRegion, setTrackInstrument,
     isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
     savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
-    setTrackFrozen, unfreezeTrack, flattenTrack, updateRegionWarp,
-    punchInTime, punchOutTime, isPunchEnabled, togglePunch, setPunchRegion,
+    setTrackFrozen, unfreezeTrack, flattenTrack,
+    punchInTime, punchOutTime, isPunchEnabled, togglePunch,
+    isLoopEnabled, loopStart, loopEnd, toggleLoop, locators, addLocator, timeSignatures,
+    toggleAutomationView, setAutomationLanes, clearAutomation,
+    selectedSessionClip, updateSessionClip, updateClip,
+    compTakeRange, removeTakeLane, toggleTakesView,
+    addMidiEffect, removeMidiEffect, updateMidiEffectParameter,
     scannedPlugins, setScannedPlugins
   } = useDAWStore();
   const [isScanning, setIsScanning] = useState(false);
@@ -317,6 +147,11 @@ function App() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [newVstPathInput, setNewVstPathInput] = useState('');
+  const [newDeviceIdx, setNewDeviceIdx] = useState('audio:0');
+  const [showIO, setShowIO] = useState(false);
+  const keyboardMidi = useSyncExternalStore(onInputsChange, isComputerKeyboardEnabled);
+  // Capture lights up when there is uncaptured playing for an armed MIDI track
+  const capturable = useSyncExternalStore(onCaptureBufferChange, () => hasCapturable(useDAWStore.getState())) && tracks.length > 0;
 
   // AI Dictation (Orchestrator connection)
   const orchestratorWsRef = useRef<WebSocket | null>(null);
@@ -357,224 +192,47 @@ function App() {
     ws.send(JSON.stringify({ type: 'DICTATION', text: dictationInput.trim() }));
   };
 
-  // Audio Nodes Setup
-  const masterGainRef = useRef<GainNode | null>(null);
-  const trackGainsRef = useRef<{ [key: string]: GainNode }>({});
-  const trackSendsRef = useRef<{ [key: string]: GainNode }>({});
-
-  useEffect(() => {
-    if (!masterGainRef.current) {
-      masterGainRef.current = audioContext.createGain();
-    }
-    masterGainRef.current.gain.value = masterVolume;
-  }, [masterVolume]);
-
-  // Route the master bus and reverb return through the limiter (or bypass it).
-  // The analyser stays last in the chain either way so metering is always live.
-  useEffect(() => {
-    const mg = masterGainRef.current;
-    if (!mg) return;
-    mg.disconnect();
-    reverbReturnGain.disconnect();
-    const entry = isLimiterEnabled ? masterLimiter : masterAnalyser;
-    mg.connect(entry);
-    reverbReturnGain.connect(entry);
-  }, [isLimiterEnabled]);
-
-  useEffect(() => {
-    reverbReturnGain.gain.value = reverbReturnVolume;
-  }, [reverbReturnVolume]);
-
-  // Tracks whose current gain-node destination is a group bus (by target id),
-  // so we only re-patch the graph when a track's routing actually changes.
-  const trackRoutingRef = useRef<{ [key: string]: string }>({});
-
-  useEffect(() => {
-    // Pass 1: ensure every track (including groups) has gain/send nodes
-    tracks.forEach((t: any) => {
-      if (!trackGainsRef.current[t.id]) {
-        trackGainsRef.current[t.id] = audioContext.createGain();
-      }
-      trackGainsRef.current[t.id].gain.value = t.isMuted ? 0 : t.volume;
-
-      if (!trackSendsRef.current[t.id]) {
-        trackSendsRef.current[t.id] = audioContext.createGain();
-        trackSendsRef.current[t.id].connect(reverbReturnNode);
-      }
-      trackSendsRef.current[t.id].gain.value = t.sendReverb * t.volume;
-    });
-
-    // Pass 2: patch each track into its group's bus (real summing) or master
-    tracks.forEach((t: any) => {
-      const gain = trackGainsRef.current[t.id];
-      const targetId = t.groupId && trackGainsRef.current[t.groupId] ? t.groupId : 'master';
-      if (trackRoutingRef.current[t.id] !== targetId) {
-        gain.disconnect();
-        if (targetId === 'master') {
-          if (masterGainRef.current) gain.connect(masterGainRef.current);
-        } else {
-          gain.connect(trackGainsRef.current[targetId]);
-        }
-        trackRoutingRef.current[t.id] = targetId;
-      }
-    });
-  }, [tracks]);
-
-  // Playback & Playhead Engine
-  const animationRef = useRef<number | undefined>(undefined);
+  // Playhead display: the transport owns position and scheduling; this just
+  // follows it (rAF while playing) and runs punch-in/out at the punch points.
   const [localPlaybackPosition, setLocalPlaybackPosition] = useState(0);
-  const playStartTimeRef = useRef(0);
-  const pauseTimeRef = useRef(0);
+  const [countingIn, setCountingIn] = useState(false);
+
+  useEffect(() => onTransportChange(() => setLocalPlaybackPosition(Math.max(0, getPosition()))), []);
 
   useEffect(() => {
-    if (isPlaying) {
-      if (audioContext.state === 'suspended') {
-        audioContext.resume();
-      }
-      playStartTimeRef.current = audioContext.currentTime - pauseTimeRef.current;
-      const currentPlayheadTime = pauseTimeRef.current;
-      
-      // Frozen tracks play their rendered buffer instead of live clips
-      const allTracks = useDAWStore.getState().tracks;
-      allTracks.forEach((t: any) => {
-        if (!t.isFrozen || !t.frozenBuffer) return;
-        const durationLeft = t.frozenDuration - currentPlayheadTime;
-        if (durationLeft <= 0) return;
-        const source = audioContext.createBufferSource();
-        source.buffer = t.frozenBuffer;
-        const trackGain = trackGainsRef.current[t.id];
-        const trackSend = trackSendsRef.current[t.id];
-        if (trackGain) source.connect(trackGain);
-        if (trackSend) source.connect(trackSend);
-        source.start(audioContext.currentTime, Math.max(0, currentPlayheadTime), durationLeft);
-        activeSources.push(source);
-      });
-
-      // Schedule MIDI regions through each track's instrument
-      regions.forEach((region: any) => {
-        if (region.type !== 'midi' || !region.notes) return;
-        const track = useDAWStore.getState().tracks.find((t: any) => t.id === region.trackId);
-        if (!track || !track.instrument || track.isFrozen) return;
-        const trackGain = trackGainsRef.current[region.trackId];
-        const trackSend = trackSendsRef.current[region.trackId];
-
-        region.notes.forEach((note: any) => {
-          const absStart = region.startTime + note.start;
-          const absEnd = absStart + note.duration;
-          if (absEnd <= currentPlayheadTime) return; // already passed
-          // Clip notes that straddle the playhead so resume mid-note still sounds
-          const startDelay = Math.max(0, absStart - currentPlayheadTime);
-          const playDuration = absEnd - Math.max(absStart, currentPlayheadTime);
-          const when = audioContext.currentTime + startDelay;
-          if (trackGain) {
-            activeSources.push(triggerNote(audioContext, trackGain, track.instrument.parameters, note.pitch, when, playDuration, note.velocity ?? 1));
-          }
-          if (trackSend) {
-            activeSources.push(triggerNote(audioContext, trackSend, track.instrument.parameters, note.pitch, when, playDuration, (note.velocity ?? 1) * 0.5));
-          }
-        });
-      });
-
-      // Play Arrangement regions
-      regions.forEach((region: any) => {
-        const regionTrack = allTracks.find((t: any) => t.id === region.trackId);
-        if (regionTrack?.isFrozen) return; // frozen buffer already covers this track
-
-        // Warped clips: granular time-stretch to follow the project tempo
-        if (region.warpEnabled && region.audioBuffer && region.originalBpm) {
-          const currentBpm = useDAWStore.getState().bpm;
-          const ratio = currentBpm / region.originalBpm;
-          const warpedDur = region.duration / ratio;
-          const outputOffset = Math.max(0, currentPlayheadTime - region.startTime);
-          if (outputOffset >= warpedDur) return;
-          const startDelay = Math.max(0, region.startTime - currentPlayheadTime);
-          const dests: AudioNode[] = [];
-          const tg = trackGainsRef.current[region.trackId];
-          const ts = trackSendsRef.current[region.trackId];
-          if (tg) dests.push(tg);
-          if (ts) dests.push(ts);
-          const grains = scheduleWarpedRegion(
-            audioContext, dests, region,
-            audioContext.currentTime + startDelay, outputOffset, ratio
-          );
-          activeSources.push(...grains);
-          return;
+    if (!isPlaying) return;
+    let raf: number;
+    const updatePlayhead = () => {
+      const currentPos = getPosition();
+      setLocalPlaybackPosition(Math.max(0, currentPos));
+      setCountingIn(isCountingIn());
+      const st = useDAWStore.getState();
+      if (st.isPunchEnabled && !isCountingIn()) {
+        if (currentPos >= st.punchInTime && currentPos < st.punchOutTime) {
+          if (!st.isRecording) st.setRecording(true);
+        } else if (st.isRecording) {
+          st.setRecording(false);
         }
-
-        if (region.audioBuffer) {
-          const source = audioContext.createBufferSource();
-          source.buffer = region.audioBuffer;
-          
-          const trackGain = trackGainsRef.current[region.trackId];
-          const trackSend = trackSendsRef.current[region.trackId];
-          
-          if (trackGain) source.connect(trackGain);
-          if (trackSend) source.connect(trackSend);
-
-          // Play offset inside the buffer, including startOffset and resume offset
-          const actualBufferOffset = (region.startOffset || 0) + Math.max(0, currentPlayheadTime - region.startTime);
-          const startOffset = Math.max(0, region.startTime - currentPlayheadTime);
-          
-          // Only play what's left inside the trimmed duration
-          const durationLeft = region.duration - Math.max(0, currentPlayheadTime - region.startTime);
-          
-          if (durationLeft > 0) {
-            source.start(audioContext.currentTime + startOffset, actualBufferOffset, durationLeft);
-            activeSources.push(source);
-          }
-        }
-      });
-
-      const updatePlayhead = () => {
-        const currentPos = audioContext.currentTime - playStartTimeRef.current;
-        setLocalPlaybackPosition(currentPos);
-        // Punch recording: engage/disengage the record state at the punch points
-        const st = useDAWStore.getState();
-        if (st.isPunchEnabled) {
-          if (currentPos >= st.punchInTime && currentPos < st.punchOutTime) {
-            if (!st.isRecording) st.setRecording(true);
-          } else if (st.isRecording) {
-            st.setRecording(false);
-          }
-        }
-        animationRef.current = requestAnimationFrame(updatePlayhead);
-      };
-      updatePlayhead();
-    } else {
-      // Stop playback
-      activeSources.forEach(source => {
-        try { source.stop(); } catch(e) {}
-      });
-      activeSources = [];
-      if (playStartTimeRef.current > 0) {
-        pauseTimeRef.current = audioContext.currentTime - playStartTimeRef.current;
-        setLocalPlaybackPosition(pauseTimeRef.current);
       }
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-    }
-
-    return () => {
-      // Clean up previous active sources before the effect runs again (e.g. during a drag)
-      activeSources.forEach(source => {
-        try { source.stop(); } catch(e) {}
-      });
-      activeSources = [];
-      if (isPlaying && playStartTimeRef.current > 0) {
-        // Store current playhead position during a drag so the new sources resume from here
-        pauseTimeRef.current = audioContext.currentTime - playStartTimeRef.current;
-      }
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      raf = requestAnimationFrame(updatePlayhead);
     };
-  }, [isPlaying, regions, bpm]); // bpm: warped clips must be re-stretched when tempo changes
+    updatePlayhead();
+    return () => { cancelAnimationFrame(raf); setCountingIn(false); };
+  }, [isPlaying]);
 
-  // Double stop to Return to Zero
+  // Record: arm recording and start the transport; the transport plays the
+  // count-in first when one is set. Pressing again while recording disarms.
+  const handleRecord = () => {
+    const st = useDAWStore.getState();
+    if (st.isRecording) { st.setRecording(false); return; }
+    st.setRecording(true);
+    if (!st.isPlaying) st.togglePlayback();
+  };
+
+  // Stop; stopping again while stopped returns to zero
   const handleStop = () => {
-    if (!isPlaying && pauseTimeRef.current > 0) {
-      pauseTimeRef.current = 0;
-      setLocalPlaybackPosition(0);
-    } else if (isPlaying) {
-      togglePlayback();
-    }
+    if (isPlaying) togglePlayback();
+    else setTransportPosition(0);
   };
 
   // Drag and Drop files onto timelines or slots
@@ -587,7 +245,9 @@ function App() {
     const clientX = e.clientX;
     const rect = currentTarget ? (currentTarget as HTMLElement).getBoundingClientRect() : null;
 
-    const file = e.dataTransfer.files[0];
+    // Samples dragged from the Browser carry a library reference, not a File
+    const fromBrowser = e.dataTransfer.getData(SAMPLE_DRAG_TYPE);
+    const file = fromBrowser ? await getFile(JSON.parse(fromBrowser).id) : e.dataTransfer.files[0];
     if (!file) return;
 
     // Case insensitive validation for WAV, MP3, OGG, M4A
@@ -661,8 +321,18 @@ function App() {
   }, [togglePlayback, undo, redo]);
 
   // Find selected track and region
-  const selectedTrack = tracks.find((t: any) => t.id === selectedTrackId);
+  // The device chain view edits whichever strip is selected: a track or a return
+  const returnStrips = returns.map((r: any, i: number) => ({
+    ...r, type: 'return', color: '#6b7280', name: `${RETURN_LETTERS[i]} ${r.name}`
+  }));
+  const masterStrip = { id: MASTER_STRIP_ID, name: 'Master', type: 'master', color: '#e5e7eb', plugins: masterPlugins };
+  const selectedTrack = tracks.find((t: any) => t.id === selectedTrackId)
+    || returnStrips.find((r: any) => r.id === selectedTrackId)
+    || (selectedTrackId === MASTER_STRIP_ID ? masterStrip : undefined);
   const selectedRegion = regions.find((r: any) => r.id === selectedRegionId);
+  const selectedSessionClipData = selectedSessionClip
+    ? sessionClips[selectedSessionClip.trackId]?.[selectedSessionClip.slot]
+    : null;
 
   // Members of collapsed groups are hidden from the track lists (audio still plays)
   const collapsedGroupIds = new Set(
@@ -670,20 +340,29 @@ function App() {
   );
   const visibleTracks = tracks.filter((t: any) => !(t.groupId && collapsedGroupIds.has(t.groupId)));
 
-  // Play session clip in real-time
-  const playSessionClip = (trackId: string, slotIndex: number) => {
-    const clip = sessionClips[trackId]?.[slotIndex];
-    if (clip && clip.audioBuffer) {
-      const source = audioContext.createBufferSource();
-      source.buffer = clip.audioBuffer;
-      
-      const trackGain = trackGainsRef.current[trackId];
-      const trackSend = trackSendsRef.current[trackId];
-      if (trackGain) source.connect(trackGain);
-      if (trackSend) source.connect(trackSend);
-      
-      source.start();
-    }
+  // Timeline extends past the last clip / loop / locator with room to work
+  const contentEnd = Math.max(
+    40,
+    ...regions.map((r: any) => r.startTime + r.duration + 16),
+    loopEnd + 16,
+    ...locators.map((l: any) => l.time + 16)
+  );
+  const timelineWidth = Math.ceil(contentEnd * PIXELS_PER_SECOND);
+
+  // Track lanes and their headers live in two scroll containers; keep them in step
+  const arrangerScrollRef = useRef<HTMLDivElement>(null);
+  const headersScrollRef = useRef<HTMLDivElement>(null);
+  const syncScroll = (from: HTMLDivElement | null, to: HTMLDivElement | null) => {
+    if (from && to && Math.abs(to.scrollTop - from.scrollTop) > 1) to.scrollTop = from.scrollTop;
+  };
+
+  // Jump to the previous/next locator relative to the playhead
+  const jumpLocator = (dir: 1 | -1) => {
+    const pos = getPosition();
+    const target = dir > 0
+      ? locators.find((l: any) => l.time > pos + 0.01)
+      : [...locators].reverse().find((l: any) => l.time < pos - 0.05);
+    if (target) setTransportPosition(target.time);
   };
 
   // Toggle track selection for grouping
@@ -724,10 +403,7 @@ function App() {
   const auditionNote = (track: any, pitch: number) => {
     if (!track?.instrument) return;
     if (audioContext.state === 'suspended') audioContext.resume();
-    const trackGain = trackGainsRef.current[track.id];
-    if (trackGain) {
-      triggerNote(audioContext, trackGain, track.instrument.parameters, pitch, audioContext.currentTime, 0.35);
-    }
+    triggerNote(audioContext, getStripInput(track.id), track.instrument.parameters, pitch, audioContext.currentTime, 0.35);
   };
 
   // Freeze: render the track's clips offline (instrument included for MIDI),
@@ -743,21 +419,14 @@ function App() {
       alert('Nothing to freeze: this track has no clips.');
       return;
     }
-    const end = Math.max(...trackRegions.map((r: any) => r.startTime + r.duration)) + 0.5; // headroom for release tails
+    const end = Math.max(...trackRegions.map((r: any) => r.startTime + clipTimelineLength(r, bpm))) + 0.5; // headroom for release tails
     const sampleRate = audioContext.sampleRate;
     const offline = new OfflineAudioContext(2, Math.ceil(sampleRate * end), sampleRate);
 
+    // Same clip renderer as playback, so gain/transpose/loop/warp are baked in
     trackRegions.forEach((region: any) => {
-      if (region.type === 'midi' && region.notes && track.instrument) {
-        region.notes.forEach((note: any) => {
-          triggerNote(offline, offline.destination, track.instrument.parameters, note.pitch, region.startTime + note.start, note.duration, note.velocity ?? 1);
-        });
-      } else if (region.audioBuffer) {
-        const src = offline.createBufferSource();
-        src.buffer = region.audioBuffer;
-        src.connect(offline.destination);
-        src.start(region.startTime, region.startOffset || 0, region.duration);
-      }
+      scheduleClip(offline, region, track.instrument?.parameters, offline.destination,
+        region.startTime, 0, clipTimelineLength(region, bpm), bpm, { midiEffects: track.midiEffects });
     });
 
     const rendered = await offline.startRendering();
@@ -872,8 +541,13 @@ function App() {
         const panNode = trackNode.querySelector('DeviceChain Mixer Pan Manual');
         const pan = panNode ? parseFloat(panNode.getAttribute('Value') || '0.0') : 0.0;
 
-        const sendNode = trackNode.querySelector('DeviceChain Mixer Sends TrackSendHolder Manual');
-        const sendReverb = sendNode ? parseFloat(sendNode.getAttribute('Value') || '0.0') : 0.0;
+        // One TrackSendHolder per return, in return order
+        const sends: { [returnId: string]: number } = {};
+        trackNode.querySelectorAll('DeviceChain Mixer Sends TrackSendHolder Send Manual')
+          .forEach((sendNode, i) => {
+            const ret = returns[i];
+            if (ret) sends[ret.id] = parseFloat(sendNode.getAttribute('Value') || '0') || 0;
+          });
 
         // Scanned plugins / VSTs under the track's device chain
         const plugins: any[] = [];
@@ -902,7 +576,7 @@ function App() {
           groupId: null,
           volume,
           pan,
-          sendReverb,
+          sends,
           color,
           instrument: type === 'midi' ? createDefaultInstrument() : null,
           plugins
@@ -956,11 +630,22 @@ function App() {
       {/* Ableton-style Control Bar */}
       <div className="control-bar">
         <div className="logo-section">NoProd</div>
-        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
+        <FileMenu onImportAls={() => fileInputRef.current?.click()} />
+        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
         
         {/* Transport */}
-        <button className={`btn-transport ${isRecording ? 'recording' : ''}`} onClick={toggleRecording} title="Arm Session Record">
+        <button className={`btn-transport ${isRecording ? 'recording' : ''}`} onClick={handleRecord} title="Record (starts playback, after the count-in if one is set)">
           <Circle size={18} fill={isRecording ? 'var(--accent-red)' : 'none'} color={isRecording ? 'var(--accent-red)' : 'var(--text-primary)'} />
+        </button>
+        <button
+          className={`btn-transport capture-btn ${capturable ? 'capturable' : ''}`}
+          onClick={() => {
+            const n = captureMidi(useDAWStore.getState());
+            if (!n) alert('Nothing to capture: play something on an armed MIDI track (or one with monitoring In) first.');
+          }}
+          title="Capture MIDI: turn what you just played on armed MIDI tracks into a clip"
+        >
+          <ListMusic size={16} />
         </button>
         <button className={`btn-transport ${isPlaying ? 'playing' : ''}`} onClick={togglePlayback} title="Play">
           <Play size={18} />
@@ -969,7 +654,7 @@ function App() {
           <Square size={18} />
         </button>
 
-        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
+        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
 
         {/* Undo / Redo */}
         <button className="btn-transport" onClick={undo} disabled={past.length === 0} title="Undo (Ctrl+Z)">
@@ -979,11 +664,11 @@ function App() {
           <Redo2 size={16} />
         </button>
 
-        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
+        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
 
         {/* Metronome */}
         <button className={`btn-metronome ${isMetronomeEnabled ? 'active' : ''}`} onClick={toggleMetronome}>
-          <Sliders size={14} style={{ marginRight: '5px' }} /> Click
+          Click
         </button>
 
         {/* Punch In/Out */}
@@ -995,11 +680,23 @@ function App() {
           PUNCH
         </button>
 
-        <div className="control-bpm">{bpm.toFixed(2)} BPM</div>
-
-        <button className="btn-metronome" onClick={() => fileInputRef.current?.click()} title="Import Ableton Live Set (.als)">
-          <FolderOpen size={14} style={{ marginRight: '5px' }} /> Import ALS
+        {/* Arrangement loop + locators */}
+        <button
+          className={`btn-metronome ${isLoopEnabled ? 'active' : ''}`}
+          onClick={toggleLoop}
+          title={`Loop ${isLoopEnabled ? 'on' : 'off'} (${loopStart.toFixed(2)}s - ${loopEnd.toFixed(2)}s; drag on the ruler to set)`}
+        >
+          LOOP
         </button>
+        <div className="locator-nav">
+          <button className="btn-metronome" onClick={() => jumpLocator(-1)} disabled={locators.length === 0} title="Previous locator">◀</button>
+          <button className="btn-metronome" onClick={() => addLocator(getPosition())} title="Add a locator at the playhead">SET</button>
+          <button className="btn-metronome" onClick={() => jumpLocator(1)} disabled={locators.length === 0} title="Next locator">▶</button>
+        </div>
+
+        <TempoControls position={localPlaybackPosition} />
+        {countingIn && <span className="count-in-badge">COUNT-IN</span>}
+
         <input
           type="file"
           ref={fileInputRef}
@@ -1008,7 +705,7 @@ function App() {
           style={{ display: 'none' }}
         />
 
-        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 10px' }} />
+        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
 
         {/* AI Dictation */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -1019,7 +716,7 @@ function App() {
             onChange={(e) => setDictationInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleSendDictation(); }}
             className="vst-path-input"
-            style={{ width: '220px' }}
+            style={{ width: '120px' }}
           />
           <button
             className="btn-metronome"
@@ -1030,8 +727,11 @@ function App() {
             <Wand2 size={14} style={{ marginRight: '5px' }} />
             {dictationStatus === 'sending' ? 'Generating...' : 'Dictate'}
           </button>
-          <span style={{ fontSize: '10px', color: orchestratorConnected ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-            {orchestratorConnected ? '● orchestrator' : '○ offline'}
+          <span
+            style={{ fontSize: '10px', color: orchestratorConnected ? 'var(--accent-green)' : 'var(--accent-red)' }}
+            title={orchestratorConnected ? 'Orchestrator connected' : 'Orchestrator offline'}
+          >
+            {orchestratorConnected ? '●' : '○'}
           </span>
         </div>
 
@@ -1047,8 +747,7 @@ function App() {
 
         {/* Master Controls */}
         <div className="master-fader">
-          <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>MASTER</span>
-          <Volume2 size={16} />
+          <Volume2 size={16} aria-label="Master volume" />
           <input
             type="range" min="0" max="1" step="0.01"
             value={masterVolume}
@@ -1068,75 +767,43 @@ function App() {
 
       <div className="main-workspace">
         {/* Browser Sidebar */}
-        <div className="browser-sidebar">
-          <div className="browser-header">
-            <h4>Browser</h4>
-          </div>
-          <div className="browser-categories">
-            <button className="btn-category active">
-              <FolderOpen size={14} /> All Sounds
-            </button>
-            <button className="btn-category">
-              <Radio size={14} /> Plug-ins (VSTs)
-            </button>
-            <button className="btn-category">
-              <Sliders size={14} /> Audio FX
-            </button>
-          </div>
-          <div className="browser-list">
-            <div className="browser-item">
-              <Music size={14} style={{ marginRight: '6px' }} /> Sample_DrumLoop.wav
-            </div>
-            <div className="browser-item">
-              <Music size={14} style={{ marginRight: '6px' }} /> Synth_Bass.wav
-            </div>
-          </div>
-        </div>
+        <BrowserSidebar onShowPluginScan={() => setActiveTab('vst-paths')} />
 
         {/* Timeline / Grid - Tracks moved to the right! */}
         <div className="timeline-section">
           {viewMode === 'arrangement' ? (
-            <div className="arrangement-view">
+            <div className={`arrangement-view ${showIO ? 'show-io' : ''}`}>
               
               {/* Arranger Track Grid (Moved to left) */}
-              <div className="arranger-timeline" onClick={() => setSelectedRegionId(null)}>
-                <div className="arranger-grid" />
-                {/* Punch strip: drag to set the punch-in/out region */}
-                <div
-                  className="punch-strip"
-                  title="Drag to set punch-in/out region"
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                    const snap = 60 / bpm; // snap to beats
-                    const startT = Math.max(0, Math.round(((e.clientX - rect.left) / PIXELS_PER_SECOND) / snap) * snap);
-                    setPunchRegion(startT, startT + snap);
-                    const onMove = (me: MouseEvent) => {
-                      const endT = Math.max(startT + snap, Math.round(((me.clientX - rect.left) / PIXELS_PER_SECOND) / snap) * snap);
-                      setPunchRegion(startT, endT);
-                    };
-                    const onUp = () => {
-                      window.removeEventListener('mousemove', onMove);
-                      window.removeEventListener('mouseup', onUp);
-                    };
-                    window.addEventListener('mousemove', onMove);
-                    window.addEventListener('mouseup', onUp);
-                  }}
-                >
-                  <div
-                    className={`punch-region ${isPunchEnabled ? 'enabled' : ''}`}
-                    style={{
-                      left: `${punchInTime * PIXELS_PER_SECOND}px`,
-                      width: `${Math.max(2, (punchOutTime - punchInTime) * PIXELS_PER_SECOND)}px`
-                    }}
-                  />
-                </div>
+              <div
+                className="arranger-timeline"
+                ref={arrangerScrollRef}
+                onScroll={() => syncScroll(arrangerScrollRef.current, headersScrollRef.current)}
+                onClick={() => setSelectedRegionId(null)}
+              >
+                {/* Bar / beat grid follows the tempo */}
+                <svg className="arranger-grid" width={timelineWidth} height="100%">
+                  {barsUntil(bpm, timelineWidth / PIXELS_PER_SECOND, timeSignatures).map((b) => (
+                    <g key={b.index}>
+                      <line x1={b.time * PIXELS_PER_SECOND} x2={b.time * PIXELS_PER_SECOND} y1="0" y2="100%" className="grid-bar" />
+                      {b.length * PIXELS_PER_SECOND / b.numerator >= 12 && Array.from({ length: b.numerator - 1 }, (_, k) => {
+                        const x = (b.time + (k + 1) * (b.length / b.numerator)) * PIXELS_PER_SECOND;
+                        return <line key={k} x1={x} x2={x} y1="0" y2="100%" className="grid-beat" />;
+                      })}
+                    </g>
+                  ))}
+                </svg>
+                <ArrangementRuler width={timelineWidth} onSeek={setTransportPosition} />
+                {isLoopEnabled && (
+                  <div className="loop-shade" style={{ left: loopStart * PIXELS_PER_SECOND, width: (loopEnd - loopStart) * PIXELS_PER_SECOND }} />
+                )}
                 <div className="playhead" style={{ left: `${localPlaybackPosition * PIXELS_PER_SECOND}px` }} />
                 
                 {visibleTracks.map((track: any) => (
+                  <Fragment key={track.id}>
                   <div
-                    key={track.id}
                     className={`arranger-track ${draggedOverTrack === track.id ? 'drag-over' : ''}`}
+                    style={{ width: timelineWidth }}
                     onDragOver={(e) => {
                       e.preventDefault();
                       setDraggedOverTrack(track.id);
@@ -1172,11 +839,31 @@ function App() {
                       )
                     ))}
                   </div>
+                  {/* Automation lanes under the track */}
+                  {track.showAutomation && (track.automationLanes || []).map((key: string) => {
+                    const param = automationParams(track, returns).find((p) => p.key === key);
+                    return param ? (
+                      <div key={key} className="automation-lane-row" style={{ width: timelineWidth }}>
+                        <AutomationLane track={track} param={param} width={timelineWidth} color={track.color} />
+                      </div>
+                    ) : <div key={key} className="automation-lane-row" style={{ width: timelineWidth }} />;
+                  })}
+                  {/* Take lanes (recorded passes) under the track */}
+                  {track.showTakes && (track.takeLanes || []).map((lane: any) => (
+                    <TakeLane key={lane.id} track={track} lane={lane} width={timelineWidth} />
+                  ))}
+                  </Fragment>
                 ))}
+                {/* Room to scroll as far as the return/master strips in the header column */}
+                <div style={{ height: 120 + returns.length * 82 + 82 }} />
               </div>
 
               {/* Mixer Headers / Tracks Panel (Moved to right) */}
-              <div className="mixer-headers">
+              <div
+                className="mixer-headers"
+                ref={headersScrollRef}
+                onScroll={() => syncScroll(headersScrollRef.current, arrangerScrollRef.current)}
+              >
                 <div className="track-list-actions">
                   <button className="btn-add-track" onClick={() => addTrack('audio')} title="Add Audio Track">
                     + Audio
@@ -1192,11 +879,16 @@ function App() {
                   >
                     Group ({selectedTrackIds.length})
                   </button>
+                  <button className={`btn-add-track io-toggle ${showIO ? 'active' : ''}`} onClick={() => setShowIO(!showIO)}
+                    title="Show each track's input, output and monitoring">I/O</button>
+                  <button className={`btn-add-track io-toggle ${keyboardMidi ? 'active' : ''}`}
+                    onClick={() => setComputerKeyboardEnabled(!keyboardMidi)}
+                    title={`Computer MIDI keyboard ${keyboardMidi ? 'on' : 'off'}: A-K play notes (W E T Y U sharps), Z/X octave (now ${getComputerKeyboardOctave()}), C/V velocity`}>⌨</button>
                 </div>
 
                 {visibleTracks.map((track: any) => (
+                  <Fragment key={track.id}>
                   <div
-                    key={track.id}
                     className={`track-header-box ${selectedTrackId === track.id ? 'selected' : ''} ${track.type === 'group' ? 'group-track' : ''}`}
                     onClick={() => setSelectedTrackId(track.id)}
                     style={{
@@ -1258,7 +950,7 @@ function App() {
                           )}
                         </div>
                         
-                        <span>{track.name}</span>
+                        <span className="track-name" title={track.name}>{track.name}</span>
                         {track.type === 'group' && (
                           <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>
                             ({tracks.filter((m: any) => m.groupId === track.id).length})
@@ -1266,6 +958,22 @@ function App() {
                         )}
                       </div>
                       <div style={{ display: 'flex', gap: '2px' }}>
+                        {(track.takeLanes || []).length > 0 && (
+                          <button
+                            className={`btn-icon ${track.showTakes ? 'automation-active' : ''}`}
+                            title={`${track.showTakes ? 'Hide' : 'Show'} take lanes (${track.takeLanes.length})`}
+                            onClick={(e) => { e.stopPropagation(); toggleTakesView(track.id); }}
+                          >
+                            <Layers size={12} />
+                          </button>
+                        )}
+                        <button
+                          className={`btn-icon ${track.showAutomation ? 'automation-active' : ''}`}
+                          title={track.showAutomation ? 'Hide automation lanes' : 'Show automation lanes'}
+                          onClick={(e) => { e.stopPropagation(); toggleAutomationView(track.id); }}
+                        >
+                          <Activity size={12} />
+                        </button>
                         {track.type !== 'group' && (
                           <button
                             className={`btn-icon ${track.isFrozen ? 'frozen-active' : ''}`}
@@ -1290,7 +998,9 @@ function App() {
                     
                     {/* Track Mixer Controls */}
                     <div className="mixer-strip">
-                      <button className={`btn-arm ${track.isArmed ? 'armed' : ''}`} onClick={() => toggleArmTrack(track.id)} title="Arm Recording"><Mic size={12} /></button>
+                      <button className={`btn-arm ${track.isArmed ? 'armed' : ''}`}
+                        onClick={() => { if (track.type === 'midi') initMidi(); toggleArmTrack(track.id); }}
+                        title="Arm recording (an armed track also monitors its input)"><Mic size={12} /></button>
                       <button className={`btn-mute ${track.isMuted ? 'muted' : ''}`} onClick={() => toggleMuteTrack(track.id)} title="Mute Track">M</button>
                       <button className={`btn-solo ${track.isSoloed ? 'soloed' : ''}`} onClick={() => toggleSoloTrack(track.id)} title="Solo Track">S</button>
                       
@@ -1304,14 +1014,19 @@ function App() {
                         />
                       </div>
                       
-                      <div className="strip-val">
-                        <span style={{ fontSize: '9px' }}>REV</span>
-                        <input 
-                          type="range" min="0" max="1" step="0.1" 
-                          value={track.sendReverb} 
-                          onChange={(e) => updateTrackSendReverb(track.id, parseFloat(e.target.value))}
-                          className="mixer-dial"
-                        />
+                      {/* One send per return track (post-fader) */}
+                      <div className="send-dials">
+                        {returns.map((r: any, i: number) => (
+                          <div key={r.id} className="strip-val" title={`Send to ${RETURN_LETTERS[i]} ${r.name}`}>
+                            <span style={{ fontSize: '9px' }}>{RETURN_LETTERS[i]}</span>
+                            <input
+                              type="range" min="0" max="1" step="0.01"
+                              value={track.sends?.[r.id] ?? 0}
+                              onChange={(e) => updateTrackSend(track.id, r.id, parseFloat(e.target.value))}
+                              className="mixer-dial"
+                            />
+                          </div>
+                        ))}
                       </div>
                     </div>
                     
@@ -1325,92 +1040,131 @@ function App() {
                         className="mixer-fader"
                       />
                     </div>
+                    {showIO && <TrackIO track={track} tracks={tracks} returns={returns} />}
                   </div>
+                  {/* Automation lane headers: choose the parameter, clear, add/remove lanes */}
+                  {track.showAutomation && (track.automationLanes || []).map((key: string, laneIdx: number) => {
+                    const params = automationParams(track, returns);
+                    const lanes: string[] = track.automationLanes;
+                    const points = track.automation?.[key]?.length || 0;
+                    return (
+                      <div key={key} className="automation-lane-header" style={{ borderLeft: `4px solid ${track.color}` }}>
+                        <select
+                          className="rack-map-select"
+                          value={key}
+                          onChange={(e) => setAutomationLanes(track.id, lanes.map((k, i) => (i === laneIdx ? e.target.value : k)))}
+                        >
+                          {params.filter((p) => p.key === key || !lanes.includes(p.key)).map((p) => (
+                            <option key={p.key} value={p.key}>{p.label}{track.automation?.[p.key]?.length ? ' •' : ''}</option>
+                          ))}
+                        </select>
+                        <span className="automation-count">{points ? `${points} pts` : 'empty'}</span>
+                        <div style={{ display: 'flex', gap: '2px' }}>
+                          <button className="btn-icon" title="Clear this envelope" disabled={!points}
+                            onClick={() => clearAutomation(track.id, key)}><Eraser size={12} /></button>
+                          <button className="btn-icon" title="Show another automation lane"
+                            onClick={() => {
+                              const next = params.find((p) => !lanes.includes(p.key));
+                              if (next) setAutomationLanes(track.id, [...lanes, next.key]);
+                            }}><Plus size={12} /></button>
+                          <button className="btn-icon" title="Hide this lane (its automation keeps playing)"
+                            onClick={() => setAutomationLanes(track.id, lanes.filter((_, i) => i !== laneIdx))}><X size={12} /></button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {track.showTakes && (track.takeLanes || []).map((lane: any) => {
+                    const inComp = regions.some((r: any) => r.trackId === track.id && r.takeLaneId === lane.id);
+                    return (
+                      <div key={lane.id} className="take-lane-header" style={{ borderLeft: `4px solid ${track.color}` }}>
+                        <span className={`take-name ${inComp ? 'in-comp' : ''}`} title={inComp ? 'Parts of this take are in the comp' : 'Not used in the comp'}>{lane.name}</span>
+                        <div style={{ display: 'flex', gap: '2px' }}>
+                          <button className="btn-metronome take-use" title="Use this whole take in the comp"
+                            onClick={() => lane.regions.forEach((c: any) => compTakeRange(track.id, lane.id, c.startTime, c.startTime + clipTimelineLength(c, bpm)))}>Use</button>
+                          <button className="btn-icon" title="Delete this take lane (comped parts stay)" onClick={() => removeTakeLane(track.id, lane.id)}><Trash2 size={12} /></button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  </Fragment>
                 ))}
 
-                {/* Return/Master Mixer Strip */}
-                <div className="track-header-box return-master">
+                {/* Return Tracks: each has its own device chain (click to edit) */}
+                {returnStrips.map((r: any) => (
+                  <div
+                    key={r.id}
+                    className={`track-header-box return-master ${selectedTrackId === r.id ? 'selected' : ''}`}
+                    onClick={() => setSelectedTrackId(r.id)}
+                  >
+                    <div className="track-title-row">
+                      <span style={{ fontSize: '10px', fontWeight: 'bold' }}>{r.name.toUpperCase()} <span className="strip-kind">RETURN</span></span>
+                      <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+                        <button className={`btn-mute ${r.isMuted ? 'muted' : ''}`} title="Mute Return"
+                          onClick={(e) => { e.stopPropagation(); updateReturn(r.id, { isMuted: !r.isMuted }); }}>M</button>
+                        <button className="btn-icon" title="Delete Return (removes every track's send to it)"
+                          onClick={(e) => { e.stopPropagation(); removeReturn(r.id); }}><Trash2 size={12} /></button>
+                      </div>
+                    </div>
+                    <div className="fader-row">
+                      <span style={{ fontSize: '9px' }}>PAN</span>
+                      <input
+                        type="range" min="-1" max="1" step="0.1"
+                        value={r.pan}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => updateReturn(r.id, { pan: parseFloat(e.target.value) })}
+                        className="mixer-dial"
+                      />
+                      <Volume2 size={12} />
+                      <input
+                        type="range" min="0" max="1" step="0.01"
+                        value={r.volume}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => updateReturn(r.id, { volume: parseFloat(e.target.value) })}
+                        className="mixer-fader"
+                      />
+                    </div>
+                  </div>
+                ))}
+                {/* Master strip: its device chain sits before the master fader and limiter */}
+                <div
+                  className={`track-header-box return-master master-strip ${selectedTrackId === MASTER_STRIP_ID ? 'selected' : ''}`}
+                  onClick={() => setSelectedTrackId(MASTER_STRIP_ID)}
+                  title="Click to edit the master device chain"
+                >
                   <div className="track-title-row">
-                    <span style={{ fontSize: '10px', fontWeight: 'bold' }}>A-REVERB (RETURN)</span>
+                    <span style={{ fontSize: '10px', fontWeight: 'bold' }}>MASTER</span>
+                    <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>
+                      {masterPlugins.length ? `${masterPlugins.length} device${masterPlugins.length > 1 ? 's' : ''}` : 'no devices'}
+                    </span>
                   </div>
                   <div className="fader-row">
                     <Volume2 size={12} />
-                    <input 
-                      type="range" min="0" max="1" step="0.01" 
-                      value={reverbReturnVolume} 
-                      onChange={(e) => setReverbReturnVolume(parseFloat(e.target.value))}
+                    <input
+                      type="range" min="0" max="1" step="0.01"
+                      value={masterVolume}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
                       className="mixer-fader"
                     />
                   </div>
+                </div>
+                <div className="track-list-actions">
+                  <button className="btn-add-track" style={{ backgroundColor: '#6b7280' }} onClick={addReturn}
+                    disabled={returns.length >= RETURN_LETTERS.length} title="Add Return Track">
+                    + Return
+                  </button>
                 </div>
               </div>
 
             </div>
           ) : (
-            // Session View Launcher
-            <div className="session-view">
-              {visibleTracks.map((track: any) => (
-                <div key={track.id} className="session-track-column" style={{ borderTop: `4px solid ${track.color}` }}>
-                  <div className="session-track-header">{track.name}</div>
-                  
-                  {/* Slots */}
-                  {[0, 1, 2, 3].map(slotIndex => {
-                    const clip = sessionClips[track.id]?.[slotIndex];
-                    return (
-                      <div 
-                        key={slotIndex} 
-                        className={`session-clip-slot ${clip ? 'has-clip' : ''}`}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={(e) => handleDrop(e, track.id, slotIndex)}
-                        style={{ backgroundColor: clip ? `${track.color}40` : '' }}
-                      >
-                        {clip ? (
-                          <div className="clip-launcher-btn" onClick={() => playSessionClip(track.id, slotIndex)}>
-                            <Play size={10} fill="#fff" />
-                            <span style={{ fontSize: '10px', overflow: 'hidden' }}>{clip.name}</span>
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>Empty</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                  
-                  {/* Track Activator / Volume */}
-                  <div className="session-track-mixer">
-                    <button className={`btn-mute ${track.isMuted ? 'muted' : ''}`} onClick={() => toggleMuteTrack(track.id)}>Activator</button>
-                    <input 
-                      type="range" min="0" max="1" step="0.01" 
-                      value={track.volume} 
-                      onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
-                      className="session-volume"
-                    />
-                  </div>
-                </div>
-              ))}
-              
-              {/* Scene Launcher Column */}
-              <div className="session-track-column scene-launcher">
-                <div className="session-track-header">Scenes</div>
-                {[0, 1, 2, 3].map(slotIndex => (
-                  <button 
-                    key={slotIndex} 
-                    className="btn-scene-launch" 
-                    onClick={() => {
-                      tracks.forEach((t: any) => playSessionClip(t.id, slotIndex));
-                    }}
-                  >
-                    <ArrowRight size={12} style={{ marginRight: '4px' }} /> Scene {slotIndex + 1}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <SessionView tracks={visibleTracks} onDropFile={handleDrop} onOpenClip={() => setActiveTab('clip')} />
           )}
         </div>
       </div>
 
       {/* Bottom Detail panel */}
-      <div className={`bottom-detail-panel ${activeTab === 'clip' && selectedRegion?.type === 'midi' ? 'tall' : ''}`}>
+      <div className={`bottom-detail-panel ${activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi' ? 'tall' : ''}`}>
         <div className="detail-tabs">
           <button className={`detail-tab ${activeTab === 'devices' ? 'active' : ''}`} onClick={() => setActiveTab('devices')}>Device Chain</button>
           <button className={`detail-tab ${activeTab === 'clip' ? 'active' : ''}`} onClick={() => setActiveTab('clip')}>Clip View</button>
@@ -1430,9 +1184,25 @@ function App() {
                   )}
                   <div style={{ marginRight: '1rem', borderRight: '1px solid var(--border-color)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
                     <h5 style={{ color: selectedTrack.color }}>{selectedTrack.name} Device Chain</h5>
-                    <button className="btn-add-track" onClick={() => addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[0])}>
-                      <Plus size={12} /> Add Device
-                    </button>
+                    <div style={{ display: 'flex', gap: '3px' }}>
+                      <select className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(e.target.value)} title="Device to add">
+                        <optgroup label="Audio Effects">
+                          {BROWSER_PLUGINS.map((p: any, i: number) => <option key={p.name} value={`audio:${i}`}>{p.name}</option>)}
+                        </optgroup>
+                        {selectedTrack.type === 'midi' && (
+                          <optgroup label="MIDI Effects">
+                            {Object.values(MIDI_EFFECT_DEFS).map((d) => <option key={d.kind} value={`midi:${d.kind}`}>{d.name}</option>)}
+                          </optgroup>
+                        )}
+                      </select>
+                      <button className="btn-add-track" onClick={() => {
+                        const [group, key] = newDeviceIdx.split(':');
+                        if (group === 'midi') addMidiEffect(selectedTrack.id, createMidiEffect(key));
+                        else addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[parseInt(key)] || BROWSER_PLUGINS[0]);
+                      }}>
+                        <Plus size={12} /> Add
+                      </button>
+                    </div>
                     <button className="btn-add-track" style={{ backgroundColor: '#a855f7' }} onClick={() => addRackToTrack(selectedTrack.id)}>
                       <Plus size={12} /> Add Rack
                     </button>
@@ -1458,55 +1228,20 @@ function App() {
                     )}
                   </div>
                   
+                  {/* MIDI effects run before the instrument */}
+                  {selectedTrack.type === 'midi' && (selectedTrack.midiEffects || []).map((fx: any) => (
+                    <DeviceCard
+                      key={fx.id}
+                      device={fx}
+                      onChange={(name, val) => updateMidiEffectParameter(selectedTrack.id, fx.id, name, val)}
+                      onRemove={() => removeMidiEffect(selectedTrack.id, fx.id)}
+                    />
+                  ))}
+
                   {/* Instrument Card (MIDI tracks) */}
                   {selectedTrack.type === 'midi' && (
                     selectedTrack.instrument ? (
-                      <div className="device-card instrument-card">
-                        <div className="device-card-header">
-                          <span>{selectedTrack.instrument.name}</span>
-                          <span style={{ fontSize: '9px', color: 'var(--accent-green)' }}>INSTRUMENT</span>
-                        </div>
-                        <div className="device-card-params">
-                          <div className="param-slider-row">
-                            <span style={{ fontSize: '10px' }}>Waveform</span>
-                            <select
-                              className="clip-input"
-                              value={selectedTrack.instrument.parameters.Waveform}
-                              onChange={(e) => updateInstrumentParameter(selectedTrack.id, 'Waveform', e.target.value)}
-                            >
-                              <option value="sawtooth">Sawtooth</option>
-                              <option value="square">Square</option>
-                              <option value="sine">Sine</option>
-                              <option value="triangle">Triangle</option>
-                            </select>
-                          </div>
-                          {['Attack', 'Decay', 'Sustain', 'Release', 'Gain'].map((paramName) => (
-                            <div key={paramName} className="param-slider-row">
-                              <span style={{ fontSize: '10px' }}>{paramName}</span>
-                              <input
-                                type="range" min="0" max="1" step="0.01"
-                                value={selectedTrack.instrument.parameters[paramName]}
-                                onChange={(e) => updateInstrumentParameter(selectedTrack.id, paramName, parseFloat(e.target.value))}
-                                className="param-slider"
-                              />
-                              <span style={{ fontSize: '10px', width: '28px', textAlign: 'right' }}>{Number(selectedTrack.instrument.parameters[paramName]).toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                        {/* Audition keyboard: one octave from C4 */}
-                        <div className="audition-keys">
-                          {[60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71].map(pitch => (
-                            <button
-                              key={pitch}
-                              className={`audition-key ${midiNoteName(pitch).includes('#') ? 'black-key' : ''}`}
-                              onMouseDown={() => auditionNote(selectedTrack, pitch)}
-                              title={midiNoteName(pitch)}
-                            >
-                              {midiNoteName(pitch).includes('#') ? '' : midiNoteName(pitch)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                      <InstrumentCard track={selectedTrack} onAudition={(pitch: number) => auditionNote(selectedTrack, pitch)} />
                     ) : (
                       <button className="btn-add-track" style={{ backgroundColor: '#10b981', alignSelf: 'flex-start' }}
                         onClick={() => setTrackInstrument(selectedTrack.id, createDefaultInstrument())}>
@@ -1527,26 +1262,12 @@ function App() {
                           onRemove={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}
                         />
                       ) : (
-                      <div key={plugin.id} className="device-card">
-                        <div className="device-card-header">
-                          <span>{plugin.name}</span>
-                          <button className="btn-icon" onClick={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}><Trash2 size={12} /></button>
-                        </div>
-                        <div className="device-card-params">
-                          {Object.keys(plugin.parameters).map((paramName) => (
-                            <div key={paramName} className="param-slider-row">
-                              <span style={{ fontSize: '10px' }}>{paramName}</span>
-                              <input 
-                                type="range" min="0" max="100" 
-                                value={plugin.parameters[paramName]} 
-                                onChange={(e) => updateDeviceParameter(selectedTrack.id, plugin.id, paramName, parseFloat(e.target.value))}
-                                className="param-slider"
-                              />
-                              <span style={{ fontSize: '10px', width: '20px', textAlign: 'right' }}>{plugin.parameters[paramName]}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                        <DeviceCard
+                          key={plugin.id}
+                          device={plugin}
+                          onChange={(paramName, val) => updateDeviceParameter(selectedTrack.id, plugin.id, paramName, val)}
+                          onRemove={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}
+                        />
                       )
                     ))}
                   </div>
@@ -1559,86 +1280,24 @@ function App() {
           
           {activeTab === 'clip' && (
             <div className="clip-properties-view">
-              {selectedRegion && selectedRegion.type === 'midi' ? (
-                <PianoRoll
-                  region={selectedRegion}
-                  trackColor={tracks.find((t: any) => t.id === selectedRegion.trackId)?.color || 'var(--accent-green)'}
-                  bpm={bpm}
-                  onAudition={(pitch: number) => auditionNote(tracks.find((t: any) => t.id === selectedRegion.trackId), pitch)}
+              {selectedSessionClipData ? (
+                <ClipView
+                  key={`${selectedSessionClip.trackId}-${selectedSessionClip.slot}`}
+                  region={selectedSessionClipData}
+                  onChange={(patch: any) => updateSessionClip(selectedSessionClip.trackId, selectedSessionClip.slot, patch)}
+                  trackColor={tracks.find((t: any) => t.id === selectedSessionClip.trackId)?.color || '#3b82f6'}
+                  onAudition={(pitch: number) => auditionNote(tracks.find((t: any) => t.id === selectedSessionClip.trackId), pitch)}
                 />
               ) : selectedRegion ? (
-                <div style={{ display: 'flex', gap: '2rem' }}>
-                  <div>
-                    <h5>Selected Clip</h5>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{selectedRegion.file}</div>
-                  </div>
-                  <div className="clip-control-box">
-                    <span className="clip-control-label">Transpose</span>
-                    <input type="number" min="-24" max="24" defaultValue="0" className="clip-input" />
-                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>st</span>
-                  </div>
-                  <div className="clip-control-box">
-                    <span className="clip-control-label">Gain</span>
-                    <input type="number" min="-60" max="6" defaultValue="0" className="clip-input" />
-                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>dB</span>
-                  </div>
-                  <div className="clip-control-box">
-                    <span className="clip-control-label">Loop</span>
-                    <button className="btn-view active">ON</button>
-                  </div>
-                  {selectedRegion.audioBuffer && (
-                    <div className="clip-control-box warp-box">
-                      <span className="clip-control-label">Warp</span>
-                      <button
-                        className={`btn-view ${selectedRegion.warpEnabled ? 'active' : ''}`}
-                        title="Warp: time-stretch this clip to follow the project tempo"
-                        onClick={() => {
-                          if (selectedRegion.warpEnabled) {
-                            updateRegionWarp(selectedRegion.id, { warpEnabled: false });
-                          } else {
-                            const transients = selectedRegion.transients || detectTransients(selectedRegion.audioBuffer);
-                            const originalBpm = selectedRegion.originalBpm || estimateBpm(transients, bpm);
-                            updateRegionWarp(selectedRegion.id, {
-                              warpEnabled: true,
-                              warpMode: selectedRegion.warpMode || 'beats',
-                              originalBpm,
-                              transients
-                            });
-                          }
-                        }}
-                      >
-                        {selectedRegion.warpEnabled ? 'ON' : 'OFF'}
-                      </button>
-                      {selectedRegion.warpEnabled && (
-                        <>
-                          <select
-                            className="rack-map-select"
-                            value={selectedRegion.warpMode || 'beats'}
-                            onChange={(e) => updateRegionWarp(selectedRegion.id, { warpMode: e.target.value })}
-                          >
-                            <option value="beats">Beats</option>
-                            <option value="tones">Tones</option>
-                            <option value="texture">Texture</option>
-                          </select>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>Orig BPM</span>
-                            <input
-                              type="number" min="40" max="240" step="0.1"
-                              className="clip-input"
-                              value={selectedRegion.originalBpm}
-                              onChange={(e) => updateRegionWarp(selectedRegion.id, { originalBpm: parseFloat(e.target.value) || 120 })}
-                            />
-                          </div>
-                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>
-                            {(selectedRegion.transients || []).length} transients · ×{(bpm / selectedRegion.originalBpm).toFixed(2)} stretch
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
+                <ClipView
+                  key={selectedRegion.id}
+                  region={selectedRegion}
+                  onChange={(patch: any) => updateClip(selectedRegion.id, patch)}
+                  trackColor={tracks.find((t: any) => t.id === selectedRegion.trackId)?.color || '#3b82f6'}
+                  onAudition={(pitch: number) => auditionNote(tracks.find((t: any) => t.id === selectedRegion.trackId), pitch)}
+                />
               ) : (
-                <div className="detail-empty-message">No clip selected. Double click or click an audio block on the timeline to edit.</div>
+                <div className="detail-empty-message">No clip selected. Click a clip on the timeline (double-click opens it here).</div>
               )}
             </div>
           )}

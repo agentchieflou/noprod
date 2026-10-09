@@ -1,15 +1,20 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
+import { createDevice } from '../audio/devices';
+import { clipTimelineLength } from '../audio/clipPlayback';
+import { sliceClip, cutRange, overlapping } from '../project/comping';
 
 // Undo/redo: which slice of the store is history-tracked. Transport/selection/UI
 // state stays out so undoing never yanks the playhead or flips the view.
 const UNDOABLE_KEYS = [
   'tracks', 'regions', 'sessionClips', 'bpm', 'vstScanPaths',
-  'masterVolume', 'masterPan', 'reverbReturnVolume'
+  'masterVolume', 'masterPan', 'returns', 'masterPlugins', 'locators', 'timeSignatures', 'scenes'
 ];
 const HISTORY_LIMIT = 100;
 // Continuous gestures (fader/dial/param drags) coalesce into one entry as long
 // as change events for the same target keep arriving within this window.
+// Device params coalesce per device, since one gesture can move several
+// params at once (e.g. dragging an EQ band changes its Freq and Gain).
 const COALESCE_MS = 800;
 
 let lastCoalesceKey = null;
@@ -56,6 +61,77 @@ export const cloneRack = (rack) => {
   };
 };
 
+// Device chains live on tracks, returns and the master strip. Apply
+// `fn(plugins) -> plugins` to whichever strip `stripId` names and return the
+// partial state to set.
+export const MASTER_STRIP_ID = 'master';
+
+const mapStripPlugins = (state, stripId, fn) => {
+  if (stripId === MASTER_STRIP_ID) return { masterPlugins: fn(state.masterPlugins) };
+  if (state.returns.some(r => r.id === stripId)) {
+    return { returns: state.returns.map(r => r.id === stripId ? { ...r, plugins: fn(r.plugins) } : r) };
+  }
+  return { tracks: state.tracks.map(t => t.id === stripId ? { ...t, plugins: fn(t.plugins) } : t) };
+};
+
+const mapRack = (state, stripId, rackId, fn) =>
+  mapStripPlugins(state, stripId, plugins => plugins.map(p => p.id === rackId ? fn(p) : p));
+
+// Return tracks: each has its own device chain; every track has a send
+// level per return (track.sends[returnId], 0..1, post-fader).
+export const RETURN_LETTERS = 'ABCDEFGHIJKL';
+
+const createReturn = (name, plugins = []) => ({
+  id: uuidv4(),
+  name,
+  volume: 0.5,
+  pan: 0,
+  isMuted: false,
+  plugins
+});
+
+// Returns are fully wet: the dry signal already reaches the master directly.
+const wet = (kind, overrides = {}) => {
+  const d = createDevice(kind);
+  return { ...d, id: uuidv4(), parameters: { ...d.parameters, 'Dry/Wet': 100, ...overrides } };
+};
+
+const createDefaultReturns = () => [
+  { ...createReturn('Reverb', [wet('reverb')]), id: 'return-a' },
+  { ...createReturn('Delay', [wet('delay', { Time: 0.375, Feedback: 35 })]), id: 'return-b' }
+];
+
+// Session View scenes: an optional name, tempo / time-signature override
+// applied on launch, and a follow action fired N bars after launch.
+// follow.action: 'next' | 'previous' | 'first' | 'random' | 'again' | 'stop'
+export const createScene = () => ({
+  id: uuidv4(),
+  name: '',
+  tempo: null,
+  signature: null, // { numerator, denominator } or null
+  follow: { enabled: false, bars: 4, action: 'next' }
+});
+
+// Session clips use the same clip properties as arrangement clips and loop
+// over their whole content by default.
+const normalizeSessionClip = (clip) => ({
+  id: uuidv4(),
+  startOffset: 0,
+  loopEnabled: true,
+  loopStart: 0,
+  loopEnd: clip.duration,
+  ...clip,
+  file: clip.file || clip.name || 'Clip'
+});
+
+// NoProd Drums: a synthesized drum kit (GM-style note map, see synth.ts)
+export const createDrumKit = () => ({
+  id: uuidv4(),
+  name: 'NoProd Drums',
+  type: 'instrument',
+  parameters: { Kit: 'drums', Tune: 0, Decay: 1, Gain: 0.8 }
+});
+
 // Default instrument attached to new MIDI tracks so their clips are audible.
 export const createDefaultInstrument = () => ({
   id: uuidv4(),
@@ -71,22 +147,28 @@ export const createDefaultInstrument = () => ({
   }
 });
 
-export const useDAWStore = create((set, get) => ({
-  // Global State
-  isPlaying: false,
-  isRecording: false,
-  isMetronomeEnabled: false,
-  viewMode: 'arrangement', // 'arrangement' | 'session'
-  playbackPosition: 0, // in seconds
-  selectedTrackId: null,
-  selectedRegionId: null,
+// A fresh project: everything that belongs in a saved project file. The
+// store starts from this, and New Project resets to it.
+export const createDefaultProject = () => ({
   bpm: 120,
+  // Time signature changes at bar boundaries (bar is 0-based; bar 0 always exists)
+  timeSignatures: [{ bar: 0, numerator: 4, denominator: 4 }],
+  // Bars of metronome count-in before recording starts (0 = off)
+  countInBars: 1,
   
   // Mix Bus Volumes
   masterVolume: 0.8,
   masterPan: 0.0, // -1 (left) to 1 (right)
-  reverbReturnVolume: 0.5, // Return Track A volume
+  // Return tracks (A Reverb, B Delay by default) and the master device chain
+  returns: createDefaultReturns(),
+  masterPlugins: [],
   isLimiterEnabled: true, // Master bus brickwall limiter
+
+  // Arrangement loop brace (seconds) and named locators / cue points
+  isLoopEnabled: false,
+  loopStart: 0,
+  loopEnd: 8,
+  locators: [], // [{ id, time, name }]
 
   // Punch recording: auto start/stop recording at these timeline positions
   punchInTime: 4,
@@ -99,16 +181,6 @@ export const useDAWStore = create((set, get) => ({
     'C:/Program Files/Steinberg/VstPlugins'
   ],
 
-  // Plugins found by scanning real folders (persisted in localStorage).
-  // [{ name, format, path }]
-  scannedPlugins: (() => {
-    try {
-      return JSON.parse(localStorage.getItem('noprod-scanned-plugins') || '[]');
-    } catch {
-      return [];
-    }
-  })(),
-
   // Tracks list
   tracks: [
     {
@@ -119,7 +191,7 @@ export const useDAWStore = create((set, get) => ({
       groupId: null, // If member of a group
       volume: 0.8,
       pan: 0.0,
-      sendReverb: 0.2,
+      sends: { 'return-a': 0.2 },
       isMuted: false,
       isSoloed: false,
       isArmed: false,
@@ -136,7 +208,7 @@ export const useDAWStore = create((set, get) => ({
       groupId: null,
       volume: 0.8,
       pan: 0.0,
-      sendReverb: 0.0,
+      sends: {},
       isMuted: false,
       isSoloed: false,
       isArmed: false,
@@ -151,11 +223,52 @@ export const useDAWStore = create((set, get) => ({
   // Arrangement Regions
   regions: [], // { id, trackId, file, audioBuffer, startTime, duration }
 
-  // Session View Grid slots: { [trackId]: { [slotIndex]: clipData } }
+  // Session View Grid slots: { [trackId]: { [sceneIndex]: clipData } }
   sessionClips: {},
+  scenes: Array.from({ length: 8 }, createScene),
+  launchQuantization: '1 bar', // '1 bar' | '1/4' | 'none'
 
   // Saved Audio Effect Rack presets, reusable across tracks
   savedRacks: [],
+});
+
+export const PROJECT_KEYS = Object.keys(createDefaultProject());
+
+export const isProjectDirty = (state) =>
+  !state.savedSnapshot || PROJECT_KEYS.some(k => state[k] !== state.savedSnapshot[k]);
+
+const projectSlice = (state) => {
+  const out = {};
+  PROJECT_KEYS.forEach(k => { out[k] = state[k]; });
+  return out;
+};
+
+export const useDAWStore = create((set, get) => ({
+  // Global State
+  isPlaying: false,
+  isRecording: false,
+  isMetronomeEnabled: false,
+  viewMode: 'arrangement', // 'arrangement' | 'session'
+  playbackPosition: 0, // in seconds
+  selectedTrackId: null,
+  selectedRegionId: null,
+  // Project data (everything that is saved to / loaded from a project file)
+  ...createDefaultProject(),
+
+  // Plugins found by scanning real folders (persisted in localStorage, not per project).
+  // [{ name, format, path }]
+  scannedPlugins: (() => {
+    try {
+      return JSON.parse(localStorage.getItem('noprod-scanned-plugins') || '[]');
+    } catch {
+      return [];
+    }
+  })(),
+
+  // Project file state: name, and the project slice as of the last save/load
+  // (unsaved changes = any project key whose reference differs from it)
+  projectName: 'Untitled',
+  savedSnapshot: null,
 
   // Undo/Redo History
   past: [],
@@ -199,23 +312,99 @@ export const useDAWStore = create((set, get) => ({
     };
   }),
 
+  // Project file actions. Loading replaces the whole project, clears undo
+  // history and selection, and marks the result as saved.
+  loadProject: (project, projectName = 'Untitled') => set((state) => {
+    const next = { ...createDefaultProject(), ...project };
+    return {
+      ...next,
+      projectName,
+      savedSnapshot: projectSlice(next),
+      past: [],
+      future: [],
+      isPlaying: false,
+      isRecording: false,
+      selectedTrackId: null,
+      selectedRegionId: null,
+      viewMode: state.viewMode
+    };
+  }),
+  newProject: () => get().loadProject(createDefaultProject(), 'Untitled'),
+  markSaved: (projectName) => set((state) => ({
+    projectName: projectName || state.projectName,
+    savedSnapshot: projectSlice(state)
+  })),
+
   // Global Actions
-  togglePlayback: () => set((state) => ({ isPlaying: !state.isPlaying })),
+  // Stopping also ends recording (as in Ableton); starting leaves it alone
+  togglePlayback: () => set((state) => (state.isPlaying ? { isPlaying: false, isRecording: false } : { isPlaying: true })),
   toggleRecording: () => set((state) => ({ isRecording: !state.isRecording })),
   toggleMetronome: () => set((state) => ({ isMetronomeEnabled: !state.isMetronomeEnabled })),
   setViewMode: (mode) => set({ viewMode: mode }),
   setPlaybackPosition: (pos) => set({ playbackPosition: pos }),
-  setBpm: (bpm) => { get().record('bpm'); set({ bpm }); },
+  setBpm: (bpm) => { get().record('bpm'); set({ bpm: Math.max(20, Math.min(999, bpm)) }); },
+  // Tempo set by the tempo follower: continuous, so kept out of undo history
+  setBpmLive: (bpm) => set({ bpm: Math.max(20, Math.min(999, bpm)) }),
+
+  // Tempo Following (a performance setting, not saved with the project)
+  tempoFollow: { enabled: false, device: 'default', channel: '1/2' },
+  setTempoFollow: (patch) => set((state) => ({ tempoFollow: { ...state.tempoFollow, ...patch } })),
+
+  // Insert or replace the signature starting at `bar`
+  setTimeSignature: (bar, numerator, denominator) => { get().record(); set((state) => ({
+    timeSignatures: [...state.timeSignatures.filter(s => s.bar !== bar), { bar, numerator, denominator }]
+      .sort((a, b) => a.bar - b.bar)
+  })); },
+  removeTimeSignature: (bar) => { if (bar === 0) return; get().record(); set((state) => ({
+    timeSignatures: state.timeSignatures.filter(s => s.bar !== bar)
+  })); },
+  setCountInBars: (countInBars) => set({ countInBars }),
   
   setSelectedTrackId: (id) => set({ selectedTrackId: id }),
-  setSelectedRegionId: (id) => set({ selectedRegionId: id }),
+  // Selecting an arrangement clip deselects any session clip (one clip in Clip View)
+  setSelectedRegionId: (id) => set(id ? { selectedRegionId: id, selectedSessionClip: null } : { selectedRegionId: id }),
   
   setMasterVolume: (vol) => { get().record('master-volume'); set({ masterVolume: vol }); },
   setMasterPan: (pan) => { get().record('master-pan'); set({ masterPan: pan }); },
-  setReverbReturnVolume: (vol) => { get().record('reverb-return'); set({ reverbReturnVolume: vol }); },
+  // Return Track Actions
+  addReturn: () => { get().record(); set((state) => ({
+    returns: [...state.returns, createReturn('Return')]
+  })); },
+
+  // Removing a return also drops every track's send to it
+  removeReturn: (id) => { get().record(); set((state) => ({
+    returns: state.returns.filter(r => r.id !== id),
+    tracks: state.tracks.map(t => {
+      const routed = t.routing === id ? { ...t, routing: t.groupId || 'master' } : t;
+      if (!routed.sends || !(id in routed.sends)) return routed;
+      const { [id]: _removed, ...sends } = routed.sends;
+      return { ...routed, sends };
+    }),
+    selectedTrackId: state.selectedTrackId === id ? null : state.selectedTrackId
+  })); },
+
+  // patch: { volume, pan, isMuted, name }
+  updateReturn: (id, patch) => {
+    get().record('volume' in patch || 'pan' in patch ? `return-${id}-${Object.keys(patch).join()}` : null);
+    set((state) => ({ returns: state.returns.map(r => r.id === id ? { ...r, ...patch } : r) }));
+  },
   toggleLimiter: () => set((state) => ({ isLimiterEnabled: !state.isLimiterEnabled })),
 
   setRecording: (isRecording) => set({ isRecording }),
+
+  toggleLoop: () => set((state) => ({ isLoopEnabled: !state.isLoopEnabled })),
+  setLoopRegion: (loopStart, loopEnd) => set({ loopStart, loopEnd }),
+
+  addLocator: (time, name) => { get().record(); set((state) => ({
+    locators: [...state.locators, { id: uuidv4(), time, name: name || `Locator ${state.locators.length + 1}` }]
+      .sort((a, b) => a.time - b.time)
+  })); },
+  updateLocator: (id, patch) => { get().record('time' in patch ? `locator-${id}` : null); set((state) => ({
+    locators: state.locators.map(l => l.id === id ? { ...l, ...patch } : l).sort((a, b) => a.time - b.time)
+  })); },
+  removeLocator: (id) => { get().record(); set((state) => ({
+    locators: state.locators.filter(l => l.id !== id)
+  })); },
   togglePunch: () => set((state) => ({ isPunchEnabled: !state.isPunchEnabled })),
   setPunchRegion: (punchInTime, punchOutTime) => set({ punchInTime, punchOutTime }),
 
@@ -256,7 +445,7 @@ export const useDAWStore = create((set, get) => ({
           groupId: null,
           volume: 0.8,
           pan: 0.0,
-          sendReverb: 0.0,
+          sends: {},
           isMuted: false,
           isSoloed: false,
           isArmed: false,
@@ -265,6 +454,30 @@ export const useDAWStore = create((set, get) => ({
           plugins: [],
         }
       ]
+    };
+  }); },
+
+  // Audio-to-MIDI: a new MIDI track right after `sourceTrackId` holding one
+  // clip with the converted notes (drums get the drum kit)
+  addConvertedMidiTrack: ({ sourceTrackId, name, kit, startTime, duration, notes }) => { get().record(); set((state) => {
+    const id = uuidv4();
+    const regionId = uuidv4();
+    const track = {
+      id, name, type: 'midi', routing: 'master', groupId: null, volume: 0.8, pan: 0, sends: {},
+      isMuted: false, isSoloed: false, isArmed: false, color: '#10b981',
+      instrument: kit === 'drums' ? createDrumKit() : createDefaultInstrument(), plugins: []
+    };
+    const at = state.tracks.findIndex(t => t.id === sourceTrackId);
+    const tracks = [...state.tracks];
+    tracks.splice(at < 0 ? tracks.length : at + 1, 0, track);
+    return {
+      tracks,
+      regions: [...state.regions, {
+        id: regionId, trackId: id, type: 'midi', file: name, audioBuffer: null, startTime, duration, startOffset: 0,
+        notes: notes.map((n, i) => ({ id: `cv-${i}-${regionId.slice(0, 6)}`, ...n }))
+      }],
+      selectedRegionId: regionId,
+      selectedTrackId: id
     };
   }); },
 
@@ -283,7 +496,7 @@ export const useDAWStore = create((set, get) => ({
       isCollapsed: false,
       volume: 0.8,
       pan: 0.0,
-      sendReverb: 0.0,
+      sends: {},
       isMuted: false,
       isSoloed: false,
       isArmed: false,
@@ -320,8 +533,20 @@ export const useDAWStore = create((set, get) => ({
     };
   }); },
 
+  // Output: 'master' | a group track id | a return id
   updateTrackRouting: (id, routing) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, routing } : t)
+  })); },
+
+  // Input: audio tracks { type: 'ext' | 'none', device, channel: '1/2' | '1' | '2' };
+  // MIDI tracks { type: 'all' | 'computer' | <MIDI input id> | 'none', channel: 'all' | 1..16 }
+  setTrackInput: (id, input) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === id ? { ...t, input } : t)
+  })); },
+
+  // Monitoring: 'auto' (hear the input while armed) | 'in' (always) | 'off'
+  setTrackMonitor: (id, monitor) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === id ? { ...t, monitor } : t)
   })); },
 
   updateTrackVolume: (id, volume) => { get().record(`track-volume-${id}`); set((state) => ({
@@ -332,8 +557,8 @@ export const useDAWStore = create((set, get) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, pan } : t)
   })); },
 
-  updateTrackSendReverb: (id, val) => { get().record(`track-send-${id}`); set((state) => ({
-    tracks: state.tracks.map(t => t.id === id ? { ...t, sendReverb: val } : t)
+  updateTrackSend: (id, returnId, val) => { get().record(`track-send-${id}-${returnId}`); set((state) => ({
+    tracks: state.tracks.map(t => t.id === id ? { ...t, sends: { ...(t.sends || {}), [returnId]: val } } : t)
   })); },
 
   toggleMuteTrack: (id) => { get().record(); set((state) => ({
@@ -357,6 +582,62 @@ export const useDAWStore = create((set, get) => ({
     tracks: state.tracks.map(t => t.id === id ? { ...t, isCollapsed: !t.isCollapsed } : t)
   })),
 
+  // Automation: track.automation[key] = [{ time, value }] sorted by time,
+  // with keys 'volume' | 'pan' | 'send:<returnId>' | 'device:<deviceId>:<param>'
+  setAutomationPoints: (trackId, key, points) => { get().record(`automation-${trackId}-${key}`); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      automation: { ...(t.automation || {}), [key]: [...points].sort((a, b) => a.time - b.time) }
+    } : t)
+  })); },
+
+  clearAutomation: (trackId, key) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => {
+      if (t.id !== trackId || !t.automation) return t;
+      const { [key]: _cleared, ...automation } = t.automation;
+      return { ...t, automation };
+    })
+  })); },
+
+  // Which automation lanes a track shows (view state, not in undo history)
+  toggleAutomationView: (trackId) => set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      showAutomation: !t.showAutomation,
+      automationLanes: t.automationLanes?.length ? t.automationLanes : ['volume']
+    } : t)
+  })),
+  setAutomationLanes: (trackId, automationLanes) => set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, automationLanes, showAutomation: automationLanes.length > 0 } : t)
+  })),
+
+  // MIDI effect chain (MIDI tracks): track.midiEffects, applied before the instrument
+  addMidiEffect: (trackId, effect) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, midiEffects: [...(t.midiEffects || []), { ...effect, id: uuidv4() }] } : t)
+  })); },
+  removeMidiEffect: (trackId, effectId) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, midiEffects: (t.midiEffects || []).filter(f => f.id !== effectId) } : t)
+  })); },
+  updateMidiEffectParameter: (trackId, effectId, name, value) => { get().record(`midi-fx-${effectId}`); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? {
+      ...t,
+      midiEffects: (t.midiEffects || []).map(f => f.id === effectId ? { ...f, parameters: { ...f.parameters, [name]: value } } : f)
+    } : t)
+  })); },
+
+  // A new MIDI track playing `instrument` (Browser: Sounds / Drums / Instruments)
+  addMidiTrackWithInstrument: (instrument, name) => { get().record(); set((state) => {
+    const id = uuidv4();
+    return {
+      tracks: [...state.tracks, {
+        id, name: name || `${state.tracks.length + 1} ${instrument.name}`, type: 'midi', routing: 'master', groupId: null,
+        volume: 0.8, pan: 0, sends: {}, isMuted: false, isSoloed: false, isArmed: false, color: '#10b981',
+        instrument: { ...instrument, id: uuidv4() }, plugins: []
+      }],
+      selectedTrackId: id
+    };
+  }); },
+
   // Instrument Actions (MIDI tracks)
   setTrackInstrument: (trackId, instrument) => { get().record(); set((state) => ({
     tracks: state.tracks.map(t => t.id === trackId ? { ...t, instrument } : t)
@@ -376,150 +657,106 @@ export const useDAWStore = create((set, get) => ({
     } : t)
   })); },
 
-  // Device Chain Actions
-  addDeviceToTrack: (trackId, device) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: [...t.plugins, { ...device, id: uuidv4() }]
-    } : t)
-  })); },
+  // Device Chain Actions. `stripId` is a track id, a return id or MASTER_STRIP_ID.
+  addDeviceToTrack: (stripId, device) => { get().record(); set((state) =>
+    mapStripPlugins(state, stripId, plugins => [...plugins, { ...device, id: uuidv4() }])
+  ); },
 
-  removeDeviceFromTrack: (trackId, deviceId) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.filter(p => p.id !== deviceId)
-    } : t)
-  })); },
+  removeDeviceFromTrack: (stripId, deviceId) => { get().record(); set((state) =>
+    mapStripPlugins(state, stripId, plugins => plugins.filter(p => p.id !== deviceId))
+  ); },
 
-  updateDeviceParameter: (trackId, deviceId, paramName, val) => { get().record(`device-param-${deviceId}-${paramName}`); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === deviceId ? {
-        ...p,
-        parameters: { ...p.parameters, [paramName]: val }
-      } : p)
-    } : t)
-  })); },
+  updateDeviceParameter: (stripId, deviceId, paramName, val) => { get().record(`device-param-${deviceId}`); set((state) =>
+    mapStripPlugins(state, stripId, plugins => plugins.map(p => p.id === deviceId ? {
+      ...p,
+      parameters: { ...p.parameters, [paramName]: val }
+    } : p))
+  ); },
 
   // Audio Effect Rack Actions
-  addRackToTrack: (trackId) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: [...t.plugins, createEmptyRack()]
-    } : t)
-  })); },
+  addRackToTrack: (stripId) => { get().record(); set((state) =>
+    mapStripPlugins(state, stripId, plugins => [...plugins, createEmptyRack()])
+  ); },
 
-  // Wrap all of a track's loose (non-rack) devices into a new rack
-  groupTrackDevicesIntoRack: (trackId) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => {
-      if (t.id !== trackId) return t;
-      const loose = t.plugins.filter(p => p.type !== 'rack');
-      if (loose.length === 0) return t;
-      const rack = { ...createEmptyRack(), devices: loose };
-      return { ...t, plugins: [...t.plugins.filter(p => p.type === 'rack'), rack] };
+  // Wrap all of a strip's loose (non-rack) devices into a new rack
+  groupTrackDevicesIntoRack: (stripId) => { get().record(); set((state) =>
+    mapStripPlugins(state, stripId, plugins => {
+      const loose = plugins.filter(p => p.type !== 'rack');
+      if (loose.length === 0) return plugins;
+      return [...plugins.filter(p => p.type === 'rack'), { ...createEmptyRack(), devices: loose }];
     })
-  })); },
+  ); },
 
-  addDeviceToRack: (trackId, rackId, device) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === rackId ? {
-        ...p,
-        devices: [...p.devices, { ...device, id: uuidv4() }]
-      } : p)
-    } : t)
-  })); },
+  addDeviceToRack: (stripId, rackId, device) => { get().record(); set((state) =>
+    mapRack(state, stripId, rackId, rack => ({ ...rack, devices: [...rack.devices, { ...device, id: uuidv4() }] }))
+  ); },
 
-  removeDeviceFromRack: (trackId, rackId, deviceId) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === rackId ? {
-        ...p,
-        devices: p.devices.filter(d => d.id !== deviceId),
-        macros: p.macros.map(m => ({ ...m, mappings: m.mappings.filter(mp => mp.deviceId !== deviceId) }))
-      } : p)
-    } : t)
-  })); },
+  removeDeviceFromRack: (stripId, rackId, deviceId) => { get().record(); set((state) =>
+    mapRack(state, stripId, rackId, rack => ({
+      ...rack,
+      devices: rack.devices.filter(d => d.id !== deviceId),
+      macros: rack.macros.map(m => ({ ...m, mappings: m.mappings.filter(mp => mp.deviceId !== deviceId) }))
+    }))
+  ); },
 
-  updateRackDeviceParameter: (trackId, rackId, deviceId, paramName, val) => { get().record(`rack-device-${deviceId}-${paramName}`); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === rackId ? {
-        ...p,
-        devices: p.devices.map(d => d.id === deviceId ? {
-          ...d,
-          parameters: { ...d.parameters, [paramName]: val }
-        } : d)
-      } : p)
-    } : t)
-  })); },
+  updateRackDeviceParameter: (stripId, rackId, deviceId, paramName, val) => { get().record(`rack-device-${deviceId}`); set((state) =>
+    mapRack(state, stripId, rackId, rack => ({
+      ...rack,
+      devices: rack.devices.map(d => d.id === deviceId ? {
+        ...d,
+        parameters: { ...d.parameters, [paramName]: val }
+      } : d)
+    }))
+  ); },
 
   // Move a macro: store its value and push every mapped parameter to
   // min + (value/100) * (max - min).
-  updateMacroValue: (trackId, rackId, macroId, value) => { get().record(`macro-${macroId}`); set((state) => ({
-    tracks: state.tracks.map(t => {
-      if (t.id !== trackId) return t;
-      return {
-        ...t,
-        plugins: t.plugins.map(p => {
-          if (p.id !== rackId) return p;
-          const macros = p.macros.map(m => m.id === macroId ? { ...m, value } : m);
-          const macro = macros.find(m => m.id === macroId);
-          let devices = p.devices;
-          macro.mappings.forEach(mp => {
-            const mapped = Math.round((mp.min + (value / 100) * (mp.max - mp.min)) * 100) / 100;
-            devices = devices.map(d => d.id === mp.deviceId ? {
-              ...d,
-              parameters: { ...d.parameters, [mp.paramName]: mapped }
-            } : d);
-          });
-          return { ...p, macros, devices };
-        })
-      };
+  updateMacroValue: (stripId, rackId, macroId, value) => { get().record(`macro-${macroId}`); set((state) =>
+    mapRack(state, stripId, rackId, rack => {
+      const macros = rack.macros.map(m => m.id === macroId ? { ...m, value } : m);
+      const macro = macros.find(m => m.id === macroId);
+      let devices = rack.devices;
+      macro.mappings.forEach(mp => {
+        const mapped = Math.round((mp.min + (value / 100) * (mp.max - mp.min)) * 100) / 100;
+        devices = devices.map(d => d.id === mp.deviceId ? {
+          ...d,
+          parameters: { ...d.parameters, [mp.paramName]: mapped }
+        } : d);
+      });
+      return { ...rack, macros, devices };
     })
-  })); },
+  ); },
 
-  addMacroMapping: (trackId, rackId, macroId, deviceId, paramName) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === rackId ? {
-        ...p,
-        macros: p.macros.map(m => m.id === macroId ? {
-          ...m,
-          mappings: m.mappings.some(mp => mp.deviceId === deviceId && mp.paramName === paramName)
-            ? m.mappings
-            : [...m.mappings, { deviceId, paramName, min: 0, max: 100 }]
-        } : m)
-      } : p)
-    } : t)
-  })); },
+  addMacroMapping: (stripId, rackId, macroId, deviceId, paramName, min = 0, max = 100) => { get().record(); set((state) =>
+    mapRack(state, stripId, rackId, rack => ({
+      ...rack,
+      macros: rack.macros.map(m => m.id === macroId ? {
+        ...m,
+        mappings: m.mappings.some(mp => mp.deviceId === deviceId && mp.paramName === paramName)
+          ? m.mappings
+          : [...m.mappings, { deviceId, paramName, min, max }]
+      } : m)
+    }))
+  ); },
 
-  removeMacroMapping: (trackId, rackId, macroId, index) => { get().record(); set((state) => ({
-    tracks: state.tracks.map(t => t.id === trackId ? {
-      ...t,
-      plugins: t.plugins.map(p => p.id === rackId ? {
-        ...p,
-        macros: p.macros.map(m => m.id === macroId ? {
-          ...m,
-          mappings: m.mappings.filter((_, i) => i !== index)
-        } : m)
-      } : p)
-    } : t)
-  })); },
+  removeMacroMapping: (stripId, rackId, macroId, index) => { get().record(); set((state) =>
+    mapRack(state, stripId, rackId, rack => ({
+      ...rack,
+      macros: rack.macros.map(m => m.id === macroId ? {
+        ...m,
+        mappings: m.mappings.filter((_, i) => i !== index)
+      } : m)
+    }))
+  ); },
 
   saveRackPreset: (rack) => set((state) => ({
     savedRacks: [...state.savedRacks, { ...cloneRack(rack), name: `${rack.name} ${state.savedRacks.length + 1}` }]
   })),
 
-  addSavedRackToTrack: (trackId, presetIndex) => { get().record(); set((state) => {
+  addSavedRackToTrack: (stripId, presetIndex) => { get().record(); set((state) => {
     const preset = state.savedRacks[presetIndex];
     if (!preset) return {};
-    return {
-      tracks: state.tracks.map(t => t.id === trackId ? {
-        ...t,
-        plugins: [...t.plugins, cloneRack(preset)]
-      } : t)
-    };
+    return mapStripPlugins(state, stripId, plugins => [...plugins, cloneRack(preset)]);
   }); },
 
   // Region Actions
@@ -539,8 +776,9 @@ export const useDAWStore = create((set, get) => ({
     regions: state.regions.map(r => r.id === id ? { ...r, startTime, duration, startOffset } : r)
   })); },
 
-  // Warp properties: { warpEnabled, warpMode, originalBpm, transients }
-  updateRegionWarp: (id, patch) => { get().record(`region-warp-${id}`); set((state) => ({
+  // Clip properties (Clip View): { file, gain, transpose, detune, loopEnabled,
+  // loopStart, loopEnd, startOffset, duration, warpEnabled, warpMode, originalBpm, transients }
+  updateClip: (id, patch) => { get().record(`clip-${id}-${Object.keys(patch).sort().join()}`); set((state) => ({
     regions: state.regions.map(r => r.id === id ? { ...r, ...patch } : r)
   })); },
 
@@ -580,6 +818,59 @@ export const useDAWStore = create((set, get) => ({
     };
   }); },
 
+  // Take lanes: each recording pass becomes a take lane under the track
+  // (track.takeLanes = [{ id, name, regions }]); the main lane holds the comp,
+  // whose regions remember which take they came from (region.takeLaneId).
+  addRecordedTakes: (trackId, clips) => { if (!clips.length) return; get().record(); set((state) => {
+    const bpm = state.bpm;
+    let regions = state.regions;
+    let track = state.tracks.find(t => t.id === trackId);
+    let lanes = [...(track.takeLanes || [])];
+    clips.forEach((clip) => {
+      const a = clip.startTime;
+      const b = a + clipTimelineLength(clip, bpm);
+      // Recording over clips that didn't come from takes keeps them as a take
+      // instead of silently overwriting them
+      const displaced = overlapping(regions, trackId, a, b, bpm).filter(r => !r.takeLaneId);
+      if (displaced.length) {
+        const originals = lanes.filter(l => l.name.startsWith('Original')).length;
+        const original = { id: uuidv4(), name: originals ? `Original ${originals + 1}` : 'Original', regions: displaced.map(r => ({ ...r, id: uuidv4() })) };
+        lanes.push(original);
+      }
+      const lane = { id: uuidv4(), name: `Take ${lanes.filter(l => l.name.startsWith('Take')).length + 1}`, regions: [{ ...clip, id: uuidv4(), trackId }] };
+      lanes.push(lane);
+      // The newest take becomes the comp for its range
+      regions = [...cutRange(regions, trackId, a, b, bpm), { ...clip, id: uuidv4(), trackId, takeLaneId: lane.id, file: lane.name }];
+    });
+    return {
+      regions,
+      tracks: state.tracks.map(t => t.id === trackId ? { ...t, takeLanes: lanes, showTakes: true } : t)
+    };
+  }); },
+
+  // Comp: use take lane `laneId` for timeline range [a, b) of the main lane
+  compTakeRange: (trackId, laneId, a, b) => { get().record(); set((state) => {
+    const track = state.tracks.find(t => t.id === trackId);
+    const lane = track?.takeLanes?.find(l => l.id === laneId);
+    if (!lane || b - a < 0.01) return {};
+    const pieces = lane.regions
+      .map(r => sliceClip(r, a, b, state.bpm))
+      .filter(Boolean)
+      .map(p => ({ ...p, trackId, takeLaneId: laneId, file: lane.name }));
+    if (!pieces.length) return {};
+    return { regions: [...cutRange(state.regions, trackId, a, b, state.bpm), ...pieces] };
+  }); },
+
+  removeTakeLane: (trackId, laneId) => { get().record(); set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, takeLanes: (t.takeLanes || []).filter(l => l.id !== laneId) } : t),
+    regions: state.regions.map(r => r.takeLaneId === laneId ? { ...r, takeLaneId: undefined } : r)
+  })); },
+
+  // Show/hide take lanes (view state, not in undo history)
+  toggleTakesView: (trackId) => set((state) => ({
+    tracks: state.tracks.map(t => t.id === trackId ? { ...t, showTakes: !t.showTakes } : t)
+  })),
+
   // MIDI Region Actions
   // notes: [{ id, pitch (MIDI number), start (sec, region-relative), duration (sec), velocity (0..1) }]
   addMidiRegion: (trackId, startTime, duration, notes = []) => { get().record(); set((state) => {
@@ -615,8 +906,66 @@ export const useDAWStore = create((set, get) => ({
       ...state.sessionClips,
       [trackId]: {
         ...(state.sessionClips[trackId] || {}),
-        [slotIndex]: clipData
+        [slotIndex]: normalizeSessionClip(clipData)
       }
     }
-  })); }
+  })); },
+
+  updateSessionClip: (trackId, slotIndex, patch) => {
+    get().record(`session-clip-${trackId}-${slotIndex}-${Object.keys(patch).sort().join()}`);
+    set((state) => ({
+      sessionClips: {
+        ...state.sessionClips,
+        [trackId]: {
+          ...state.sessionClips[trackId],
+          [slotIndex]: { ...state.sessionClips[trackId][slotIndex], ...patch }
+        }
+      }
+    }));
+  },
+
+  removeSessionClip: (trackId, slotIndex) => { get().record(); set((state) => {
+    const { [slotIndex]: _removed, ...rest } = state.sessionClips[trackId] || {};
+    return {
+      sessionClips: { ...state.sessionClips, [trackId]: rest },
+      selectedSessionClip: null
+    };
+  }); },
+
+  // A one-bar looping MIDI clip in an empty slot of a MIDI track
+  createSessionMidiClip: (trackId, slotIndex) => {
+    const bar = (60 / get().bpm) * 4;
+    get().setSessionClip(trackId, slotIndex, {
+      type: 'midi', file: 'MIDI Clip', audioBuffer: null, duration: bar, loopEnd: bar, notes: []
+    });
+  },
+
+  selectedSessionClip: null, // { trackId, slot } shown in Clip View
+  setSelectedSessionClip: (sel) => set({ selectedSessionClip: sel }),
+
+  // Scene Actions
+  addScene: () => { get().record(); set((state) => ({ scenes: [...state.scenes, createScene()] })); },
+
+  // Removing a scene shifts the clips of later scenes up one row
+  removeScene: (index) => { if (get().scenes.length <= 1) return; get().record(); set((state) => {
+    const sessionClips = {};
+    Object.entries(state.sessionClips).forEach(([trackId, slots]) => {
+      sessionClips[trackId] = {};
+      Object.entries(slots).forEach(([k, clip]) => {
+        const i = Number(k);
+        if (i < index) sessionClips[trackId][i] = clip;
+        else if (i > index) sessionClips[trackId][i - 1] = clip;
+      });
+    });
+    return { scenes: state.scenes.filter((_, i) => i !== index), sessionClips, selectedSessionClip: null };
+  }); },
+
+  updateScene: (index, patch) => { get().record(`scene-${index}-${Object.keys(patch).join()}`); set((state) => ({
+    scenes: state.scenes.map((sc, i) => i === index ? { ...sc, ...patch } : sc)
+  })); },
+
+  setLaunchQuantization: (launchQuantization) => set({ launchQuantization })
 }));
+
+// The project the app opens with counts as saved until something changes
+useDAWStore.setState((state) => ({ savedSnapshot: projectSlice(state) }));

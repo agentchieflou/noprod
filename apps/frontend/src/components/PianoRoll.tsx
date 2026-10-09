@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
 import { midiNoteName } from '../audio/synth';
 
@@ -15,10 +15,17 @@ interface PianoRollProps {
   trackColor: string;
   bpm: number;
   onAudition: (pitch: number) => void;
+  onNotesChange?: (notes: any[]) => void; // defaults to editing an arrangement clip
 }
 
-export default function PianoRoll({ region, trackColor, bpm, onAudition }: PianoRollProps) {
-  const { updateRegionNotes } = useDAWStore();
+export default function PianoRoll({ region, trackColor, bpm, onAudition, onNotesChange }: PianoRollProps) {
+  const { updateRegionNotes: updateArrangementNotes } = useDAWStore();
+  // Session clips pass their own writer; arrangement clips use the store's
+  const notesChangeRef = useRef(onNotesChange);
+  notesChangeRef.current = onNotesChange;
+  const updateRegionNotes = useCallback((id: string, next: any[]) => (
+    notesChangeRef.current ? notesChangeRef.current(next) : updateArrangementNotes(id, next)
+  ), [updateArrangementNotes]);
   const gridRef = useRef<HTMLDivElement>(null);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
 
