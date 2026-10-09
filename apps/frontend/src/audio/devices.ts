@@ -7,6 +7,7 @@
 
 import dynamicsProcessorUrl from './worklets/dynamics-processor.js?url';
 import recorderProcessorUrl from './worklets/recorder-processor.js?url';
+import onsetProcessorUrl from './worklets/onset-processor.js?url';
 
 export type ParamValue = number | boolean | string;
 
@@ -89,7 +90,8 @@ const createMix = (ctx: BaseAudioContext) => {
 // them can be created there (done once at startup for the live context).
 export const loadDeviceWorklets = (ctx: BaseAudioContext) => Promise.all([
   ctx.audioWorklet.addModule(dynamicsProcessorUrl),
-  ctx.audioWorklet.addModule(recorderProcessorUrl)
+  ctx.audioWorklet.addModule(recorderProcessorUrl),
+  ctx.audioWorklet.addModule(onsetProcessorUrl)
 ]);
 
 // Wrap the shared dynamics worklet: AudioParams are exposed by name for

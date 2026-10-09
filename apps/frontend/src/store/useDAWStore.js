@@ -335,6 +335,12 @@ export const useDAWStore = create((set, get) => ({
   setViewMode: (mode) => set({ viewMode: mode }),
   setPlaybackPosition: (pos) => set({ playbackPosition: pos }),
   setBpm: (bpm) => { get().record('bpm'); set({ bpm: Math.max(20, Math.min(999, bpm)) }); },
+  // Tempo set by the tempo follower: continuous, so kept out of undo history
+  setBpmLive: (bpm) => set({ bpm: Math.max(20, Math.min(999, bpm)) }),
+
+  // Tempo Following (a performance setting, not saved with the project)
+  tempoFollow: { enabled: false, device: 'default', channel: '1/2' },
+  setTempoFollow: (patch) => set((state) => ({ tempoFollow: { ...state.tempoFollow, ...patch } })),
 
   // Insert or replace the signature starting at `bar`
   setTimeSignature: (bar, numerator, denominator) => { get().record(); set((state) => ({

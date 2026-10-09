@@ -1988,3 +1988,8 @@ body {
 /* Capture MIDI */
 .btn-transport.capture-btn { opacity: 0.55; }
 .btn-transport.capture-btn.capturable { opacity: 1; color: #eab308; }
+
+/* Tempo follower */
+.follow-btn { font-size: 10px; padding-left: 5px; padding-right: 5px; }
+.follow-input { width: 90px; }
+.follow-readout { font-family: monospace; font-size: 10px; color: #2dd4bf; white-space: nowrap; }
