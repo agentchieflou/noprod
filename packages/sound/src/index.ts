@@ -4,6 +4,8 @@
 export * from './types.ts';
 export { render, loudnessGain, withId } from './render.ts';
 export { midiToHz } from './dsp.ts';
+export { chainOf, layerChain, setBlockOn, setKindOn, addBlock, removeBlock, branchesFor, sharedBlocks, BLOCKS, STAGES } from './chain.ts';
+export type { Stage, Family, BlockKind, BlockInfo, Block, LayerChain, Chain, SharedBlock } from './chain.ts';
 export { encodeWav, decodeWav } from './wav.ts';
 export type { WavBits, DecodedWav } from './wav.ts';
 export { zip, crc32 } from './zip.ts';
