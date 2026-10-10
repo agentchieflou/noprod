@@ -7,19 +7,22 @@
 
 // A VST3 (or AU) plugin hosted through JUCE's AudioPluginInstance, as an
 // insert. Parameters are exposed normalized (0..1), with the plugin's own
-// text for display.
+// text for display. The chain's transport reaches the plugin through its
+// AudioPlayHead.
 class JucePluginInsert : public InsertProcessor
 {
 public:
     JucePluginInsert (std::unique_ptr<juce::AudioPluginInstance> pluginInstance, juce::String pluginPath)
         : instance (std::move (pluginInstance)), path (std::move (pluginPath))
     {
+        instance->setPlayHead (&playHead);
     }
 
     ~JucePluginInsert() override
     {
         if (prepared)
             instance->releaseResources();
+        instance->setPlayHead (nullptr);
     }
 
     juce::String getName() const override { return instance->getName(); }
@@ -47,6 +50,13 @@ public:
         preparedRate = sampleRate;
         preparedBlockSize = maxBlockSize;
         return true;
+    }
+
+    // Audio thread, before process(): what the play head reports during it
+    void setTransport (const TransportInfo& t) noexcept override
+    {
+        playHead.transport = t;
+        playHead.known = true;
     }
 
     void process (const float* const* inputs, float* const* outputs, int numChannels, int numSamples) noexcept override
@@ -134,7 +144,30 @@ private:
     juce::String path;
     juce::AudioBuffer<float> buffer;
     juce::MidiBuffer midi;
+    // Read by the plugin on the audio thread, during processBlock: the same
+    // thread that sets it, so no locking
+    struct PlayHead : public juce::AudioPlayHead
+    {
+        juce::Optional<PositionInfo> getPosition() const override
+        {
+            if (! known)
+                return {};
+            PositionInfo info;
+            if ((transport.flags & TransportInfo::tempoValid) != 0)
+                info.setBpm (transport.tempoBpm);
+            if ((transport.flags & TransportInfo::ppqValid) != 0)
+                info.setPpqPosition (transport.ppqPosition);
+            info.setIsPlaying ((transport.flags & TransportInfo::playing) != 0);
+            info.setIsLooping ((transport.flags & TransportInfo::looping) != 0);
+            return info;
+        }
+
+        TransportInfo transport;
+        bool known = false;
+    };
+
     bool prepared = false;
     double preparedRate = 0.0;
     int preparedBlockSize = 0;
+    PlayHead playHead;
 };

@@ -2,10 +2,11 @@
 
 `include/lpi/lpi.h` is a verbatim copy of `PluginABI/include/lpi/lpi.h` from
 the sibling repo [agentchieflou/v-loudio-t](https://github.com/agentchieflou/v-loudio-t),
-taken from its main branch at commit `58d082f7c11b3f19addda4a0179b8f799ac95788`
-(ABI version 1.0). It has the extensions the Audio Core uses:
+taken from its main branch at commit `4168f1d` (ABI version 1.0). It has the
+extensions the Audio Core uses:
 - `lpi.gui.offscreen.v1`, the editor streamed to the browser (v-loudio-t #111);
-- `lpi.latency.v1` and `lpi.params.changes.v1` (v-loudio-t #120).
+- `lpi.latency.v1` and `lpi.params.changes.v1` (v-loudio-t #120);
+- `lpi.transport.v1`, tempo and position for tempo-synced plugins (v-loudio-t #153).
 
 It is vendored rather than referenced by relative path so `audio_core` builds
 from a plain checkout of this repo. The header is dependency-free C, so there

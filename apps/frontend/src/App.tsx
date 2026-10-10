@@ -20,7 +20,7 @@ import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio
 import KeyboardPanel from './components/KeyboardPanel';
 import AudioCorePanel from './components/AudioCorePanel';
 import PluginEditorWindow from './components/PluginEditorWindow';
-import { onNativeEditorParameter } from './native/trackBridge';
+import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
 import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage, findNativePlugin, nativeDeviceFor } from './native/audioCore';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
@@ -34,7 +34,7 @@ import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
 import { DEVICE_DEFS, createDevice } from './audio/devices';
 import { MIDI_EFFECT_DEFS, createMidiEffect } from './audio/midiEffects';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
-import { getPosition, isCountingIn, onTransportChange, setPosition as setTransportPosition, clickGain } from './audio/transport';
+import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
 import './App.css';
 
 
@@ -48,6 +48,11 @@ const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 // A hosted plug-in's own editor changed a parameter: its device keeps it
 onNativeEditorParameter((deviceId, parameterId, value, gesture) =>
   useDAWStore.getState().setDeviceParameterFromPlugin(deviceId, parameterId, value, gesture));
+
+// Plug-ins on browser tracks learn tempo and position with each audio block
+const nativeTransportChanged = connectNativeTransport(getTransportSnapshot);
+onTransportChange(nativeTransportChanged);
+onSegmentScheduled(nativeTransportChanged);
 
 // Ableton-style Color Palette Presets
 const PRESET_COLORS = [

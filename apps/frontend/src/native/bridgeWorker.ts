@@ -86,8 +86,7 @@ ctx.onmessage = (e: MessageEvent) => {
     s.port.onmessage = (m) => {
       const { block, buffer } = m.data as { block: number; buffer: ArrayBuffer };
       if (s.ws && s.ready && s.ws.readyState === WebSocket.OPEN) {
-        // header: block number, frames, channels, flags (apps/audio_core/src/TrackStreams.h)
-        new Uint32Array(buffer, 0, 4).set([block, s.block, 2, 0]);
+        // The worklet wrote the header and the transport block (apps/audio_core/src/TrackStreams.h)
         s.ws.send(buffer);
       }
       // ws.send copied the bytes, so the buffer goes back to the worklet's pool

@@ -12,8 +12,12 @@ It also hosts plugins for the **browser's own tracks**: a track device with a
 plugin path streams the track's audio to `ws://localhost:8083` in 256-frame
 blocks, GhostDAW runs it through that device's plugin and sends it straight
 back, and the browser plays it a fixed ~40 ms later (delaying the other
-tracks, the metronome and recordings to match). See `src/TrackStreams.h` and
-`apps/frontend/src/native/trackBridge.ts`.
+tracks, the metronome and recordings to match). Each block carries the
+transport at its first frame (tempo, position in quarter notes, playing,
+looping), so tempo-synced plugins follow the song: LPI plugins through
+`lpi.transport.v1`, VST3s through their play head. Inserts on the Audio
+Core's own buses get no transport yet; tempo-synced plugins there run free.
+See `src/TrackStreams.h` and `apps/frontend/src/native/trackBridge.ts`.
 
 **Plugin editors** are shown in the browser: an LPI plugin with the
 `lpi.gui.offscreen.v1` extension renders its editor off-screen in GhostDAW,

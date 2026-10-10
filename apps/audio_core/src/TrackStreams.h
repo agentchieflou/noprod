@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -19,15 +20,22 @@
 //   uint32 seq        echoed back unchanged (the sender's block position)
 //   uint32 frames
 //   uint32 channels   (<= InsertChain::maxChannels)
-//   uint32 flags      reserved, 0
+//   uint32 flags      bit 0: a transport block follows
+//   [transport block, 24 bytes, when flags bit 0 is set:
+//    float64 tempoBpm, float64 ppqPosition (of the block's first frame),
+//    uint32 transportFlags (TransportInfo / LPI_TRANSPORT_*), uint32 reserved]
 //   float32[channels][frames]   planar samples
-// The reply is the same message with the samples processed in place.
+// The reply is the same message with the samples processed in place. With a
+// transport block, tempo-synced plugins (lpi.transport.v1, a VST3's play
+// head) know where in the song each block is.
 //
 // The connection's thread is the chain's audio thread: it is the only one
 // that calls process(), and it never locks or allocates while doing so.
 struct TrackStream
 {
     static constexpr size_t headerBytes = 16;
+    static constexpr size_t transportBytes = 24;
+    static constexpr uint32_t hasTransport = 1;
 
     juce::String id;
     double sampleRate = 48000.0;
@@ -47,18 +55,32 @@ struct TrackStream
         uint32_t header[4];
         std::memcpy (header, data, headerBytes);
         auto frames = header[1], channels = header[2];
+        auto withTransport = (header[3] & hasTransport) != 0;
+        auto offset = headerBytes + (withTransport ? transportBytes : 0);
         if (frames == 0 || channels == 0 || channels > InsertChain::maxChannels
-            || size != headerBytes + static_cast<size_t> (frames) * channels * sizeof (float))
+            || size != offset + static_cast<size_t> (frames) * channels * sizeof (float))
             return false;
+
+        TransportInfo transport;
+        if (withTransport)
+        {
+            std::memcpy (&transport.tempoBpm, data + headerBytes, sizeof (double));
+            std::memcpy (&transport.ppqPosition, data + headerBytes + 8, sizeof (double));
+            std::memcpy (&transport.flags, data + headerBytes + 16, sizeof (uint32_t));
+            if (! std::isfinite (transport.tempoBpm) || transport.tempoBpm <= 0.0)
+                transport.flags &= ~TransportInfo::tempoValid;
+            if (! std::isfinite (transport.ppqPosition))
+                transport.flags &= ~TransportInfo::ppqValid;
+        }
 
         // The payload buffer comes from a std::vector<uint8_t>, so it is
         // aligned for floats, and the header keeps that alignment.
-        auto* samples = reinterpret_cast<float*> (data + headerBytes);
+        auto* samples = reinterpret_cast<float*> (data + offset);
         float* planes[InsertChain::maxChannels];
         for (uint32_t ch = 0; ch < channels; ++ch)
             planes[ch] = samples + static_cast<size_t> (ch) * frames;
 
-        chain.process (planes, static_cast<int> (channels), static_cast<int> (frames));
+        chain.process (planes, static_cast<int> (channels), static_cast<int> (frames), withTransport ? &transport : nullptr);
         return true;
     }
 };

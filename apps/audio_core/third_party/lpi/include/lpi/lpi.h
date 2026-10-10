@@ -292,6 +292,58 @@ typedef struct lpi_param_changes_v1 {
 } lpi_param_changes_v1;
 
 /* ------------------------------------------------------------------------
+ * Extension: "lpi.transport.v1"
+ * ------------------------------------------------------------------------
+ * Host transport (tempo, musical position, play state) for tempo-synced
+ * delays and LFOs. Push-based, one plain copy: the host fills an
+ * lpi_transport_info and calls set_transport() on the AUDIO THREAD once
+ * per block, before process(). The plugin copies the struct and must not
+ * block, allocate or call back. A plugin that doesn't need transport
+ * doesn't implement the extension; a host that has none never calls it,
+ * and the plugin keeps its free-running rates.
+ *
+ * Fields:
+ *   - tempo_bpm:    valid when TEMPO_VALID is set.
+ *   - ppq_position: musical position of the FIRST frame of the coming
+ *                   process() call, in quarter notes, valid when PPQ_VALID
+ *                   is set. A host whose position is only approximate
+ *                   (a pattern sequencer) may set TEMPO_VALID without
+ *                   PPQ_VALID, or set PPQ_VALID and accept best-effort sync.
+ *   - sample_rate:  the rate the host is running at (informational; it
+ *                   never differs from create()'s within an instance).
+ *   - flags:        PLAYING while the transport runs; LOOPING when the
+ *                   position will jump back at a loop end (a plugin may
+ *                   resync at the jump).
+ *
+ * Contract for plugins: a host MAY call set_transport with PLAYING clear
+ * and a stale ppq_position (while stopped, or with no exact position),
+ * and may stop calling it entirely. A tempo-synced plugin therefore keeps
+ * a free-running fallback (its own phase accumulator) and resyncs to
+ * ppq_position only when PLAYING and PPQ_VALID are both set; tempo alone
+ * (TEMPO_VALID) may be used whenever it is set.
+ */
+#define LPI_EXT_TRANSPORT_V1 "lpi.transport.v1"
+
+enum {
+    LPI_TRANSPORT_PLAYING     = 1u << 0,
+    LPI_TRANSPORT_LOOPING     = 1u << 1,
+    LPI_TRANSPORT_TEMPO_VALID = 1u << 2,
+    LPI_TRANSPORT_PPQ_VALID   = 1u << 3
+};
+
+typedef struct {
+    double   tempo_bpm;
+    double   ppq_position;
+    double   sample_rate;
+    uint32_t flags; /* bitwise OR of LPI_TRANSPORT_* */
+} lpi_transport_info;
+
+typedef struct lpi_transport_v1 {
+    /* Audio thread, once per block before process(). info is never NULL. */
+    void (*set_transport)(lpi_plugin* instance, const lpi_transport_info* info);
+} lpi_transport_v1;
+
+/* ------------------------------------------------------------------------
  * Factory -- the one thing a host looks up by name in the plugin DLL.
  * ------------------------------------------------------------------------ */
 typedef struct {

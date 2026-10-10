@@ -118,8 +118,10 @@ export interface AudioCoreStatusEvent { type: 'AUDIO_CORE_STATUS'; connected: bo
 
 // ---- Browser-track streams (ws://localhost:8083, apps/audio_core/src/TrackStreams.h)
 // One connection per track device hosting a plug-in. Binary messages are
-// audio: uint32 block, uint32 frames, uint32 channels, uint32 flags (0), then
-// float32 planar samples; each comes back processed in place.
+// audio: uint32 block, uint32 frames, uint32 channels, uint32 flags; when
+// flags bit 0 is set, a transport block (float64 tempo, float64 position in
+// quarter notes, uint32 flags as LPI_TRANSPORT_*, uint32 reserved); then
+// float32 planar samples. Each comes back processed in place.
 export type TrackStreamCommand =
   | { type: 'OPEN'; streamId: string; sampleRate: number; maxBlockSize: number }
   | { type: 'LOAD'; path: string; format?: PluginFormat; pluginId?: string; parameters?: Record<string, number> }

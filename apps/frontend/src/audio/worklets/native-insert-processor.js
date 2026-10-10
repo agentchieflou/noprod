@@ -9,8 +9,16 @@
 // Blocks are numbered by position (block n starts at input frame n * block),
 // and the number travels with the block, so a late reply can't land in the
 // wrong place.
+//
+// Each block also carries the transport at its first frame (tempo, position
+// in quarter notes, playing/looping), for tempo-synced plugins. The main
+// thread sends the transport's map of context time to timeline position
+// (trackBridge.ts); the position is worked out here, per block, so it is
+// sample-accurate. Header layout: apps/audio_core/src/TrackStreams.h.
 
 const RENDER_QUANTUM = 128;
+const HEADER = 16 + 24; // block header + transport block
+const PLAYING = 1, LOOPING = 2, TEMPO_VALID = 4, PPQ_VALID = 8;
 
 class NativeInsertProcessor extends AudioWorkletProcessor {
   constructor(options) {
@@ -28,12 +36,29 @@ class NativeInsertProcessor extends AudioWorkletProcessor {
     this.pool = [];          // spare send buffers (replies come back as reusable buffers)
     this.stats = { sent: 0, returned: 0, late: 0, minSlack: Infinity };
     this.lastReport = 0;
+    this.transport = null;   // { playing, bpm, stoppedPosition, countInEnd, segments }
 
     this.port.onmessage = (e) => {
+      if (e.data?.type === 'transport') {
+        this.transport = e.data.transport;
+        return;
+      }
       if (e.data?.type !== 'link') return;
       this.link = e.data.port;
       this.link.onmessage = (m) => this.receive(m.data);
     };
+  }
+
+  // The transport at context time t: [tempo, ppq, flags]
+  transportAt(t) {
+    const tr = this.transport;
+    if (!tr) return [120, 0, 0];
+    const qn = tr.bpm / 60; // quarter notes per second
+    let segment = null;
+    for (const s of tr.segments) if (s.ctxStart <= t) segment = s;
+    if (!tr.playing || !segment || t < tr.countInEnd) return [tr.bpm, tr.stoppedPosition * qn, TEMPO_VALID | PPQ_VALID];
+    const pos = Math.min(segment.posEnd, segment.posStart + (t - segment.ctxStart));
+    return [tr.bpm, pos * qn, PLAYING | TEMPO_VALID | PPQ_VALID | (Number.isFinite(segment.posEnd) ? LOOPING : 0)];
   }
 
   // A processed block (or a buffer handed back unused): { block, buffer }
@@ -46,7 +71,7 @@ class NativeInsertProcessor extends AudioWorkletProcessor {
         this.stats.late++;
       } else {
         this.stats.minSlack = Math.min(this.stats.minSlack, slack);
-        const samples = new Float32Array(buffer, 16, this.block * 2);
+        const samples = new Float32Array(buffer, HEADER, this.block * 2);
         const at = start % this.size;
         this.wet[0].set(samples.subarray(0, this.block), at);
         this.wet[1].set(samples.subarray(this.block), at);
@@ -56,10 +81,15 @@ class NativeInsertProcessor extends AudioWorkletProcessor {
     if (this.pool.length < 32) this.pool.push(buffer);
   }
 
-  sendBlock(block) {
+  // `start`: the context time of the block's first frame
+  sendBlock(block, start) {
     if (!this.link) return;
-    const buffer = this.pool.pop() || new ArrayBuffer(16 + this.block * 2 * 4);
-    const samples = new Float32Array(buffer, 16, this.block * 2);
+    const buffer = this.pool.pop() || new ArrayBuffer(HEADER + this.block * 2 * 4);
+    const [tempo, ppq, flags] = this.transportAt(start);
+    new Uint32Array(buffer, 0, 4).set([block, this.block, 2, 1]); // flags bit 0: a transport block follows
+    new Float64Array(buffer, 16, 2).set([tempo, ppq]);
+    new Uint32Array(buffer, 32, 2).set([flags, 0]);
+    const samples = new Float32Array(buffer, HEADER, this.block * 2);
     const at = (block * this.block) % this.size;
     samples.set(this.dry[0].subarray(at, at + this.block), 0);
     samples.set(this.dry[1].subarray(at, at + this.block), this.block);
@@ -93,7 +123,7 @@ class NativeInsertProcessor extends AudioWorkletProcessor {
     }
     this.frame += n;
 
-    if (this.frame % this.block === 0) this.sendBlock(this.frame / this.block - 1);
+    if (this.frame % this.block === 0) this.sendBlock(this.frame / this.block - 1, (currentFrame + n - this.block) / sampleRate);
 
     if (currentTime - this.lastReport > 0.5) {
       this.lastReport = currentTime;

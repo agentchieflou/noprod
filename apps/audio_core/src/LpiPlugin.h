@@ -119,9 +119,10 @@ struct PluginParameterChange
 // Plugins with the lpi.gui.offscreen.v1 extension also have an editor, which
 // is rendered off-screen and streamed to the browser (editor/LpiEditor.h).
 // lpi.h requires every GUI call on the thread that sets parameters: the
-// control thread here, like everything else but process(). Two more
-// extensions are used when present: lpi.latency.v1 (the latency the browser
-// compensates for) and lpi.params.changes.v1 (what the editor changed).
+// control thread here, like everything else but process(). More extensions
+// are used when present: lpi.latency.v1 (the latency the browser compensates
+// for), lpi.params.changes.v1 (what the editor changed) and lpi.transport.v1
+// (tempo and position, on the audio thread before each process()).
 class LpiInsert : public InsertProcessor
 {
 public:
@@ -201,6 +202,11 @@ public:
         latency = latencyExtension != nullptr && latencyExtension->get_latency != nullptr
                     ? static_cast<int> (latencyExtension->get_latency (instance)) : 0;
 
+        // Looked up here, on the control thread: process() runs on the audio thread
+        transport = getExtension<lpi_transport_v1> (LPI_EXT_TRANSPORT_V1);
+        if (transport != nullptr && transport->set_transport == nullptr)
+            transport = nullptr;
+
         return true;
     }
 
@@ -222,6 +228,15 @@ public:
         data.num_frames = static_cast<uint32_t> (numSamples);
 
         library->getApi().process (instance, &data);
+    }
+
+    // lpi.transport.v1
+    void setTransport (const TransportInfo& t) noexcept override
+    {
+        if (instance == nullptr || transport == nullptr)
+            return;
+        lpi_transport_info info { t.tempoBpm, t.ppqPosition, preparedRate, t.flags };
+        transport->set_transport (instance, &info);
     }
 
     std::vector<PluginParameterInfo> getParameters() override
@@ -434,6 +449,7 @@ private:
                 closed();
         }
 
+        transport = nullptr;
         auto& api = library->getApi();
         api.deactivate (instance);
         api.destroy (instance);
@@ -448,5 +464,6 @@ private:
     std::vector<float> reported; // what the plugin last reported (see takeParameterChanges)
     std::vector<bool> readOnly;  // the plugin's outputs, never set
     int latency = 0;
+    const lpi_transport_v1* transport = nullptr;
     bool editorOpen = false;
 };
