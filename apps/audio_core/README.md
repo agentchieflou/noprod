@@ -51,13 +51,15 @@ build/audio_core/tests/GhostDAWTests_artefacts/Release/GhostDAWTests
 ```
 
 The tests build their own plugins: an LPI gain in good, wrong-ABI and
-no-export variants, an LPI gain with an off-screen editor, and a JUCE VST3
-gain. They cover:
+no-export variants, an LPI gain with an off-screen editor (plus variants
+with latency, and without `lpi.params.changes.v1`), and a JUCE VST3 gain. They cover:
 - loading, processing and parameter changes;
 - scanning and the command protocol;
 - thousands of chain swaps while an audio thread runs;
 - editors: their frames, mouse input and closing, and lpi.h's GUI threading
-  rule.
+  rule;
+- the latency and parameter-change extensions, and polling for plugins
+  without the latter.
 
 ## How it fits together
 
@@ -104,14 +106,23 @@ VST3/AU editors need a native window.
    - The browser shows it in a floating window (`PluginEditorWindow`).
 3. **Parameter changes.** Changes made in the editor are announced as
    `PLUGIN_PARAMETER_CHANGED { ..., source: 'editor' }`.
+   - GhostDAW collects them after every mouse event and every frame. A
+     plugin with `lpi.params.changes.v1` reports them itself, marking each
+     drag's start and release (`gestureBegin`, `gestureEnd`). Without it,
+     GhostDAW compares the values the plugin reports.
    - On a browser track, the device keeps the new value, so it is saved
-     with the project and can be undone.
+     with the project and can be undone. A drag the plugin reports as a
+     gesture is one undo step, however long it takes.
 4. **Close.**
    - One editor is open at a time (an LPI v1 rule): opening another closes
      the first.
    - Removing its plugin, re-preparing it for a new sample rate, or
      `CLOSE_EDITOR` also closes it.
    - The stream then gets `CLOSED`, and the window goes away.
+
+A plugin with `lpi.latency.v1` reports its latency, which shows as the
+insert's `latencySamples`. The browser delays its other tracks to match a
+track device's plugin.
 
 lpi.h requires every GUI call, and every parameter write, on one thread.
 GhostDAW uses the message thread, which already runs every other plugin call

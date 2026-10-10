@@ -44,8 +44,10 @@
 // editor/EditorStream.h), sending START { editorId }. One editor is open at
 // a time (also an LPI v1 rule): opening another closes it, as does removing
 // its plugin, and its stream then gets CLOSED. Parameters changed in the
-// editor are announced with PLUGIN_PARAMETER_CHANGED { ..., source: 'editor' }
-// through `broadcast` (or, for a track stream's plugin, to that stream).
+// editor are announced with PLUGIN_PARAMETER_CHANGED { ..., source: 'editor',
+// gestureBegin?, gestureEnd? } through `broadcast` (or, for a track stream's
+// plugin, to that stream). The gesture marks come from plugins with
+// lpi.params.changes.v1: the first change of a drag, and its release.
 class PluginHost : private juce::Timer
 {
 public:
@@ -581,15 +583,20 @@ private:
             if (auto s = weak.lock())
                 s->markClosed();
         };
-        session->onParametersChanged = [slotId = slot.id, notify, lpi] (const std::vector<int>& changed)
+        session->onParametersChanged = [slotId = slot.id, notify, lpi] (const std::vector<PluginParameterChange>& changed)
         {
             // (only called while the editor, and so the plugin, is open)
             if (! notify)
                 return;
-            for (auto index : changed)
+            for (auto& change : changed)
             {
-                auto message = parameterChanged (slotId, *lpi, index);
-                message.getDynamicObject()->setProperty ("source", "editor"); // not an answer to a SET
+                auto message = parameterChanged (slotId, *lpi, change.index);
+                auto* m = message.getDynamicObject();
+                m->setProperty ("source", "editor"); // not an answer to a SET
+                if (change.gestureBegin)
+                    m->setProperty ("gestureBegin", true);
+                if (change.gestureEnd)
+                    m->setProperty ("gestureEnd", true);
                 notify (message);
             }
         };

@@ -435,7 +435,7 @@ static void testPluginHost()
             if (p["format"].toString() == "LPI") ++lpiFound;
             if (p["format"].toString() == "VST3" && p["name"].toString() == "NoProd Test Gain") ++vst3Found;
         }
-        CHECK (lpiFound == 2); // the gain and the GUI test plugins; the wrong-ABI and no-export variants are not listed
+        CHECK (lpiFound == 4); // the gain and the three GUI test plugins; the wrong-ABI and no-export variants are not listed
         CHECK (! findByName (available, "NoProd Test GUI").isVoid());
         CHECK (vst3Found == 1);
         CHECK (state["scanFolders"].size() == 2);
@@ -450,7 +450,7 @@ static void testPluginHost()
     PluginHost reloaded (otherMixer, cache);
     auto available = reloaded.getState()["availablePlugins"];
     CHECK (! findByName (available, "NoProd Test Gain").isVoid());
-    CHECK (available.size() == 3);
+    CHECK (available.size() == 5);
     CHECK (reloaded.getState()["scanFolders"].size() == 2);
     cache.deleteFile();
 }
@@ -820,8 +820,8 @@ static void testEditors()
         withGui.editorMouse (LPI_MOUSE_DOWN, 100, 100);
         withGui.editorMouse (LPI_MOUSE_MOVE, 100, 90);
         withGui.editorMouse (LPI_MOUSE_UP, 100, 90);
-        auto changed = withGui.takeParameterChanges();
-        CHECK (changed.size() == 1 && changed[0] == 0);
+        auto changed = withGui.takeParameterChanges(); // lpi.params.changes.v1: one gesture, begun and ended
+        CHECK (changed.size() == 1 && changed[0].index == 0 && changed[0].gestureBegin && changed[0].gestureEnd);
         CHECK_NEAR (withGui.getParameterValue (0), 1.2f, 1e-5f);
         CHECK (withGui.takeParameterChanges().empty());
 
@@ -838,6 +838,7 @@ static void testEditors()
         CHECK (closedByPlugin && ! withGui.isEditorOpen());
         CHECK_NEAR (withGui.getParameterValue (0), 0.25f, 1e-6f);
         CHECK (other.openEditor (1.0f, info, error)); // the process-wide slot is free again
+        CHECK (withGui.getLatencySamples() == 0); // no lpi.latency.v1
 
         // A busy message thread: the frame times out, and the next one isn't
         // queued behind it (it fails straight away) until the first has run
@@ -861,6 +862,40 @@ static void testEditors()
         CHECK (! other.isEditorOpen() && busySource.isClosed());
     }
 
+    section ("Editors: plugins without lpi.params.changes.v1 are polled");
+    {
+        auto pollingLibrary = LpiLibrary::open (juce::File (LPI_TEST_GUI_POLLING_PATH), error);
+        CHECK (pollingLibrary != nullptr);
+        LpiInsert polled (pollingLibrary);
+        lpi_gui_offscreen_info info;
+        CHECK (polled.prepare (rate, 256, error) && polled.openEditor (1.0f, info, error));
+        polled.editorMouse (LPI_MOUSE_DOWN, 100, 100);
+        polled.editorMouse (LPI_MOUSE_MOVE, 100, 75); // 1.0 -> 1.5
+        auto changed = polled.takeParameterChanges();
+        CHECK (changed.size() == 1 && changed[0].index == 0 && ! changed[0].gestureBegin && ! changed[0].gestureEnd);
+        CHECK_NEAR (polled.getParameterValue (0), 1.5f, 1e-5f);
+        polled.editorMouse (LPI_MOUSE_UP, 100, 75);
+        polled.setParameterValue (0, 0.75f);
+        CHECK (polled.takeParameterChanges().empty()); // the host's own write
+        polled.closeEditor();
+    }
+
+    section ("Editors: lpi.latency.v1");
+    {
+        auto latencyLibrary = LpiLibrary::open (juce::File (LPI_TEST_GUI_LATENCY_PATH), error);
+        CHECK (latencyLibrary != nullptr);
+        LpiInsert delayed (latencyLibrary);
+        CHECK (delayed.prepare (rate, 256, error));
+        CHECK (delayed.getLatencySamples() == 64);
+        juce::AudioBuffer<float> impulse (2, 256);
+        impulse.clear();
+        impulse.setSample (0, 0, 1.0f);
+        impulse.setSample (1, 0, 1.0f);
+        auto out = runProcessor (delayed, impulse);
+        CHECK (out.getSample (0, 64) == 1.0f && out.getSample (1, 64) == 1.0f && out.getSample (0, 0) == 0.0f); // it really is 64 samples late
+        CHECK (delayed.prepare (44100.0, 256, error) && delayed.getLatencySamples() == 64); // read again per activation
+    }
+
     section ("Editors: OPEN_EDITOR / CLOSE_EDITOR and the stream source");
     auto cache = juce::File::createTempFile (".xml");
     HapAudioEngine engine;
@@ -875,6 +910,10 @@ static void testEditors()
         auto guiSlot = masterInserts (state)[0], gainSlot = masterInserts (state)[1];
         CHECK (static_cast<bool> (guiSlot["hasEditor"]) && ! static_cast<bool> (guiSlot["editorOpen"]));
         CHECK (! static_cast<bool> (gainSlot["hasEditor"]));
+        CHECK (static_cast<int> (guiSlot["latencySamples"]) == 0);
+        state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GUI_LATENCY_PATH }, { "bus", 7 } }));
+        CHECK (static_cast<int> (busInserts (state, 7)[0]["latencySamples"]) == 64);
+        host.handleCommand (command ({ { "type", "REMOVE_PLUGIN" }, { "slotId", busInserts (state, 7)[0]["slotId"] } }));
         auto guiId = guiSlot["slotId"].toString();
 
         auto refused = host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", gainSlot["slotId"] } }));
@@ -917,12 +956,17 @@ static void testEditors()
         CHECK (pixelAt (frame, 200, 100, 150 - 110) == editorBackground);
         CHECK (pixelAt (frame, 200, 100, 30) == editorMarker);              // the last mouse position
 
-        // The editor's change is announced, and the host's state follows it
-        CHECK (broadcasts.size() == 1);
+        // The editor's change is announced, and the host's state follows it.
+        // Changes are collected after every mouse event, so the drag's start
+        // and its release arrive separately.
+        CHECK (broadcasts.size() == 2);
         CHECK (broadcasts[0]["type"].toString() == "PLUGIN_PARAMETER_CHANGED" && broadcasts[0]["slotId"].toString() == guiId);
         CHECK (broadcasts[0]["source"].toString() == "editor");
         CHECK (static_cast<int> (broadcasts[0]["parameterIndex"]) == 0);
         CHECK_NEAR (static_cast<float> (broadcasts[0]["value"]), 1.4f, 1e-5f);
+        CHECK (static_cast<bool> (broadcasts[0]["gestureBegin"]) && ! broadcasts[0].hasProperty ("gestureEnd"));
+        CHECK (static_cast<bool> (broadcasts[1]["gestureEnd"]) && ! broadcasts[1].hasProperty ("gestureBegin"));
+        CHECK_NEAR (static_cast<float> (broadcasts[1]["value"]), 1.4f, 1e-5f);
         CHECK_NEAR (static_cast<float> (masterInserts (host.getState())[0]["parameters"][0]["value"]), 1.4f, 1e-5f);
 
         auto signal = makeSignal (256);
@@ -931,12 +975,22 @@ static void testEditors()
 
         // lpi.h: GUI calls and parameter writes on one thread only
         auto* plugin = dynamic_cast<LpiInsert*> (mixer.getMasterChain().getSlots()[0].processor.get());
-        plugin->takeParameterChanges();
-        CHECK (plugin->getParameterValue (1) == 0.0f); // guiThreadViolations
+        CHECK (plugin->getParameterValue (1) == 0.0f); // guiThreadViolations, read-only: read live
 
         section ("Editors: closing");
+        // Closing mid-drag still ends the gesture
+        broadcasts.clear();
+        offMessageThread ([&]
+        {
+            source->mouse ("down", 100, 50, 1);
+            source->mouse ("move", 100, 45, 1);
+            rendered = source->render (frame.data());
+        });
+        CHECK (broadcasts.size() == 1 && static_cast<bool> (broadcasts[0]["gestureBegin"]));
         auto closed = host.handleCommand (command ({ { "type", "CLOSE_EDITOR" } }));
         CHECK (closed["type"].toString() == "EDITOR_CLOSED" && closed["editorId"].toString() == editorId);
+        CHECK (broadcasts.size() == 2 && static_cast<bool> (broadcasts[1]["gestureEnd"]));
+        CHECK_NEAR (static_cast<float> (broadcasts[1]["value"]), 1.5f, 1e-5f);
         CHECK (source->isClosed() && host.makeEditorSource (editorId) == nullptr);
         offMessageThread ([&] { rendered = source->render (frame.data()); });
         CHECK (! rendered);
@@ -992,9 +1046,10 @@ static void testEditors()
         CHECK (rendered && sent.size() == 1 && broadcasts.isEmpty()); // to the stream's device, not everyone
         CHECK (sent[0]["type"].toString() == "PLUGIN_PARAMETER_CHANGED");
         CHECK_NEAR (static_cast<float> (sent[0]["value"]), 0.5f, 1e-5f);
-        // A stream that closes mid-drag lets go of the button
+        // A stream that closes mid-drag lets go of the button, ending the gesture
         source.reset();
         juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        CHECK (sent.size() == 2 && static_cast<bool> (sent[1]["gestureEnd"]));
         auto* streamPlugin = dynamic_cast<LpiInsert*> (stream->chain.getSlots()[0].processor.get());
         streamPlugin->editorMouse (LPI_MOUSE_MOVE, 10, 0);
         CHECK (streamPlugin->takeParameterChanges().empty());

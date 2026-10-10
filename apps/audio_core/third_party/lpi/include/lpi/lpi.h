@@ -226,6 +226,72 @@ typedef struct lpi_gui_offscreen_v1 {
 } lpi_gui_offscreen_v1;
 
 /* ------------------------------------------------------------------------
+ * Extension: "lpi.latency.v1"
+ * ------------------------------------------------------------------------
+ * Processing latency in samples, for host delay compensation. Call from the
+ * control thread after activate(). The value is fixed for the life of an
+ * activation: a plugin whose latency would change must have the host
+ * re-create (or deactivate/activate) the instance, the same as a
+ * sample-rate change. A plugin without this extension has 0 latency.
+ */
+#define LPI_EXT_LATENCY_V1 "lpi.latency.v1"
+
+typedef struct lpi_latency_v1 {
+    uint32_t (*get_latency)(lpi_plugin* instance);
+} lpi_latency_v1;
+
+/* ------------------------------------------------------------------------
+ * Extension: "lpi.params.changes.v1"
+ * ------------------------------------------------------------------------
+ * Parameter changes the PLUGIN made itself -- in practice, edits in its own
+ * editor -- so the host can mirror them (parameter views, automation
+ * lanes). Pull-based: the host drains the queue; there is no callback, no
+ * host context pointer and no re-entrancy.
+ *
+ * Threading: GUI thread only (the same thread the lpi.gui.offscreen.v1
+ * calls and set_parameter_value run on).
+ *
+ * Semantics:
+ *   - Only plugin-originated changes are reported. Anything the host
+ *     caused is never echoed back: values set via set_parameter_value, and
+ *     values loaded by set_state (presets).
+ *   - Read-only parameters (LPI_PARAM_READONLY: meters and other outputs)
+ *     are never queued. A host that wants them reads them with
+ *     get_parameter_value.
+ *   - lpi_param_change.value is in the parameter's own min_value..max_value
+ *     range -- the same units get_parameter_value returns.
+ *   - Coalesced per parameter since the last call: one entry per changed
+ *     parameter, carrying its latest value and the OR of its flags.
+ *   - GESTURE_BEGIN marks the first change of a user gesture (e.g. a knob
+ *     drag from mouse-down); GESTURE_END marks the gesture's release. A
+ *     gesture both started and ended since the last call reports both
+ *     bits. An END entry's value is the final settled value.
+ *   - Returns the number of entries written to out (<= max). Entries that
+ *     didn't fit stay queued for the next call. Entries are in ascending
+ *     parameter index order.
+ *   - Lifetime: the queue is dropped on deactivate() and destroy(). Closing
+ *     the editor (lpi.gui.offscreen.v1 close) mid-gesture queues the
+ *     gesture's END; it stays queued until the host drains it, so a host
+ *     that drains before close() and one that drains after both see it.
+ */
+#define LPI_EXT_PARAM_CHANGES_V1 "lpi.params.changes.v1"
+
+enum {
+    LPI_PARAM_CHANGE_GESTURE_BEGIN = 1u << 0,
+    LPI_PARAM_CHANGE_GESTURE_END   = 1u << 1
+};
+
+typedef struct {
+    uint32_t index;
+    float    value;
+    uint32_t flags; /* bitwise OR of LPI_PARAM_CHANGE_* */
+} lpi_param_change;
+
+typedef struct lpi_param_changes_v1 {
+    uint32_t (*get_parameter_changes)(lpi_plugin* instance, lpi_param_change* out, uint32_t max);
+} lpi_param_changes_v1;
+
+/* ------------------------------------------------------------------------
  * Factory -- the one thing a host looks up by name in the plugin DLL.
  * ------------------------------------------------------------------------ */
 typedef struct {
