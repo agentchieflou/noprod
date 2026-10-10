@@ -8,10 +8,12 @@
 // Device objects look like
 //   { id, name, type: 'vst', pluginPath, format, pluginId, parameters: { [parameterId]: value } }
 // and keep their parameter values by the plugin's own parameter ids, so a
-// project reloads them into the plugin.
+// project reloads them into the plugin. Changes made in the plug-in's own
+// editor (#44 B6) come back to the device through onNativeEditorParameter.
 
 import type { DeviceDSP, ParamValue } from '../audio/devices';
 import type { NativeInsert } from './audioCore';
+import { hidePluginEditor, showPluginEditor } from './pluginEditor';
 
 export const NATIVE_STREAM_URL = 'ws://localhost:8083';
 export const BRIDGE_BLOCK = 256;
@@ -39,6 +41,23 @@ export const subscribeNativeDevices = (fn: () => void) => { listeners.add(fn); r
 export const getNativeDeviceState = (deviceId: string) => states.get(deviceId) ?? null;
 // Fires when any native device's latency changes (the engine re-compensates)
 export const onNativeLatencyChange = (fn: () => void) => { latencyListeners.add(fn); return () => { latencyListeners.delete(fn); }; };
+
+// The device's parameter values as last sent to (or reported by) its plug-in
+const sentValues = new Map<string, Record<string, ParamValue>>();
+
+// A parameter changed in the plug-in's own editor: the owner of the device
+// (the store) keeps the new value. Its update comes back through the DSP's
+// update() as the value already sent, so it isn't echoed to the plug-in.
+type EditorParameterListener = (deviceId: string, parameterId: string, value: number) => void;
+let editorParameterListener: EditorParameterListener | null = null;
+export const onNativeEditorParameter = (fn: EditorParameterListener) => {
+  editorParameterListener = fn;
+  return () => { if (editorParameterListener === fn) editorParameterListener = null; };
+};
+
+// Opens the device's plug-in editor in the Audio Core; EDITOR_OPENED shows it
+export const openNativeDeviceEditor = (deviceId: string) =>
+  worker?.postMessage({ type: 'command', streamId: deviceId, message: { type: 'OPEN_EDITOR' } });
 
 const updateState = (deviceId: string, patch: Partial<NativeDeviceState>) => {
   const prev = states.get(deviceId);
@@ -72,6 +91,16 @@ const getWorker = () => {
           parameters: state.insert.parameters.map((p) => (p.index === message.parameterIndex ? { ...p, value: message.value, text: message.text } : p))
         }
       });
+      const param = state.insert.parameters.find((p) => p.index === message.parameterIndex);
+      if (message.source === 'editor' && param?.id && !param.readOnly) {
+        sentValues.set(streamId, { ...(sentValues.get(streamId) || {}), [param.id]: message.value });
+        worker?.postMessage({ type: 'remember', streamId, parameterId: param.id, value: message.value }); // for a reconnect's LOAD
+        editorParameterListener?.(streamId, param.id, message.value);
+      }
+    } else if (message?.type === 'EDITOR_OPENED') {
+      showPluginEditor(message, () => worker?.postMessage({ type: 'command', streamId, message: { type: 'CLOSE_EDITOR' } }));
+    } else if (message?.type === 'EDITOR_CLOSED') {
+      hidePluginEditor(message.editorId);
     } else if (message?.type === 'AUDIO_CORE_ERROR') {
       updateState(streamId, { error: message.message });
     }
@@ -110,21 +139,30 @@ export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): Devic
   const w = getWorker();
   w.postMessage({ type: 'open', streamId, url: NATIVE_STREAM_URL, sampleRate: ctx.sampleRate, block: BRIDGE_BLOCK, port: link.port2 }, [link.port2]);
 
-  let sent: Record<string, ParamValue> = { ...(device.parameters || {}) };
+  sentValues.set(streamId, { ...(device.parameters || {}) });
   w.postMessage({
     type: 'command', streamId,
-    message: { type: 'LOAD', path: device.pluginPath, format: device.format, pluginId: device.pluginId, parameters: sent }
+    message: { type: 'LOAD', path: device.pluginPath, format: device.format, pluginId: device.pluginId, parameters: sentValues.get(streamId) }
   });
 
   return {
     input: node,
     output: node,
     update(params) {
-      Object.entries(params).forEach(([id, value]) => {
+      const sent = sentValues.get(streamId) || {};
+      // A value the device no longer holds (an undo back to before it was
+      // set) means the plug-in's default
+      const wanted: Record<string, ParamValue> = { ...params };
+      Object.keys(sent).forEach((id) => {
+        if (wanted[id] !== undefined) return;
+        const p = states.get(streamId)?.insert?.parameters.find((q) => q.id === id);
+        if (p && !p.readOnly) wanted[id] = p.default;
+      });
+      Object.entries(wanted).forEach(([id, value]) => {
         if (sent[id] === value || typeof value !== 'number') return;
         w.postMessage({ type: 'command', streamId, message: { type: 'SET_PARAM', parameterId: id, value } });
       });
-      sent = { ...params };
+      sentValues.set(streamId, wanted);
     },
     latencySeconds: () => (states.get(streamId)?.latencyFrames ?? latency) / ctx.sampleRate,
     dispose() {
@@ -133,6 +171,7 @@ export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): Devic
       node.disconnect();
       states.delete(streamId);
       sampleRates.delete(streamId);
+      sentValues.delete(streamId);
       emit();
       latencyListeners.forEach((fn) => fn());
     }

@@ -2,7 +2,9 @@
 
 `include/lpi/lpi.h` is a verbatim copy of `PluginABI/include/lpi/lpi.h` from
 the sibling repo [agentchieflou/v-loudio-t](https://github.com/agentchieflou/v-loudio-t),
-taken at commit `540ae0739bb19536730ab9dbc033571fea8552f1` (ABI version 1.0).
+taken at commit `89296fb7d179e6f1dc215c70d3209c2817a3599a` (ABI version 1.0): the
+head of v-loudio-t PR #111, which adds the `lpi.gui.offscreen.v1` editor
+extension the Audio Core streams to the browser. Re-copy once #111 merges.
 
 It is vendored rather than referenced by relative path so `audio_core` builds
 from a plain checkout of this repo. The header is dependency-free C, so there

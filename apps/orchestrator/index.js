@@ -47,7 +47,7 @@ function broadcastToFrontends(message) {
 // Frontend messages relayed straight to the Audio Core
 const AUDIO_CORE_COMMANDS = new Set([
   'GET_AUDIO_CORE_STATE', 'SCAN_PLUGINS', 'LOAD_PLUGIN', 'REMOVE_PLUGIN', 'MOVE_PLUGIN',
-  'SET_PLUGIN_BYPASS', 'SET_PLUGIN_PARAMETER', 'SET_VST_PARAMETER'
+  'SET_PLUGIN_BYPASS', 'SET_PLUGIN_PARAMETER', 'SET_VST_PARAMETER', 'OPEN_EDITOR', 'CLOSE_EDITOR'
 ]);
 const audioCoreConnected = () => !!audioCoreWs && audioCoreWs.readyState === WebSocket.OPEN;
 
@@ -108,7 +108,7 @@ function connectToAudioCore() {
 
   // Plugin state, parameter changes and errors go to every frontend
   audioCoreWs.on('message', (data, isBinary) => {
-    if (isBinary) return; // binary frames (plugin editor video, later) don't go through here
+    if (isBinary) return; // nothing binary is expected (plugin editors stream straight from ws://localhost:8085)
     const message = data.toString();
     console.log(`Received from Audio Core: ${message.slice(0, 120)}${message.length > 120 ? '…' : ''}`);
     broadcastToFrontends(message);

@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <cstring>
+#include <functional>
 #include <memory>
 
 #include "HapWebSocketServer.h"
@@ -32,6 +33,9 @@ struct TrackStream
     double sampleRate = 48000.0;
     int maxBlockSize = 512;
     InsertChain chain;
+    // Sends a message to the stream's browser device unprompted (parameter
+    // changes made in the plugin's editor); set when the stream opens
+    std::function<void (const juce::var&)> sendToBrowser;
 
     // Processes one audio message in place. Returns false (leaving the data
     // untouched) if it is malformed.
@@ -87,6 +91,11 @@ HapWebSocketServer::Handlers makeTrackStreamHandlers (Host& host)
                 juce::StringArray errors;
                 stream->chain.prepare (stream->sampleRate, stream->maxBlockSize, errors);
                 stream->chain.audioStarted (stream->sampleRate);
+                stream->sendToBrowser = [weak = std::weak_ptr<HapWebSocketServer::Connection> (connection)] (const juce::var& m)
+                {
+                    if (auto c = weak.lock())
+                        c->sendText (juce::JSON::toString (m, true));
+                };
                 connection->context = stream;
 
                 juce::MessageManager::callAsync ([&host, stream] { host.registerStream (stream); });

@@ -134,11 +134,15 @@ For comparison, raw frames at window 1: 800×600 is 46.3 / 66.5 ms and
   worker could take `putImageData` off the main thread too, but at under 1 ms
   per frame it isn't needed yet.
 - **Measure render cost again with cuif.** The synthetic editor uses JUCE's
-  CPU renderer. cuif renders with OpenGL and needs a GPU → CPU readback,
-  which this spike can't measure until the LPI GUI extension exists
-  (v-loudio-t B4).
+  CPU renderer. cuif renders with OpenGL and needs a GPU → CPU readback.
+  The extension now exists (v-loudio-t #111), but the Reverb's editor only
+  builds for Windows, so this is still to measure on a Windows machine.
 
-The streaming pieces built for the spike are meant to become B6c / B6d:
-`EditorStream.h` (the render / encode / send loop behind a `FrameSource`
-interface) and `PluginEditorCanvas.tsx`. A real plugin editor only needs a
-`FrameSource` adapter over LPI's off-screen GUI extension once it exists.
+The streaming pieces built for the spike became B6c / B6d:
+- `EditorStream.h` is the render / encode / send loop behind a
+  `FrameSource` interface;
+- `PluginEditorCanvas.tsx` draws the frames in the browser;
+- `src/editor/LpiEditor.h` adapts LPI's off-screen GUI extension
+  (`lpi.gui.offscreen.v1`) to `FrameSource`.
+
+See "Plugin editors" in the Audio Core README.

@@ -19,6 +19,8 @@ import { initMidi } from './audio/inputs';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
 import KeyboardPanel from './components/KeyboardPanel';
 import AudioCorePanel from './components/AudioCorePanel';
+import PluginEditorWindow from './components/PluginEditorWindow';
+import { onNativeEditorParameter } from './native/trackBridge';
 import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage, findNativePlugin, nativeDeviceFor } from './native/audioCore';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
@@ -42,6 +44,10 @@ if (import.meta.env.DEV) {
   (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput };
 }
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
+
+// A hosted plug-in's own editor changed a parameter: its device keeps it
+onNativeEditorParameter((deviceId, parameterId, value) =>
+  useDAWStore.getState().setDeviceParameterFromPlugin(deviceId, parameterId, value));
 
 // Ableton-style Color Palette Presets
 const PRESET_COLORS = [
@@ -1170,6 +1176,7 @@ function App() {
       </div>
 
       {keyboardMidi && <KeyboardPanel />}
+      <PluginEditorWindow />
 
       {/* Bottom Detail panel */}
       <div className={`bottom-detail-panel ${activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi' ? 'tall' : ''}`}>

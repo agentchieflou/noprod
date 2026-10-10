@@ -3,12 +3,14 @@
 #include <JuceHeader.h>
 #include <functional>
 #include <memory>
+#include <mutex>
 
 #include "InsertChain.h"
 #include "JucePluginInsert.h"
 #include "LpiPlugin.h"
 #include "Mixer.h"
 #include "TrackStreams.h"
+#include "editor/LpiEditor.h"
 
 // Plugin scanning, loading and control for the Mixer's insert chains: the
 // master bus and one bus per track (B5b-d, and the native-hosting half of
@@ -32,7 +34,18 @@
 //   SET_PLUGIN_BYPASS     { slotId, bypassed }
 //   SET_PLUGIN_PARAMETER  { slotId, parameterIndex | parameterId, value }        -> PLUGIN_PARAMETER_CHANGED
 //   SET_VST_PARAMETER     { trackIndex, pluginName, parameterIndex, value (0..1) } -> PLUGIN_PARAMETER_CHANGED
+//   OPEN_EDITOR           { slotId, scale? }  -> EDITOR_OPENED { editorId, slotId, name, port, width, height, scale }
+//   CLOSE_EDITOR                              -> EDITOR_CLOSED { editorId, slotId }
 // Failures reply AUDIO_CORE_ERROR { message, request }.
+//
+// Plugin editors (#44 B6c): an LPI plugin with lpi.gui.offscreen.v1 has an
+// editor (hasEditor in its slot). OPEN_EDITOR opens it off-screen; the
+// browser then streams it from the editor server (editorPort, see
+// editor/EditorStream.h), sending START { editorId }. One editor is open at
+// a time (also an LPI v1 rule): opening another closes it, as does removing
+// its plugin, and its stream then gets CLOSED. Parameters changed in the
+// editor are announced with PLUGIN_PARAMETER_CHANGED { ..., source: 'editor' }
+// through `broadcast` (or, for a track stream's plugin, to that stream).
 class PluginHost : private juce::Timer
 {
 public:
@@ -54,6 +67,11 @@ public:
     std::function<juce::var()> describeDevice;
     // Supplies and resets the post-insert peak level (optional).
     std::function<float()> takeOutputPeak;
+    // Sends a message to every control client (optional): parameter changes
+    // made in a plugin's editor.
+    std::function<void (const juce::var&)> broadcast;
+    // Where the browser streams open editors from (reported in EDITOR_OPENED)
+    int editorPort = 8085;
 
     // Called when the audio device (re)starts. Returns any processors that
     // failed to re-prepare as error strings.
@@ -62,6 +80,7 @@ public:
         juce::StringArray errors;
         for (auto* chain : allChains())
             chain->prepare (sampleRate, juce::jmax (blockSize, minimumBlockSize), errors);
+        closeEditorIfGone(); // re-preparing an LPI plugin recreates it, closing its editor
         return errors;
     }
 
@@ -144,8 +163,24 @@ public:
                     slots.insert (slots.begin() + index, slot);
                 }
                 chain->setSlots (std::move (slots));
+                closeEditorIfGone();
                 return getState();
             }
+
+            if (type == "OPEN_EDITOR")
+            {
+                auto slotId = message["slotId"].toString();
+                auto* chain = chainHoldingSlot (slotId);
+                if (chain == nullptr)
+                    return makeError ("No insert with id '" + slotId + "'", type);
+
+                for (auto& slot : chain->getSlots())
+                    if (slot.id == slotId)
+                        return openEditor (slot, message, type, broadcast);
+            }
+
+            if (type == "CLOSE_EDITOR")
+                return closeEditor();
 
             if (type == "SET_VST_PARAMETER")
             {
@@ -268,6 +303,7 @@ public:
     // thread goes away).
     void clearAllInserts()
     {
+        closeEditor();
         for (auto* chain : allChains())
         {
             chain->setSlots ({});
@@ -295,6 +331,7 @@ public:
         stream->chain.setSlots ({});
         stream->chain.collectGarbage();
         streams.erase (std::remove (streams.begin(), streams.end(), stream), streams.end());
+        closeEditorIfGone();
     }
 
     // A stream hosts one plugin. Commands:
@@ -302,9 +339,20 @@ public:
     //   UNLOAD                                                                          -> STREAM_STATE
     //   SET_PARAM  { parameterId | parameterIndex, value }                              -> PLUGIN_PARAMETER_CHANGED
     //   GET_STATE                                                                       -> STREAM_STATE
+    //   OPEN_EDITOR { scale? } / CLOSE_EDITOR    as the commands above, for the stream's plugin
     juce::var handleStreamCommand (TrackStream& stream, const juce::var& message)
     {
         auto type = message["type"].toString();
+
+        if (type == "OPEN_EDITOR")
+        {
+            if (stream.chain.getSlots().empty())
+                return makeError ("No plugin loaded", "STREAM_" + type);
+            return openEditor (stream.chain.getSlots().front(), message, "STREAM_" + type, stream.sendToBrowser);
+        }
+
+        if (type == "CLOSE_EDITOR")
+            return closeEditor();
 
         if (type == "LOAD")
         {
@@ -324,12 +372,14 @@ public:
             slot.id = "insert-" + juce::String (nextSlotNumber++);
             slot.processor = std::move (processor);
             stream.chain.setSlots ({ slot });
+            closeEditorIfGone();
             return describeStream (stream);
         }
 
         if (type == "UNLOAD")
         {
             stream.chain.setSlots ({});
+            closeEditorIfGone();
             return describeStream (stream);
         }
 
@@ -356,6 +406,39 @@ public:
         auto& slots = stream.chain.getSlots();
         state->setProperty ("insert", slots.empty() ? juce::var() : describeSlot (slots.front()));
         return juce::var (state.get());
+    }
+
+    // ------------------------------------------------------------------ editors
+
+    // Closes the open editor, if any. Replies EDITOR_CLOSED.
+    juce::var closeEditor()
+    {
+        std::shared_ptr<EditorSession> closing;
+        {
+            const std::lock_guard<std::mutex> lock (editorLock);
+            closing = std::move (editor);
+            editor.reset();
+        }
+
+        juce::DynamicObject::Ptr reply = new juce::DynamicObject();
+        reply->setProperty ("type", "EDITOR_CLOSED");
+        if (closing != nullptr)
+        {
+            closing->close();
+            reply->setProperty ("editorId", closing->editorId);
+            reply->setProperty ("slotId", closing->slotId);
+        }
+        return juce::var (reply.get());
+    }
+
+    // Any thread (the editor server's connections): a stream source for the
+    // open editor if `editorId` names it, else nullptr
+    std::unique_ptr<FrameSource> makeEditorSource (const juce::String& editorId)
+    {
+        const std::lock_guard<std::mutex> lock (editorLock);
+        if (editor == nullptr || editor->isClosed() || editor->editorId != editorId)
+            return nullptr;
+        return std::make_unique<LpiEditorSource> (editor);
     }
 
     static constexpr double defaultSampleRate = 48000.0;
@@ -473,6 +556,100 @@ private:
         return nullptr;
     }
 
+    juce::var openEditor (const InsertChain::Slot& slot, const juce::var& message, const juce::String& type,
+                          std::function<void (const juce::var&)> notify)
+    {
+        auto* lpi = dynamic_cast<LpiInsert*> (slot.processor.get());
+        if (lpi == nullptr || ! lpi->hasEditor())
+            return makeError (slot.processor->getName() + " has no editor GhostDAW can show", type);
+
+        // Asking again for the open one (another browser window) just reports it
+        if (editor != nullptr && ! editor->isClosed() && editor->slotId == slot.id)
+            return describeEditor (*editor, *lpi);
+
+        closeEditor();
+
+        auto scale = juce::jlimit (0.5f, 4.0f, static_cast<float> (message.getProperty ("scale", 1.0)));
+        lpi_gui_offscreen_info info;
+        juce::String error;
+        if (! lpi->openEditor (scale, info, error))
+            return makeError (error, type);
+
+        auto session = std::make_shared<EditorSession> ("editor-" + juce::String (nextEditorNumber++), slot.id, *lpi, info);
+        lpi->onEditorClosed = [weak = std::weak_ptr<EditorSession> (session)]
+        {
+            if (auto s = weak.lock())
+                s->markClosed();
+        };
+        session->onParametersChanged = [slotId = slot.id, notify, lpi] (const std::vector<int>& changed)
+        {
+            // (only called while the editor, and so the plugin, is open)
+            if (! notify)
+                return;
+            for (auto index : changed)
+            {
+                auto message = parameterChanged (slotId, *lpi, index);
+                message.getDynamicObject()->setProperty ("source", "editor"); // not an answer to a SET
+                notify (message);
+            }
+        };
+
+        {
+            const std::lock_guard<std::mutex> lock (editorLock);
+            editor = session;
+        }
+        return describeEditor (*session, *lpi);
+    }
+
+    juce::var describeEditor (const EditorSession& session, InsertProcessor& processor)
+    {
+        juce::DynamicObject::Ptr reply = new juce::DynamicObject();
+        reply->setProperty ("type", "EDITOR_OPENED");
+        reply->setProperty ("editorId", session.editorId);
+        reply->setProperty ("slotId", session.slotId);
+        reply->setProperty ("name", processor.getName());
+        reply->setProperty ("port", editorPort);
+        reply->setProperty ("width", session.width);
+        reply->setProperty ("height", session.height);
+        reply->setProperty ("scale", session.scale);
+        return juce::var (reply.get());
+    }
+
+    // After inserts went away: close the editor if its plugin was one of them
+    void closeEditorIfGone()
+    {
+        if (editor == nullptr)
+            return;
+
+        auto holds = [this] (const InsertChain& chain)
+        {
+            for (auto& slot : chain.getSlots())
+                if (slot.id == editor->slotId && slot.processor.get() == editor->getInsert())
+                    return true;
+            return false;
+        };
+
+        auto found = false;
+        for (auto* chain : allChains())
+            found = found || holds (*chain);
+        for (auto& stream : streams)
+            found = found || holds (stream->chain);
+
+        if (! found || editor->isClosed())
+            closeEditor();
+    }
+
+    static juce::var parameterChanged (const juce::String& slotId, InsertProcessor& processor, int index)
+    {
+        juce::DynamicObject::Ptr reply = new juce::DynamicObject();
+        reply->setProperty ("type", "PLUGIN_PARAMETER_CHANGED");
+        reply->setProperty ("slotId", slotId);
+        reply->setProperty ("parameterIndex", index);
+        reply->setProperty ("value", processor.getParameterValue (index));
+        reply->setProperty ("text", processor.getParameterText (index));
+        return juce::var (reply.get());
+    }
+
     juce::var setParameter (const InsertChain::Slot& slot, const juce::var& message, const juce::String& type)
     {
         auto params = slot.processor->getParameters();
@@ -490,13 +667,7 @@ private:
         if (target->readOnly || ! slot.processor->setParameterValue (target->index, value))
             return makeError (slot.processor->getName() + ": could not set " + target->name, type);
 
-        juce::DynamicObject::Ptr reply = new juce::DynamicObject();
-        reply->setProperty ("type", "PLUGIN_PARAMETER_CHANGED");
-        reply->setProperty ("slotId", slot.id);
-        reply->setProperty ("parameterIndex", target->index);
-        reply->setProperty ("value", slot.processor->getParameterValue (target->index));
-        reply->setProperty ("text", slot.processor->getParameterText (target->index));
-        return juce::var (reply.get());
+        return parameterChanged (slot.id, *slot.processor, target->index);
     }
 
     juce::var describeSlot (const InsertChain::Slot& slot)
@@ -509,6 +680,8 @@ private:
         s->setProperty ("path", processor.getPath());
         s->setProperty ("bypassed", slot.bypassed->load());
         s->setProperty ("latencySamples", processor.getLatencySamples());
+        s->setProperty ("hasEditor", processor.hasEditor());
+        s->setProperty ("editorOpen", editor != nullptr && ! editor->isClosed() && editor->slotId == slot.id);
 
         juce::Array<juce::var> params;
         for (auto& p : processor.getParameters())
@@ -646,4 +819,10 @@ private:
     juce::StringArray scanFolders;
     int nextSlotNumber = 1;
     std::vector<std::shared_ptr<TrackStream>> streams;
+
+    // The open editor. Changed only on the message thread, under the lock
+    // (the editor server reads it from its connections' threads).
+    std::mutex editorLock;
+    std::shared_ptr<EditorSession> editor;
+    int nextEditorNumber = 1;
 };

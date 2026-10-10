@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -106,6 +107,11 @@ private:
 // and recreates the instance when they change, carrying its state across
 // through get_state/set_state and re-applying the parameter values this host
 // set.
+//
+// Plugins with the lpi.gui.offscreen.v1 extension also have an editor, which
+// is rendered off-screen and streamed to the browser (editor/LpiEditor.h).
+// lpi.h requires every GUI call on the thread that sets parameters: the
+// control thread here, like everything else but process().
 class LpiInsert : public InsertProcessor
 {
 public:
@@ -124,6 +130,9 @@ public:
             return true;
 
         auto& api = library->getApi();
+
+        // Keep what the plugin's own editor changed since this host last looked
+        takeParameterChanges();
 
         juce::MemoryBlock savedState;
         if (instance != nullptr && api.get_state != nullptr)
@@ -165,6 +174,10 @@ public:
         else
             for (size_t i = 0; i < values.size(); ++i)
                 api.set_parameter_value (instance, static_cast<uint32_t> (i), values[i]);
+
+        reported.clear();
+        for (size_t i = 0; i < values.size(); ++i)
+            reported.push_back (api.get_parameter_value (instance, static_cast<uint32_t> (i)));
 
         return true;
     }
@@ -244,11 +257,122 @@ public:
         return true;
     }
 
+    // Parameters the plugin changed by itself (its editor) since the last
+    // call: their indices, with getParameterValue updated to match.
+    //
+    // A change shows as the plugin reporting a value it didn't report last
+    // time. A value this host set doesn't count: the plugin may report it
+    // only once process() has applied it, and by then this host already
+    // holds it.
+    std::vector<int> takeParameterChanges()
+    {
+        std::vector<int> changed;
+        if (instance == nullptr)
+            return changed;
+
+        auto& api = library->getApi();
+        for (size_t i = 0; i < reported.size() && i < values.size(); ++i)
+        {
+            auto now = api.get_parameter_value (instance, static_cast<uint32_t> (i));
+            if (now == reported[i])
+                continue;
+            reported[i] = now;
+            if (now != values[i])
+            {
+                values[i] = now;
+                changed.push_back (static_cast<int> (i));
+            }
+        }
+        return changed;
+    }
+
+    // ------------------------------------------- editor (lpi.gui.offscreen.v1)
+
+    bool hasEditor() override { return getGui() != nullptr; }
+
+    // Opens the editor at a DPI scale; fills `info` with its size. Fails if
+    // the plugin has no GUI or another editor is open in this process.
+    bool openEditor (float dpiScale, lpi_gui_offscreen_info& info, juce::String& error)
+    {
+        auto* gui = getGui();
+        if (gui == nullptr)
+        {
+            error = getName() + " has no editor";
+            return false;
+        }
+        if (editorOpen)
+        {
+            error = getName() + ": its editor is already open";
+            return false;
+        }
+
+        info = {};
+        if (! gui->open (instance, dpiScale, &info) || info.physical_width == 0 || info.physical_height == 0
+            || info.logical_width == 0 || info.logical_height == 0)
+        {
+            error = getName() + ": could not open its editor";
+            return false;
+        }
+
+        editorOpen = true;
+        return true;
+    }
+
+    bool isEditorOpen() const { return editorOpen; }
+
+    void closeEditor()
+    {
+        if (! editorOpen)
+            return;
+        editorOpen = false;
+        getGui()->close (instance);
+    }
+
+    // Renders the editor and reads its pixels (tightly packed RGBA, top-left)
+    bool renderEditor (uint8_t* rgba, size_t size)
+    {
+        auto* gui = editorOpen ? getGui() : nullptr;
+        return gui != nullptr && gui->render (instance) && gui->read_pixels (instance, rgba, size);
+    }
+
+    // type is LPI_MOUSE_*; coordinates in logical pixels
+    void editorMouse (int type, float x, float y)
+    {
+        if (auto* gui = editorOpen ? getGui() : nullptr)
+            gui->mouse_event (instance, type, x, y);
+    }
+
+    // Called (on the control thread) when the instance goes away while its
+    // editor is open: re-prepared for a new sample rate, or destroyed
+    std::function<void()> onEditorClosed;
+
 private:
+    const lpi_gui_offscreen_v1* getGui() const
+    {
+        auto& api = library->getApi();
+        if (instance == nullptr || api.get_extension == nullptr)
+            return nullptr;
+
+        auto* gui = static_cast<const lpi_gui_offscreen_v1*> (api.get_extension (instance, LPI_EXT_GUI_OFFSCREEN_V1));
+        if (gui == nullptr || gui->open == nullptr || gui->close == nullptr || gui->render == nullptr
+            || gui->read_pixels == nullptr || gui->mouse_event == nullptr)
+            return nullptr;
+        return gui;
+    }
+
     void destroyInstance()
     {
         if (instance == nullptr)
             return;
+
+        if (editorOpen)
+        {
+            closeEditor();
+            auto closed = std::move (onEditorClosed);
+            onEditorClosed = nullptr;
+            if (closed)
+                closed();
+        }
 
         auto& api = library->getApi();
         api.deactivate (instance);
@@ -260,5 +384,7 @@ private:
     lpi_plugin* instance = nullptr;
     double preparedRate = 0.0;
     int preparedBlockSize = 0;
-    std::vector<float> values;
+    std::vector<float> values;   // what this host set, or the plugin's own changes it has seen
+    std::vector<float> reported; // what the plugin last reported (see takeParameterChanges)
+    bool editorOpen = false;
 };

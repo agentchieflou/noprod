@@ -180,6 +180,52 @@ typedef struct lpi_plugin_api {
 } lpi_plugin_api;
 
 /* ------------------------------------------------------------------------
+ * Extension: "lpi.gui.offscreen.v1"
+ * ------------------------------------------------------------------------
+ * Plugin renders its editor into an offscreen RGBA8 framebuffer; the host
+ * pulls frames and relays synthetic mouse input. No native window is ever
+ * shown. Obtained via get_extension(instance, LPI_EXT_GUI_OFFSCREEN_V1);
+ * NULL if the plugin has no GUI.
+ *
+ * Threading: every function below must be called from ONE consistent
+ * thread (the "GUI thread") -- the GL context is thread-affine. That same
+ * thread must also be the one calling set_parameter_value (the plugin's
+ * GUI forwards edits through the same single-producer queue). Never call
+ * these from the audio thread.
+ *
+ * v1 scope: one open editor per process, left mouse button only, no
+ * keyboard. open() returns false if an editor is already open anywhere in
+ * the process.
+ */
+#define LPI_EXT_GUI_OFFSCREEN_V1 "lpi.gui.offscreen.v1"
+
+typedef struct {
+    uint32_t logical_width;
+    uint32_t logical_height;
+    uint32_t physical_width;  /* = round(logical * dpi_scale); frames are this size */
+    uint32_t physical_height;
+} lpi_gui_offscreen_info;
+
+enum {
+    LPI_MOUSE_MOVE = 0,
+    LPI_MOUSE_DOWN = 1, /* left button */
+    LPI_MOUSE_UP   = 2  /* left button */
+};
+
+typedef struct lpi_gui_offscreen_v1 {
+    /* dpi_scale <= 0 is treated as 1.0. */
+    bool   (*open)(lpi_plugin* instance, float dpi_scale, lpi_gui_offscreen_info* out_info);
+    void   (*close)(lpi_plugin* instance);
+    /* Renders the current UI state into the offscreen target. Cheap to call
+     * at any rate; the host decides cadence (ambient ~15-20fps plus after input). */
+    bool   (*render)(lpi_plugin* instance);
+    /* Tightly packed RGBA8, top-left origin; buffer_size >= physical_w * physical_h * 4. */
+    bool   (*read_pixels)(lpi_plugin* instance, uint8_t* out_rgba, size_t buffer_size);
+    /* Coordinates are LOGICAL pixels. */
+    void   (*mouse_event)(lpi_plugin* instance, int event_type, float logical_x, float logical_y);
+} lpi_gui_offscreen_v1;
+
+/* ------------------------------------------------------------------------
  * Factory -- the one thing a host looks up by name in the plugin DLL.
  * ------------------------------------------------------------------------ */
 typedef struct {
