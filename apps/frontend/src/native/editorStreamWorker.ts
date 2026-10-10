@@ -5,7 +5,8 @@
 // Each frame is acknowledged as soon as it is decoded, and the Audio Core
 // holds the next frame until then, so frames never queue behind a slow
 // link or decoder; acknowledging before the paint keeps decode and the next
-// render overlapping.
+// render overlapping. 'closed' goes to the main thread when the editor goes
+// away (the Audio Core's CLOSED) or the socket does.
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const HEADER = 64;
@@ -47,9 +48,12 @@ ctx.onmessage = (e: MessageEvent) => {
     ws = new WebSocket(m.url);
     ws.binaryType = 'arraybuffer';
     // No window given: the Audio Core picks the measured best for the compression
-    ws.onopen = () => ws!.send(JSON.stringify({ type: 'START', fps: m.fps, compression: m.compression, acks: true, window: m.window }));
+    ws.onopen = () => ws!.send(JSON.stringify({ type: 'START', editorId: m.editorId, fps: m.fps, compression: m.compression, acks: true, window: m.window }));
     ws.onmessage = (ev) => {
-      if (typeof ev.data === 'string') return;
+      if (typeof ev.data === 'string') {
+        if (ev.data.includes('"CLOSED"')) ctx.postMessage({ type: 'closed' });
+        return;
+      }
       if (busy) latest = { data: ev.data, received: wallMs() };
       else pump(ev.data, wallMs());
     };

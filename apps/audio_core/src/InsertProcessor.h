@@ -50,4 +50,8 @@ public:
     virtual float getParameterValue (int index) = 0;
     virtual juce::String getParameterText (int index) = 0;
     virtual bool setParameterValue (int index, float value) = 0;
+
+    // True if the plugin has an editor GhostDAW can stream to the browser
+    // (an LPI plugin with lpi.gui.offscreen.v1, see editor/LpiEditor.h)
+    virtual bool hasEditor() { return false; }
 };

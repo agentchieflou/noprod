@@ -9,6 +9,7 @@
 #include "Mixer.h"
 #include "PluginHost.h"
 #include "TrackStreams.h"
+#include "editor/EditorStream.h"
 
 // The Ghost DAW is a headless C++ application acting as the Audio Muscle.
 // It connects to the Orchestrator / Sequencer via WebSockets or UDP.
@@ -20,6 +21,7 @@ using namespace juce;
 
 constexpr int audioCoreWebSocketPort = 8082;
 constexpr int trackStreamPort = 8083; // browser tracks' native plugins (TrackStreams.h)
+constexpr int editorStreamPort = 8085; // plugin editors streamed to the browser (editor/EditorStream.h)
 
 class GhostDAWApplication : public JUCEApplication
 {
@@ -51,6 +53,8 @@ public:
         pluginHost = std::make_unique<PluginHost> (mixer, cacheFile);
         pluginHost->describeDevice = [this] { return describeDevice(); };
         pluginHost->takeOutputPeak = [this] { return mixer.takePeak(); };
+        pluginHost->broadcast = [this] (const var& message) { broadcast (message); };
+        pluginHost->editorPort = editorStreamPort;
 
         // 2. Scan for plugins (default VST3 locations plus remembered folders;
         //    plugins already in the cache aren't rescanned).
@@ -93,12 +97,21 @@ public:
         streamServer = std::make_unique<HapWebSocketServer> (trackStreamPort, makeTrackStreamHandlers (*pluginHost));
         streamServer->startThread();
 
+        // 7. Open plugin editors are streamed to the browser from here
+        editorServer = std::make_unique<HapWebSocketServer> (editorStreamPort, makeEditorStreamHandlers ([this] (const var& start)
+        {
+            return pluginHost->makeEditorSource (start["editorId"].toString());
+        }));
+        editorServer->startThread();
+
         std::cout << "Running... Press Ctrl+C to exit." << std::endl;
     }
 
     void shutdown() override
     {
         std::cout << "Ghost DAW shutting down..." << std::endl;
+        pluginHost->closeEditor(); // its streams stop asking for frames
+        editorServer.reset();
         streamServer.reset();
         webSocketServer.reset();
         deviceManager.removeAudioCallback (&mixer);
@@ -160,6 +173,7 @@ private:
     std::unique_ptr<PluginHost> pluginHost;
     std::unique_ptr<HapWebSocketServer> webSocketServer;
     std::unique_ptr<HapWebSocketServer> streamServer;
+    std::unique_ptr<HapWebSocketServer> editorServer;
 };
 
 // This macro generates the main() routine that launches the app.

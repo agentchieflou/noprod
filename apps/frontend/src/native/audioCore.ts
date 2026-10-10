@@ -4,6 +4,8 @@
 // master insert chains of VST3 / AU / LPI plugins; this module mirrors those
 // chains and sends them commands (see apps/audio_core/src/PluginHost.h).
 
+import { hidePluginEditor, showPluginEditor } from './pluginEditor';
+
 export interface NativeParameter {
   index: number;
   id: string;
@@ -26,6 +28,8 @@ export interface NativeInsert {
   bypassed: boolean;
   latencySamples: number;
   parameters: NativeParameter[];
+  hasEditor?: boolean;  // an editor the Audio Core can stream (LPI plug-ins with a GUI)
+  editorOpen?: boolean;
 }
 
 export interface NativePlugin {
@@ -141,6 +145,12 @@ export function handleOrchestratorMessage(msg: any): boolean {
       });
       return true;
     }
+    case 'EDITOR_OPENED':
+      showPluginEditor(msg, () => send({ type: 'CLOSE_EDITOR' }));
+      return true;
+    case 'EDITOR_CLOSED':
+      hidePluginEditor(msg.editorId);
+      return true;
     case 'AUDIO_CORE_ERROR':
       update({ error: msg.message, busy: null });
       return true;
@@ -165,6 +175,8 @@ export function loadNativePlugin(plugin: Pick<NativePlugin, 'path' | 'format'> &
 export const removeNativePlugin = (slotId: string) => send({ type: 'REMOVE_PLUGIN', slotId });
 export const moveNativePlugin = (slotId: string, index: number) => send({ type: 'MOVE_PLUGIN', slotId, index });
 export const setNativeBypass = (slotId: string, bypassed: boolean) => send({ type: 'SET_PLUGIN_BYPASS', slotId, bypassed });
+// The reply, EDITOR_OPENED, shows it (pluginEditor.ts)
+export const openNativeEditor = (slotId: string) => send({ type: 'OPEN_EDITOR', slotId });
 
 // Slider drags produce many changes; send at most one per parameter per frame.
 const pendingParams = new Map<string, { slotId: string; parameterIndex: number; value: number }>();

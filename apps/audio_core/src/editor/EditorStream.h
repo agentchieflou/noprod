@@ -24,8 +24,10 @@
 //   float64 inputClientMs  the browser's timestamp of the input this frame
 //                          answers, or 0 for an ambient frame
 //   (padding to 64 bytes), then the pixels.
-// Text messages from the browser: START { fps?, compression?: 'none'|'deflate', level?, acks?, window? },
+// Text messages from the browser: START { fps?, compression?: 'none'|'deflate', level?, acks?, window?, editorId? },
 // INPUT { kind: 'down'|'move'|'up', x, y, buttons, t }, ACK { frameId }, STOP.
+// To the browser: CLOSED once the editor is gone (or START named none), after
+// which no more frames come.
 //
 // Backpressure: with `acks`, the browser acknowledges each frame once it has
 // decoded it, and no new frame is rendered while `window` frames are still
@@ -34,18 +36,47 @@
 // decoder or link; a window of 2 lets the next frame encode while the
 // browser decodes the last one.
 
-// What gets streamed: a plugin editor (or, for the spike, a synthetic one)
+// What gets streamed: a plugin editor (LpiEditor.h), or the spike's synthetic one
 class FrameSource
 {
 public:
     virtual ~FrameSource() = default;
+    // Frame size in pixels
     virtual int getWidth() const = 0;
     virtual int getHeight() const = 0;
-    // Render thread: draw the current frame into an ARGB image of getWidth() x getHeight()
-    virtual void render (juce::Image& target) = 0;
-    // Connection thread: input in editor pixels. Must be safe against render().
+    // Render thread: draw the current frame as tightly packed RGBA
+    // (getWidth() * getHeight() * 4 bytes, top-left origin). False: no frame.
+    virtual bool render (uint8_t* rgba) = 0;
+    // Connection thread: input in frame pixels. Must be safe against render().
     virtual void mouse (const juce::String& kind, float x, float y, int buttons) = 0;
+    // Any thread: the editor has gone away for good
+    virtual bool isClosed() const { return false; }
 };
+
+// For sources drawn with JUCE: ARGB (premultiplied, BGRA in memory) -> RGBA
+inline void imageToRgba (const juce::Image& image, uint8_t* out)
+{
+    juce::Image::BitmapData pixels (image, juce::Image::BitmapData::readOnly);
+    for (int y = 0; y < image.getHeight(); ++y)
+    {
+        auto* row = pixels.getLinePointer (y);
+        for (int x = 0; x < image.getWidth(); ++x, row += pixels.pixelStride, out += 4)
+        {
+            auto a = row[3];
+            if (a == 255 || a == 0)
+            {
+                out[0] = row[2]; out[1] = row[1]; out[2] = row[0];
+            }
+            else
+            {
+                out[0] = static_cast<uint8_t> (row[2] * 255 / a);
+                out[1] = static_cast<uint8_t> (row[1] * 255 / a);
+                out[2] = static_cast<uint8_t> (row[0] * 255 / a);
+            }
+            out[3] = a;
+        }
+    }
+}
 
 class EditorStreamer : private juce::Thread
 {
@@ -64,8 +95,7 @@ public:
     };
 
     EditorStreamer (HapWebSocketServer::ConnectionPtr connectionToSendTo, std::unique_ptr<FrameSource> frameSource, Settings streamSettings)
-        : juce::Thread ("EditorStreamer"), connection (std::move (connectionToSendTo)), source (std::move (frameSource)), settings (streamSettings),
-          image (juce::Image::ARGB, source->getWidth(), source->getHeight(), true)
+        : juce::Thread ("EditorStreamer"), connection (std::move (connectionToSendTo)), source (std::move (frameSource)), settings (streamSettings)
     {
         startThread();
     }
@@ -106,6 +136,15 @@ private:
 
         while (! threadShouldExit())
         {
+            if (source->isClosed())
+            {
+                if (! closedSent)
+                    connection->sendText (R"({"type":"CLOSED"})");
+                closedSent = true;
+                wait (200);
+                continue;
+            }
+
             auto now = juce::Time::getMillisecondCounterHiRes();
             auto inputPending = pendingInputTime.load() != 0.0;
             auto due = now >= nextAmbient;
@@ -138,36 +177,12 @@ private:
     {
         auto inputTime = pendingInputTime.exchange (0.0);
 
-        auto t0 = juce::Time::getMillisecondCounterHiRes();
-        source->render (image);
-        auto t1 = juce::Time::getMillisecondCounterHiRes();
-
-        // ARGB (premultiplied, BGRA in memory) -> RGBA as the browser's ImageData wants it
-        auto width = image.getWidth(), height = image.getHeight();
+        auto width = source->getWidth(), height = source->getHeight();
         rgba.resize (static_cast<size_t> (width * height * 4));
-        {
-            juce::Image::BitmapData pixels (image, juce::Image::BitmapData::readOnly);
-            auto* out = rgba.data();
-            for (int y = 0; y < height; ++y)
-            {
-                auto* row = pixels.getLinePointer (y);
-                for (int x = 0; x < width; ++x, row += pixels.pixelStride, out += 4)
-                {
-                    auto a = row[3];
-                    if (a == 255 || a == 0)
-                    {
-                        out[0] = row[2]; out[1] = row[1]; out[2] = row[0];
-                    }
-                    else
-                    {
-                        out[0] = static_cast<uint8_t> (row[2] * 255 / a);
-                        out[1] = static_cast<uint8_t> (row[1] * 255 / a);
-                        out[2] = static_cast<uint8_t> (row[0] * 255 / a);
-                    }
-                    out[3] = a;
-                }
-            }
-        }
+        auto t0 = juce::Time::getMillisecondCounterHiRes();
+        if (! source->render (rgba.data()))
+            return;
+        auto t1 = juce::Time::getMillisecondCounterHiRes();
 
         message.resize (headerBytes);
         if (settings.compression == Compression::deflate)
@@ -200,17 +215,18 @@ private:
     HapWebSocketServer::ConnectionPtr connection;
     std::unique_ptr<FrameSource> source;
     Settings settings;
-    juce::Image image;
     std::vector<uint8_t> rgba, message;
     uint32_t frameId = 0;
     double lastSendTime = 0.0;
+    bool closedSent = false;
     std::atomic<double> pendingInputTime { 0.0 };
     std::atomic<int64_t> lastAcknowledged { -1 };
 };
 
 // Server handlers: START creates the connection's streamer around a fresh
-// FrameSource from `makeSource`, INPUT goes to it, STOP or closing ends it.
-inline HapWebSocketServer::Handlers makeEditorStreamHandlers (std::function<std::unique_ptr<FrameSource>()> makeSource)
+// FrameSource from `makeSource` (given the START message; nullptr: there is
+// no such editor), INPUT goes to it, STOP or closing ends it.
+inline HapWebSocketServer::Handlers makeEditorStreamHandlers (std::function<std::unique_ptr<FrameSource> (const juce::var& start)> makeSource)
 {
     using ConnectionPtr = HapWebSocketServer::ConnectionPtr;
     HapWebSocketServer::Handlers handlers;
@@ -231,7 +247,13 @@ inline HapWebSocketServer::Handlers makeEditorStreamHandlers (std::function<std:
             auto defaultWindow = settings.compression == EditorStreamer::Compression::none ? 1 : 2;
             settings.window = juce::jlimit (1, 8, static_cast<int> (message.getProperty ("window", defaultWindow)));
             connection->context.reset(); // stop any previous streamer first
-            connection->context = std::make_shared<EditorStreamer> (connection, makeSource(), settings);
+            auto source = makeSource (message);
+            if (source == nullptr)
+            {
+                connection->sendText (R"({"type":"CLOSED"})");
+                return;
+            }
+            connection->context = std::make_shared<EditorStreamer> (connection, std::move (source), settings);
         }
         else if (type == "INPUT")
         {

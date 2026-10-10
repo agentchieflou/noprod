@@ -106,7 +106,14 @@ ctx.onmessage = (e: MessageEvent) => {
     if (m.type === 'UNLOAD') s.load = null;
     if (m.type === 'SET_PARAM' && s.load && m.parameterId) s.load.parameters![m.parameterId] = m.value;
     if (s.ws && s.ws.readyState === WebSocket.OPEN) s.ws.send(JSON.stringify(msg.message));
-    else if (msg.message.type !== 'LOAD') s.queue.push(msg.message); // LOAD is replayed on connect anyway
+    // LOAD is replayed on connect anyway; an editor asked for while offline isn't opened later
+    else if (m.type !== 'LOAD' && m.type !== 'OPEN_EDITOR' && m.type !== 'CLOSE_EDITOR') s.queue.push(msg.message);
+    return;
+  }
+
+  // A value the plug-in's editor set: part of the plug-in's state from now on
+  if (msg.type === 'remember') {
+    if (s.load) s.load.parameters![msg.parameterId] = msg.value;
     return;
   }
 

@@ -1,8 +1,8 @@
 import { useState, useSyncExternalStore } from 'react';
-import { ArrowDown, ArrowUp, Plus, Power, RefreshCw, Trash2 } from 'lucide-react';
+import { AppWindow, ArrowDown, ArrowUp, Plus, Power, RefreshCw, Trash2 } from 'lucide-react';
 import {
   subscribeAudioCore, getAudioCore, refreshAudioCore, scanNativePlugins, loadNativePlugin,
-  removeNativePlugin, moveNativePlugin, setNativeBypass, setNativeParameter, busInserts,
+  removeNativePlugin, moveNativePlugin, setNativeBypass, setNativeParameter, openNativeEditor, busInserts,
   type NativeInsert, type NativeBusId
 } from '../native/audioCore';
 
@@ -108,6 +108,10 @@ function InsertCard({ insert, index, count }: { insert: NativeInsert; index: num
         <span className="native-insert-name" title={insert.path}>{insert.name}</span>
         <span className="native-format">{insert.format}</span>
         {insert.latencySamples > 0 && <span className="native-vendor">{insert.latencySamples} smp</span>}
+        {insert.hasEditor && (
+          <button className={`btn-icon ${insert.editorOpen ? 'native-on' : ''}`} title="Open the plug-in's editor"
+            onClick={() => openNativeEditor(insert.slotId)}><AppWindow size={11} /></button>
+        )}
         <button className="btn-icon" title="Move up" disabled={index === 0} onClick={() => moveNativePlugin(insert.slotId, index - 1)}><ArrowUp size={11} /></button>
         <button className="btn-icon" title="Move down" disabled={index === count - 1} onClick={() => moveNativePlugin(insert.slotId, index + 1)}><ArrowDown size={11} /></button>
         <button className="btn-icon" title="Remove" onClick={() => removeNativePlugin(insert.slotId)}><Trash2 size={11} /></button>

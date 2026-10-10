@@ -1,10 +1,10 @@
 import { useSyncExternalStore, type ReactNode } from 'react';
-import { Trash2 } from 'lucide-react';
+import { AppWindow, Trash2 } from 'lucide-react';
 import { DeviceExtra } from './DeviceVisuals';
 import ParamControl from './ParamControl';
 import { getParamSpecs, resolvedParameters, type ParamValue } from '../audio/devices';
 import { audioContext } from '../audio/engine';
-import { getNativeDeviceState, isNativeDevice, subscribeNativeDevices, type NativeDeviceState } from '../native/trackBridge';
+import { getNativeDeviceState, isNativeDevice, openNativeDeviceEditor, subscribeNativeDevices, type NativeDeviceState } from '../native/trackBridge';
 
 interface DeviceCardProps {
   device: any;
@@ -24,7 +24,12 @@ export default function DeviceCard({ device, onChange, onRemove, className = '',
       <div className={`device-card device-native ${className}`}>
         <div className="device-card-header">
           <span title={device.pluginPath}>{device.name}</span>
-          <button className="btn-icon" title="Remove device" onClick={onRemove}><Trash2 size={12} /></button>
+          <span className="device-header-actions">
+            {native?.insert?.hasEditor && native.connected && (
+              <button className="btn-icon" title="Open the plug-in's editor" onClick={() => openNativeDeviceEditor(device.id)}><AppWindow size={12} /></button>
+            )}
+            <button className="btn-icon" title="Remove device" onClick={onRemove}><Trash2 size={12} /></button>
+          </span>
         </div>
         <NativeStatus device={device} state={native} />
         <div className="device-card-params">

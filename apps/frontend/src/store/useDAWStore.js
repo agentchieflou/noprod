@@ -77,6 +77,34 @@ const mapStripPlugins = (state, stripId, fn) => {
 const mapRack = (state, stripId, rackId, fn) =>
   mapStripPlugins(state, stripId, plugins => plugins.map(p => p.id === rackId ? fn(p) : p));
 
+// Applies `fn` to the device with this id, wherever it sits (any strip, or
+// inside a rack). Unchanged lists and strips keep their identity.
+const mapDeviceAnywhere = (state, deviceId, fn) => {
+  const inList = (plugins) => {
+    let changed = false;
+    const next = plugins.map(p => {
+      if (p.id === deviceId) { changed = true; return fn(p); }
+      if (p.type === 'rack') {
+        const devices = inList(p.devices);
+        if (devices !== p.devices) { changed = true; return { ...p, devices }; }
+      }
+      return p;
+    });
+    return changed ? next : plugins;
+  };
+  const inStrips = (strips) => {
+    let changed = false;
+    const next = strips.map(strip => {
+      const plugins = inList(strip.plugins || []);
+      if (plugins === (strip.plugins || [])) return strip;
+      changed = true;
+      return { ...strip, plugins };
+    });
+    return changed ? next : strips;
+  };
+  return { tracks: inStrips(state.tracks), returns: inStrips(state.returns), masterPlugins: inList(state.masterPlugins) };
+};
+
 // Return tracks: each has its own device chain; every track has a send
 // level per return (track.sends[returnId], 0..1, post-fader).
 export const RETURN_LETTERS = 'ABCDEFGHIJKL';
@@ -671,6 +699,12 @@ export const useDAWStore = create((set, get) => ({
       ...p,
       parameters: { ...p.parameters, [paramName]: val }
     } : p))
+  ); },
+
+  // A hosted plug-in's own editor changed a parameter (#44 B6): the device
+  // keeps it, so it is saved and undoable like a change made here
+  setDeviceParameterFromPlugin: (deviceId, paramName, val) => { get().record(`device-param-${deviceId}`); set((state) =>
+    mapDeviceAnywhere(state, deviceId, p => ({ ...p, parameters: { ...p.parameters, [paramName]: val } }))
   ); },
 
   // Audio Effect Rack Actions

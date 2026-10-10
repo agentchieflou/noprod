@@ -19,7 +19,7 @@
 class SyntheticEditor : public FrameSource
 {
 public:
-    SyntheticEditor (int w, int h) : width (w), height (h) {}
+    SyntheticEditor (int w, int h) : width (w), height (h), image (juce::Image::ARGB, w, h, true, juce::SoftwareImageType()) {}
 
     int getWidth() const override { return width; }
     int getHeight() const override { return height; }
@@ -36,10 +36,18 @@ public:
         mouseY = y;
     }
 
-    void render (juce::Image& target) override
+    bool render (uint8_t* rgba) override
     {
-        juce::Graphics g (target);
-        auto bounds = target.getBounds().toFloat();
+        draw();
+        imageToRgba (image, rgba);
+        return true;
+    }
+
+private:
+    void draw()
+    {
+        juce::Graphics g (image);
+        auto bounds = image.getBounds().toFloat();
         auto t = juce::Time::getMillisecondCounterHiRes() / 1000.0;
 
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xff1d2330), 0, 0, juce::Colour (0xff0d1017), 0, bounds.getHeight(), false));
@@ -94,8 +102,8 @@ public:
         g.drawEllipse (mouseX.load() - 6, mouseY.load() - 6, 12, 12, 2.0f);
     }
 
-private:
     int width, height;
+    juce::Image image;
     std::atomic<float> dragValue { 0.3f }, dragFromY { -1.0f }, mouseX { -20.0f }, mouseY { -20.0f };
 };
 
@@ -121,7 +129,7 @@ public:
         w = juce::jlimit (64, 4096, w);
         h = juce::jlimit (64, 4096, h);
 
-        server = std::make_unique<HapWebSocketServer> (8084, makeEditorStreamHandlers ([w, h] { return std::make_unique<SyntheticEditor> (w, h); }));
+        server = std::make_unique<HapWebSocketServer> (8084, makeEditorStreamHandlers ([w, h] (const juce::var&) { return std::make_unique<SyntheticEditor> (w, h); }));
         server->startThread();
         std::cout << "Editor stream spike: " << w << "x" << h << " on ws://localhost:8084" << std::endl;
     }

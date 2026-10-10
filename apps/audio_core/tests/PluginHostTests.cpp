@@ -1,11 +1,13 @@
 // Plugin-hosting tests for the Audio Core: LPI loading (B5a), the master
 // insert chain and its lock-free publishing (B5b), the JSON command path
-// (B5c), and VST3 hosting through JUCE (#26). Exits non-zero on failure.
+// (B5c), VST3 hosting through JUCE (#26), and LPI plugin editors (#44 B6c).
+// Exits non-zero on failure.
 
 #include <JuceHeader.h>
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <thread>
 
@@ -16,6 +18,7 @@
 #include "Mixer.h"
 #include "PluginHost.h"
 #include "TrackStreams.h"
+#include "editor/LpiEditor.h"
 
 static int checks = 0, failures = 0;
 
@@ -432,7 +435,8 @@ static void testPluginHost()
             if (p["format"].toString() == "LPI") ++lpiFound;
             if (p["format"].toString() == "VST3" && p["name"].toString() == "NoProd Test Gain") ++vst3Found;
         }
-        CHECK (lpiFound == 1); // the wrong-ABI and no-export variants are not listed
+        CHECK (lpiFound == 2); // the gain and the GUI test plugins; the wrong-ABI and no-export variants are not listed
+        CHECK (! findByName (available, "NoProd Test GUI").isVoid());
         CHECK (vst3Found == 1);
         CHECK (state["scanFolders"].size() == 2);
 
@@ -446,7 +450,7 @@ static void testPluginHost()
     PluginHost reloaded (otherMixer, cache);
     auto available = reloaded.getState()["availablePlugins"];
     CHECK (! findByName (available, "NoProd Test Gain").isVoid());
-    CHECK (available.size() == 2);
+    CHECK (available.size() == 3);
     CHECK (reloaded.getState()["scanFolders"].size() == 2);
     cache.deleteFile();
 }
@@ -756,6 +760,251 @@ static void testTrackStreams()
     cache.deleteFile();
 }
 
+// Runs `work` on another thread while this (the message) thread dispatches
+// messages, the way an editor stream's threads run against GhostDAW's
+static void offMessageThread (std::function<void()> work)
+{
+    std::atomic<bool> done { false };
+    std::thread thread ([&] { work(); done = true; });
+    while (! done.load())
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (2);
+    thread.join();
+}
+
+// One RGBA pixel of a frame, as 0xRRGGBB
+static uint32_t pixelAt (const std::vector<uint8_t>& rgba, int width, int x, int y)
+{
+    auto* p = &rgba[(static_cast<size_t> (y) * static_cast<size_t> (width) + static_cast<size_t> (x)) * 4];
+    return (static_cast<uint32_t> (p[0]) << 16) | (static_cast<uint32_t> (p[1]) << 8) | p[2];
+}
+
+static constexpr uint32_t editorBackground = 0x181c28, editorBar = 0x3b82f6, editorMarker = 0xffffff;
+
+// The test plugin's editor (tests/plugins/lpi_test_gui.cpp) is 200x150
+// logical pixels: a bar as tall as the gain (full height at 2.0), and a
+// white square where the mouse last was. Dragging up 1 logical pixel adds
+// 0.02 to the gain.
+static void testEditors()
+{
+    section ("Editors: an LPI plugin's off-screen editor");
+    juce::String error;
+    auto guiLibrary = LpiLibrary::open (juce::File (LPI_TEST_GUI_PATH), error);
+    auto gainLibrary = LpiLibrary::open (juce::File (LPI_TEST_GAIN_PATH), error);
+    CHECK (guiLibrary != nullptr && gainLibrary != nullptr);
+    if (guiLibrary == nullptr || gainLibrary == nullptr)
+        return;
+
+    {
+        LpiInsert plain (gainLibrary);
+        CHECK (plain.prepare (rate, 256, error));
+        CHECK (! plain.hasEditor());
+        lpi_gui_offscreen_info info;
+        CHECK (! plain.openEditor (1.0f, info, error));
+
+        LpiInsert withGui (guiLibrary), other (guiLibrary);
+        CHECK (withGui.prepare (rate, 256, error) && other.prepare (rate, 256, error));
+        CHECK (withGui.hasEditor());
+        CHECK (withGui.openEditor (1.0f, info, error));
+        CHECK (info.logical_width == 200 && info.logical_height == 150 && info.physical_width == 200 && info.physical_height == 150);
+        CHECK (! withGui.openEditor (1.0f, info, error));  // already open
+        CHECK (! other.openEditor (1.0f, info, error));    // one per process
+
+        std::vector<uint8_t> frame (200 * 150 * 4);
+        CHECK (withGui.renderEditor (frame.data(), frame.size()));
+        CHECK (pixelAt (frame, 200, 5, 5) == editorBackground);       // top-left origin
+        CHECK (pixelAt (frame, 200, 100, 140) == editorBar);          // gain 1.0: the bottom half
+        CHECK (pixelAt (frame, 200, 100, 60) == editorBackground);
+        CHECK (! withGui.renderEditor (frame.data(), frame.size() - 1)); // buffer too small
+
+        // A drag in the editor changes the parameter like set_parameter_value would
+        withGui.editorMouse (LPI_MOUSE_DOWN, 100, 100);
+        withGui.editorMouse (LPI_MOUSE_MOVE, 100, 90);
+        withGui.editorMouse (LPI_MOUSE_UP, 100, 90);
+        auto changed = withGui.takeParameterChanges();
+        CHECK (changed.size() == 1 && changed[0] == 0);
+        CHECK_NEAR (withGui.getParameterValue (0), 1.2f, 1e-5f);
+        CHECK (withGui.takeParameterChanges().empty());
+
+        // ...while this host's own writes aren't reported back as changes
+        withGui.setParameterValue (0, 0.25f);
+        CHECK (withGui.takeParameterChanges().empty());
+        CHECK_NEAR (withGui.getParameterValue (0), 0.25f, 1e-6f);
+
+        // Re-preparing recreates the instance: the editor closes, and the
+        // parameter values carry over
+        auto closedByPlugin = false;
+        withGui.onEditorClosed = [&] { closedByPlugin = true; };
+        CHECK (withGui.prepare (44100.0, 256, error));
+        CHECK (closedByPlugin && ! withGui.isEditorOpen());
+        CHECK_NEAR (withGui.getParameterValue (0), 0.25f, 1e-6f);
+        CHECK (other.openEditor (1.0f, info, error)); // the process-wide slot is free again
+
+        // A busy message thread: the frame times out, and the next one isn't
+        // queued behind it (it fails straight away) until the first has run
+        auto session = std::make_shared<EditorSession> ("editor-test", "slot-test", other, info);
+        LpiEditorSource busySource (session, 50);
+        auto first = true, second = true;
+        double secondMs = 0;
+        std::thread renderer ([&]
+        {
+            first = busySource.render (frame.data());
+            auto t0 = juce::Time::getMillisecondCounterHiRes();
+            second = busySource.render (frame.data());
+            secondMs = juce::Time::getMillisecondCounterHiRes() - t0;
+        });
+        renderer.join(); // this (the message) thread dispatched nothing meanwhile
+        CHECK (! first && ! second && secondMs < 25.0);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        offMessageThread ([&] { first = busySource.render (frame.data()); });
+        CHECK (first && pixelAt (frame, 200, 100, 140) == editorBar);
+        session->close();
+        CHECK (! other.isEditorOpen() && busySource.isClosed());
+    }
+
+    section ("Editors: OPEN_EDITOR / CLOSE_EDITOR and the stream source");
+    auto cache = juce::File::createTempFile (".xml");
+    HapAudioEngine engine;
+    Mixer mixer (engine);
+    {
+        PluginHost host (mixer, cache);
+        juce::Array<juce::var> broadcasts;
+        host.broadcast = [&] (const juce::var& m) { broadcasts.add (m); };
+
+        auto state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GUI_PATH } }));
+        state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GAIN_PATH } }));
+        auto guiSlot = masterInserts (state)[0], gainSlot = masterInserts (state)[1];
+        CHECK (static_cast<bool> (guiSlot["hasEditor"]) && ! static_cast<bool> (guiSlot["editorOpen"]));
+        CHECK (! static_cast<bool> (gainSlot["hasEditor"]));
+        auto guiId = guiSlot["slotId"].toString();
+
+        auto refused = host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", gainSlot["slotId"] } }));
+        CHECK (refused["type"].toString() == "AUDIO_CORE_ERROR");
+        refused = host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", "insert-999" } }));
+        CHECK (refused["type"].toString() == "AUDIO_CORE_ERROR");
+
+        auto opened = host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", guiId } }));
+        CHECK (opened["type"].toString() == "EDITOR_OPENED");
+        CHECK (opened["slotId"].toString() == guiId && opened["name"].toString() == "NoProd Test GUI");
+        CHECK (static_cast<int> (opened["width"]) == 200 && static_cast<int> (opened["height"]) == 150);
+        CHECK (static_cast<int> (opened["port"]) == 8085);
+        auto editorId = opened["editorId"].toString();
+        CHECK (static_cast<bool> (masterInserts (host.getState())[0]["editorOpen"]));
+        // Asking again reports the same editor
+        CHECK (host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", guiId } }))["editorId"].toString() == editorId);
+
+        CHECK (host.makeEditorSource ("editor-999") == nullptr);
+        auto source = host.makeEditorSource (editorId);
+        CHECK (source != nullptr);
+        if (source == nullptr)
+            return;
+        CHECK (source->getWidth() == 200 && source->getHeight() == 150 && ! source->isClosed());
+
+        // The stream renders and sends mouse input from its own threads;
+        // the plugin only ever sees the message thread
+        std::vector<uint8_t> frame (200 * 150 * 4);
+        auto rendered = false;
+        offMessageThread ([&]
+        {
+            source->mouse ("down", 100, 100, 1);
+            source->mouse ("move", 100, 80, 1); // up 20 px: gain 1.0 -> 1.4
+            source->mouse ("up", 100, 80, 0);
+            source->mouse ("down", 100, 80, 2); // right button: LPI v1 ignores it
+            source->mouse ("move", 100, 30, 2);
+            rendered = source->render (frame.data());
+        });
+        CHECK (rendered);
+        CHECK (pixelAt (frame, 200, 100, 150 - 100) == editorBar);           // the bar is 105 px tall now
+        CHECK (pixelAt (frame, 200, 100, 150 - 110) == editorBackground);
+        CHECK (pixelAt (frame, 200, 100, 30) == editorMarker);              // the last mouse position
+
+        // The editor's change is announced, and the host's state follows it
+        CHECK (broadcasts.size() == 1);
+        CHECK (broadcasts[0]["type"].toString() == "PLUGIN_PARAMETER_CHANGED" && broadcasts[0]["slotId"].toString() == guiId);
+        CHECK (broadcasts[0]["source"].toString() == "editor");
+        CHECK (static_cast<int> (broadcasts[0]["parameterIndex"]) == 0);
+        CHECK_NEAR (static_cast<float> (broadcasts[0]["value"]), 1.4f, 1e-5f);
+        CHECK_NEAR (static_cast<float> (masterInserts (host.getState())[0]["parameters"][0]["value"]), 1.4f, 1e-5f);
+
+        auto signal = makeSignal (256);
+        mixer.getMasterChain().audioStarted (rate);
+        CHECK (errorAgainst (runChain (mixer.getMasterChain(), signal), signal, 1.4f) < 1e-5f);
+
+        // lpi.h: GUI calls and parameter writes on one thread only
+        auto* plugin = dynamic_cast<LpiInsert*> (mixer.getMasterChain().getSlots()[0].processor.get());
+        plugin->takeParameterChanges();
+        CHECK (plugin->getParameterValue (1) == 0.0f); // guiThreadViolations
+
+        section ("Editors: closing");
+        auto closed = host.handleCommand (command ({ { "type", "CLOSE_EDITOR" } }));
+        CHECK (closed["type"].toString() == "EDITOR_CLOSED" && closed["editorId"].toString() == editorId);
+        CHECK (source->isClosed() && host.makeEditorSource (editorId) == nullptr);
+        offMessageThread ([&] { rendered = source->render (frame.data()); });
+        CHECK (! rendered);
+        source.reset();
+
+        // Removing the plugin closes its editor
+        opened = host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", guiId }, { "scale", 2.0 } }));
+        CHECK (static_cast<int> (opened["width"]) == 400 && static_cast<int> (opened["height"]) == 300);
+        source = host.makeEditorSource (opened["editorId"].toString());
+        CHECK (source != nullptr);
+        host.handleCommand (command ({ { "type", "REMOVE_PLUGIN" }, { "slotId", guiId } }));
+        CHECK (source->isClosed());
+        source.reset();
+
+        // So does re-preparing it for a new sample rate; opening another closes the last
+        host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GUI_PATH }, { "bus", 3 } }));
+        state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GUI_PATH }, { "bus", 4 } }));
+        auto first = busInserts (state, 3)[0]["slotId"].toString(), second = busInserts (state, 4)[0]["slotId"].toString();
+        opened = host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", first } }));
+        source = host.makeEditorSource (opened["editorId"].toString());
+        CHECK (source != nullptr);
+        mixer.getMasterChain().audioStopped();
+        host.setAudioFormat (96000.0, 512);
+        CHECK (source->isClosed());
+        CHECK (! static_cast<bool> (busInserts (host.getState(), 3)[0]["editorOpen"]));
+        opened = host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", first } }));
+        source = host.makeEditorSource (opened["editorId"].toString());
+        opened = host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", second } }));
+        CHECK (opened["type"].toString() == "EDITOR_OPENED" && opened["slotId"].toString() == second);
+        CHECK (source->isClosed());
+        source.reset();
+
+        section ("Editors: a track stream's plugin");
+        auto stream = std::make_shared<TrackStream>();
+        stream->id = "device-9";
+        juce::StringArray errors;
+        stream->chain.prepare (stream->sampleRate, stream->maxBlockSize, errors);
+        juce::Array<juce::var> sent;
+        stream->sendToBrowser = [&] (const juce::var& m) { sent.add (m); };
+        host.registerStream (stream);
+        host.handleStreamCommand (*stream, command ({ { "type", "LOAD" }, { "path", LPI_TEST_GUI_PATH } }));
+        opened = host.handleStreamCommand (*stream, command ({ { "type", "OPEN_EDITOR" } }));
+        CHECK (opened["type"].toString() == "EDITOR_OPENED");
+        source = host.makeEditorSource (opened["editorId"].toString());
+        CHECK (source != nullptr && host.handleStreamCommand (*stream, command ({ { "type", "GET_STATE" } }))["insert"]["editorOpen"]);
+        broadcasts.clear();
+        offMessageThread ([&]
+        {
+            source->mouse ("down", 10, 100, 1);
+            source->mouse ("move", 10, 125, 1); // down 25 px: 1.0 -> 0.5
+            rendered = source->render (frame.data());
+        });
+        CHECK (rendered && sent.size() == 1 && broadcasts.isEmpty()); // to the stream's device, not everyone
+        CHECK (sent[0]["type"].toString() == "PLUGIN_PARAMETER_CHANGED");
+        CHECK_NEAR (static_cast<float> (sent[0]["value"]), 0.5f, 1e-5f);
+        // A stream that closes mid-drag lets go of the button
+        source.reset();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        auto* streamPlugin = dynamic_cast<LpiInsert*> (stream->chain.getSlots()[0].processor.get());
+        streamPlugin->editorMouse (LPI_MOUSE_MOVE, 10, 0);
+        CHECK (streamPlugin->takeParameterChanges().empty());
+        host.closeStream (stream);
+        CHECK (host.handleCommand (command ({ { "type", "CLOSE_EDITOR" } }))["editorId"].isVoid()); // already closed
+        host.clearAllInserts();
+    }
+    cache.deleteFile();
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juce; // this thread is the message thread
@@ -769,6 +1018,7 @@ int main()
     testTrackBuses();
     testMixerConcurrency();
     testTrackStreams();
+    testEditors();
 
     std::cout << (failures == 0 ? "PASS" : "FAIL") << ": " << (checks - failures) << "/" << checks << " checks" << std::endl;
     return failures == 0 ? 0 : 1;

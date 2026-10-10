@@ -38,7 +38,8 @@ export interface SetVstParameterEvent {
 
 // ---- Native plugin hosting (Audio Core insert chains; apps/audio_core/src/PluginHost.h)
 // Frontend -> Orchestrator -> Audio Core. Every command except the two
-// parameter ones is answered with AUDIO_CORE_STATE (or AUDIO_CORE_ERROR).
+// parameter ones and the editor ones is answered with AUDIO_CORE_STATE (or
+// AUDIO_CORE_ERROR).
 
 export type PluginFormat = 'VST3' | 'AudioUnit' | 'LPI';
 
@@ -68,7 +69,24 @@ export interface NativePluginParameter {
 export interface NativeInsertSlot {
   slotId: string; name: string; format: PluginFormat; path: string;
   bypassed: boolean; latencySamples: number; parameters: NativePluginParameter[];
+  hasEditor: boolean;  // an LPI plug-in with an editor the browser can show
+  editorOpen: boolean;
 }
+
+// Plugin editors (#44 B6): OPEN_EDITOR opens one in the Audio Core, which
+// then streams it from ws://localhost:<port> (apps/audio_core/src/editor/EditorStream.h:
+// send START { editorId }; binary frames come back, CLOSED when it goes away).
+// One editor is open at a time.
+export interface OpenEditorCommand { type: 'OPEN_EDITOR'; slotId: string; scale?: number }
+export interface CloseEditorCommand { type: 'CLOSE_EDITOR' }
+export interface EditorOpenedEvent {
+  type: 'EDITOR_OPENED';
+  editorId: string; slotId: string; name: string;
+  port: number;
+  width: number; height: number; // frame size in pixels
+  scale: number;                 // frame pixels per CSS pixel
+}
+export interface EditorClosedEvent { type: 'EDITOR_CLOSED'; editorId?: string; slotId?: string }
 
 export interface AudioCoreStateEvent {
   type: 'AUDIO_CORE_STATE';
@@ -86,6 +104,7 @@ export interface AudioCoreStateEvent {
 export interface PluginParameterChangedEvent {
   type: 'PLUGIN_PARAMETER_CHANGED';
   slotId: string; parameterIndex: number; value: number; text: string;
+  source?: 'editor'; // changed in the plug-in's own editor, not an answer to a SET
 }
 
 export interface AudioCoreErrorEvent { type: 'AUDIO_CORE_ERROR'; message: string; request: string }
@@ -102,18 +121,23 @@ export type TrackStreamCommand =
   | { type: 'LOAD'; path: string; format?: PluginFormat; pluginId?: string; parameters?: Record<string, number> }
   | { type: 'UNLOAD' }
   | { type: 'SET_PARAM'; parameterId?: string; parameterIndex?: number; value: number }
-  | { type: 'GET_STATE' };
+  | { type: 'GET_STATE' }
+  | { type: 'OPEN_EDITOR'; scale?: number }
+  | CloseEditorCommand;
 
 export type TrackStreamEvent =
   | { type: 'STREAM_OPENED' }
   | { type: 'STREAM_STATE'; streamId: string; sampleRate: number; maxBlockSize: number; insert: NativeInsertSlot | null }
   | PluginParameterChangedEvent
+  | EditorOpenedEvent | EditorClosedEvent
   | AudioCoreErrorEvent;
 
 export type AudioCoreCommand =
   | GetAudioCoreStateCommand | ScanPluginsCommand | LoadPluginCommand | RemovePluginCommand
-  | MovePluginCommand | SetPluginBypassCommand | SetPluginParameterCommand | SetVstParameterEvent;
+  | MovePluginCommand | SetPluginBypassCommand | SetPluginParameterCommand | SetVstParameterEvent
+  | OpenEditorCommand | CloseEditorCommand;
 
-export type AudioCoreEvent = AudioCoreStateEvent | PluginParameterChangedEvent | AudioCoreErrorEvent | AudioCoreStatusEvent;
+export type AudioCoreEvent = AudioCoreStateEvent | PluginParameterChangedEvent | EditorOpenedEvent | EditorClosedEvent
+  | AudioCoreErrorEvent | AudioCoreStatusEvent;
 
 export type IpcMessage = HapEvent | EvalCommand | DictationCommand | AudioCoreCommand | AudioCoreEvent;

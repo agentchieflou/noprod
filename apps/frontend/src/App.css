@@ -2228,3 +2228,40 @@ body {
 .native-device-status { font-style: normal; color: var(--accent-green); }
 .native-device-status.warn { color: #eab308; }
 .native-device-status.error { color: var(--accent-red); }
+
+/* Plug-in editor streamed from the Audio Core (#44 B6, PluginEditorWindow) */
+.plugin-editor-window {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 32px);
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.plugin-editor-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  background-color: var(--bg-track);
+  border-bottom: 1px solid var(--border-color);
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+.plugin-editor-title { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-editor-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  touch-action: none;
+  cursor: default;
+}
+.device-card-header .device-header-actions { display: flex; gap: 2px; }
