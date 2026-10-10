@@ -2,12 +2,19 @@
 
 export interface HapEvent {
   type: 'HAP_STREAM';
+  cps?: number;          // cycles per second the pattern set (Strudel's default is 0.5)
+  code?: string;         // the evaluated Strudel code
   haps: Array<{
-    time: number;        // Context time in seconds
-    note: string;        // E.g. 'C4'
-    duration: number;    // Duration in seconds
+    time: number;        // Start, in cycles (one cycle is one bar)
+    note: string;        // The note, or else the sound name (e.g. 'c3', 'bd')
+    duration: number;    // Length, in cycles
     sourceCode: string; // The strudel pattern snippet
     engine?: string;
+    s?: string;          // Sound name (library sounds: packages/sound/src/library/strudel.ts)
+    pitch?: string | number; // The note value ('c3', 60), if it has one
+    bank?: string;       // Drum machine (e.g. 'RolandTR909')
+    gain?: number;
+    velocity?: number;
     
     // New fields for VST support
     vstPlugin?: string; // Optional: target VST name (e.g. "AutoTune")

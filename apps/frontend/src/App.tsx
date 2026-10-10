@@ -17,6 +17,7 @@ import { getFile } from './browser/library';
 import { createLibraryInstrument, soundAsBuffer } from './audio/library';
 import { startLibraryWarmup } from './audio/libraryWarmup';
 import { findAnySound, loadUserSounds } from './audio/userSounds';
+import { applyDictation, type DictationResult } from './audio/dictation';
 import SoundDesigner from './components/SoundDesigner';
 import type { SoundRecipe } from '@noprod/sound';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
@@ -184,6 +185,8 @@ function App() {
   const [dictationStatus, setDictationStatus] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
   const [dictationCode, setDictationCode] = useState<string | null>(null);
   const [dictationError, setDictationError] = useState<string | null>(null);
+  const [dictationResult, setDictationResult] = useState<DictationResult | null>(null);
+  const awaitingHaps = useRef(false); // only the window that dictated makes tracks from the result
 
   useEffect(() => {
     const ws = new WebSocket(ORCHESTRATOR_WS_URL);
@@ -199,7 +202,13 @@ function App() {
       if (msg.type === 'GENERATED') {
         setDictationCode(msg.code);
         setDictationStatus('done');
+      } else if (msg.type === 'HAP_STREAM') {
+        // The evaluated pattern: its parts become tracks playing library sounds
+        if (!awaitingHaps.current) return;
+        awaitingHaps.current = false;
+        setDictationResult(applyDictation(useDAWStore, msg));
       } else if (msg.type === 'ERROR') {
+        awaitingHaps.current = false;
         setDictationError(msg.message);
         setDictationStatus('error');
       }
@@ -215,6 +224,8 @@ function App() {
     setDictationStatus('sending');
     setDictationError(null);
     setDictationCode(null);
+    setDictationResult(null);
+    awaitingHaps.current = true;
     ws.send(JSON.stringify({ type: 'DICTATION', text: dictationInput.trim() }));
   };
 
@@ -1460,7 +1471,8 @@ function App() {
               <h5>AI Dictation</h5>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                 Describe a beat or melody in the box at the top and click Dictate. The Orchestrator sends it to
-                Gemini, which generates Strudel code and passes it to the Sequencer to evaluate.
+                Gemini, which generates Strudel code and passes it to the Sequencer to evaluate. Each part of the
+                result becomes a MIDI track playing a library sound, with a clip looping its bar.
               </p>
 
               {dictationStatus === 'sending' && (
@@ -1471,6 +1483,15 @@ function App() {
                 <pre style={{ fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>
                   {dictationCode}
                 </pre>
+              )}
+
+              {dictationResult && (
+                <div className="dictation-result">
+                  {dictationResult.tracks.length
+                    ? `New tracks: ${dictationResult.tracks.join(', ')}${dictationResult.bpm ? ` · tempo ${dictationResult.bpm} BPM` : ''}`
+                    : 'Nothing in the pattern to play.'}
+                  {dictationResult.unmapped.length > 0 && <div className="dictation-unmapped">No library sound for: {dictationResult.unmapped.join(', ')}</div>}
+                </div>
               )}
 
               {dictationStatus === 'error' && dictationError && (

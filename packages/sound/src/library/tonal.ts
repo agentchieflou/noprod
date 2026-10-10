@@ -243,6 +243,10 @@ export const LEADS: SoundRecipe[] = [
     { type: 'wave', shape: 'saw', unison: { voices: 7, detune: 38, spread: 1 },
       filter: { type: 'lowpass', cutoff: 7000, keyTrack: 0.3 }, env: { attack: 0.005, sustain: 1, release: 0.25 } }
   ]),
+  // Strudel's default synth: a plain triangle
+  sound('lead-triangle', 'Triangle', 'leads', ['triangle', 'simple', 'strudel'], 72, 3, [
+    { type: 'wave', shape: 'triangle', env: { attack: 0.003, decay: 0.5, sustain: 0.7, release: 0.12 } }
+  ]),
   sound('lead-chip', 'Chip Lead', 'leads', ['chiptune', 'pulse', '8-bit'], 72, 2, [
     { type: 'wave', shape: 'pulse', width: 0.25, vibrato: { rate: 7, depth: 25, delay: 0.15 },
       env: { attack: 0.001, decay: 0.3, sustain: 0.7, release: 0.03 } }

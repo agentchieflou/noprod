@@ -2472,3 +2472,15 @@ body {
   fill: #6b7280;
   font-size: 6px;
 }
+
+/* AI dictation results (#68) */
+.dictation-result {
+  font-size: 12px;
+  color: var(--accent-green);
+  margin-top: 6px;
+}
+
+.dictation-unmapped {
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
