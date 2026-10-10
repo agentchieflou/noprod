@@ -54,6 +54,34 @@ by a short probe note, measured and corrected, cached per configuration.
 Any block of any layer can be switched off without losing its settings:
 `bypass: ['radiator:0', 'filter:1', 'drive', …]`.
 
+### Chains
+
+`chainOf(recipe)` (`src/chain.ts`) describes every layer of any recipe as
+blocks across five stages, the same for a synth lead as for a violin:
+
+| Stage | Blocks (ids) |
+|---|---|
+| Player input | `env`, `pitch`, `vibrato` |
+| Excitation | `exciter` (pluck, strike, bow, lips, jet, reed) or `source` (partials, wave, fm, noise) |
+| Resonator | `resonator` (string, bore) |
+| Radiator | `radiator:N` (body, helmholtz, bell, tonehole, damping), then `filter:N` |
+| Output | `tremolo`, `drive`, `mix` (level and pan) |
+
+Each block has its kind, family, label, whether it's on, and whether it's in
+a closed loop with the resonator. `BLOCKS` catalogues every kind (label,
+description, stage, defaults, the layer types it fits). The edits return new
+recipes:
+
+```ts
+setBlockOn(recipe, 0, 'radiator:0', false);  // switch a block off (settings kept)
+setKindOn(recipe, 'vibrato', false);         // every block of a kind
+branchesFor(recipe, 0, 'radiator');          // what can be added: ['helmholtz', 'bell', …]
+addBlock(recipe, 0, 'bell');                 // a radiator or filter in series; an exciter or
+                                             // resonator swaps the model's; a source adds a layer
+removeBlock(recipe, 0, 'radiator:0');        // later blocks (and their bypasses) renumber
+sharedBlocks([violin, guitar, lead]);        // the kinds two or more of them have, by stage
+```
+
 Every layer can have an amplitude envelope, a pitch envelope, vibrato,
 tremolo, filters (with their own envelopes, key tracking and velocity), drive
 (with a DC blocker after it), a start offset, a level and a pan. Decays are
