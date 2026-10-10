@@ -2338,6 +2338,7 @@ body {
 
 .designer-actions {
   margin-top: 2px;
+  flex-wrap: wrap;
 }
 
 .designer-button {

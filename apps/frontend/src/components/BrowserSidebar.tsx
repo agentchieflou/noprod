@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Music, Drum, Piano, Sliders, Zap, Plug, FolderOpen, FolderPlus, Folder, Plus, Search, X, RefreshCw, AudioWaveform, Pencil, Download, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Music, Drum, Piano, Sliders, Zap, Plug, FolderOpen, FolderPlus, Folder, Plus, Search, X, RefreshCw, AudioWaveform, Pencil, Download, Trash2, Wand2 } from 'lucide-react';
 import { LIBRARY, KITS, CATEGORY_NAMES, type SoundRecipe } from '@noprod/sound';
 import { useDAWStore, createDefaultInstrument, createDrumKit } from '../store/useDAWStore';
 import { DEVICE_DEFS, createDevice } from '../audio/devices';
@@ -12,7 +12,7 @@ import {
 import { SOUND_PRESETS, DRUM_KIT_PRESETS, isDrumSample } from '../browser/presets';
 import { subscribeAudioCore, getAudioCore, findNativePlugin, nativeDeviceFor } from '../native/audioCore';
 import {
-  createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview, exportZip
+  createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview, exportZip, resynthesizeBuffer
 } from '../audio/library';
 import { subscribeUserSounds, getUserSounds, deleteUserSound } from '../audio/userSounds';
 
@@ -33,6 +33,7 @@ interface Item {
   recipe?: SoundRecipe;        // a library sound: its group can export as WAVs
   onEdit?: () => void;         // opens in the Sound Designer
   onDelete?: () => void;       // one of My Sounds
+  onResynth?: () => void;      // a sample, as a sound made of frequencies
 }
 
 // Ableton-style Browser: categories backed by real data (the sound library,
@@ -83,10 +84,20 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
       flash(`${f.name} → ${selected.name}`);
     } catch (err: any) { flash(`Could not load: ${err.message || err}`); }
   };
+  // A sample, resynthesized: its partials and noise as a library sound, opened in the Sound Designer
+  const resynthSample = async (f: LibraryFile) => {
+    try {
+      flash(`Resynthesizing ${f.name}…`);
+      const recipe = await resynthesizeBuffer(await decodeLibraryFile(f.id), f.name.replace(/\.[^.]+$/, ''));
+      onEditSound(recipe);
+      flash(`${recipe.name}: ${recipe.pitched ? 'pitched' : 'unpitched'}, ${recipe.layers.length} layers`);
+    } catch (err: any) { flash(`Could not resynthesize: ${err.message || err}`); }
+  };
   const sampleItem = (f: LibraryFile): Item => ({
     key: f.id, label: f.name, hint: f.path, dragFile: f,
     onClick: () => previewFile(f.id).catch(() => flash('Could not preview this file')),
-    onLoad: () => loadSample(f)
+    onLoad: () => loadSample(f),
+    onResynth: () => resynthSample(f)
   });
 
   // ---- categories
@@ -195,6 +206,7 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
       <span className="browser-item-label">{it.label}</span>
       {it.onDelete && <button className="btn-icon browser-load" title="Delete" onClick={(e) => { e.stopPropagation(); it.onDelete!(); }}><Trash2 size={11} /></button>}
       {it.onEdit && <button className="btn-icon browser-load" title="Edit in the Sound Designer" onClick={(e) => { e.stopPropagation(); it.onEdit!(); }}><Pencil size={11} /></button>}
+      {it.onResynth && <button className="btn-icon browser-load" title="Resynthesize: rebuild it from its frequencies as a playable sound" onClick={(e) => { e.stopPropagation(); it.onResynth!(); }}><Wand2 size={11} /></button>}
       <button className="btn-icon browser-load" title="Load" onClick={(e) => { e.stopPropagation(); it.onLoad(); }}><Plus size={11} /></button>
     </div>
   );

@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Play, Copy, Trash2, Volume2, VolumeX, Save, Download, RotateCcw } from 'lucide-react';
+import { Play, Copy, Trash2, Volume2, VolumeX, Save, Download, RotateCcw, Wand2 } from 'lucide-react';
 import {
   CATEGORY_NAMES, GM_DRUM_NAMES, withId,
   type Category, type Envelope, type Filter, type FilterType, type Layer, type RenderedSound, type SoundRecipe, type Vibrato, type WaveShape
 } from '@noprod/sound';
 import { v4 as uuidv4 } from 'uuid';
 import { useDAWStore } from '../store/useDAWStore';
-import { libraryOf, renderSound, toAudioBuffer, playRendered, exportWav } from '../audio/library';
+import { libraryOf, renderSound, toAudioBuffer, playRendered, exportWav, resynthesizeBuffer } from '../audio/library';
 import { saveUserSound, findAnySound } from '../audio/userSounds';
-import { getStripInput } from '../audio/engine';
+import { audioContext, getStripInput } from '../audio/engine';
+import { getFile } from '../browser/library';
 import { midiNoteName } from '../audio/synth';
 import Spectrogram from './Spectrogram';
 import PartialEditor from './PartialEditor';
@@ -322,6 +323,7 @@ export default function SoundDesigner({ track }: { track: any }) {
   const [message, setMessage] = useState<string | null>(null);
   const latest = useRef(0);
   const edited = useRef(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   const playNote = note ?? recipe?.root ?? 60;
 
   // Re-render shortly after each change, off the main thread; the newest wins
@@ -362,6 +364,20 @@ export default function SoundDesigner({ track }: { track: any }) {
     else setTrackInstrument(track.id, { ...track.instrument, name: next.name, parameters: { ...params, Library: { ...lib, sound: next } } });
   };
 
+  // Replace the sound with a recording's resynthesis
+  const fromAudio = async (file: File | null) => {
+    if (!file) return;
+    try {
+      flash(`Resynthesizing ${file.name}…`);
+      if (audioContext.state === 'suspended') await audioContext.resume();
+      const buffer = await audioContext.decodeAudioData(await file.arrayBuffer());
+      const next = await resynthesizeBuffer(buffer, file.name.replace(/\.[^.]+$/, ''));
+      if (kit) update(next);
+      else setTrackInstrument(track.id, { ...track.instrument, name: next.name, parameters: { ...params, Library: { ...lib, sound: next } } });
+      flash(`${next.name}: ${next.pitched ? 'pitched' : 'unpitched'}, ${next.layers.length} layers`);
+    } catch (err: any) { flash(`Could not resynthesize: ${err.message || err}`); }
+  };
+
   const original = findAnySound(recipe.id);
   const saveMine = async () => {
     // A built-in sound is saved as a new one of mine, sounding exactly the same
@@ -372,7 +388,16 @@ export default function SoundDesigner({ track }: { track: any }) {
   };
 
   return (
-    <div className="sound-designer">
+    <div
+      className="sound-designer"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={async (e) => {
+        // a recording dropped here (from the Browser or the desktop) replaces the sound with its resynthesis
+        e.preventDefault();
+        const sample = e.dataTransfer.getData('application/x-noprod-sample');
+        fromAudio(sample ? await getFile(JSON.parse(sample).id) : e.dataTransfer.files[0] ?? null);
+      }}
+    >
       <div className="designer-side">
         <div className="designer-row">
           <input key={recipe.id + recipe.name} className="designer-name" defaultValue={recipe.name} title="Name"
@@ -410,6 +435,9 @@ export default function SoundDesigner({ track }: { track: any }) {
           <button className="designer-button" onClick={() => exportWav(recipe, playNote, velocity)} title="Download as a 24-bit WAV at this note"><Download size={11} /> WAV</button>
           <button className="designer-button" disabled={!original || original === recipe} onClick={() => original && update(original)}
             title={original ? `Back to the saved “${original.name}”` : 'Not a library sound'}><RotateCcw size={11} /> Revert</button>
+          <button className="designer-button" onClick={() => fileInput.current?.click()}
+            title="Replace this sound with a recording's resynthesis: its partials and noise (or drop a sample here)"><Wand2 size={11} /> From audio</button>
+          <input ref={fileInput} type="file" accept="audio/*" hidden onChange={(e) => { fromAudio(e.target.files?.[0] ?? null); e.target.value = ''; }} />
         </div>
         <div className="designer-hint">{message ?? 'Loudness is normalized; Gain trims it.'}</div>
       </div>
