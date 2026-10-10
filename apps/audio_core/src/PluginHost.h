@@ -48,6 +48,11 @@
 // gestureBegin?, gestureEnd? } through `broadcast` (or, for a track stream's
 // plugin, to that stream). The gesture marks come from plugins with
 // lpi.params.changes.v1: the first change of a drag, and its release.
+//
+// A plugin's latency is read again after every parameter change (a
+// lookahead may set it). When it moved, the insert's state goes out again:
+// AUDIO_CORE_STATE through `broadcast`, or STREAM_STATE to its stream, so
+// the browser re-compensates.
 class PluginHost : private juce::Timer
 {
 public:
@@ -149,7 +154,12 @@ public:
                 auto it = std::find_if (slots.begin(), slots.end(), [&] (const InsertChain::Slot& s) { return s.id == slotId; });
 
                 if (type == "SET_PLUGIN_PARAMETER")
-                    return setParameter (*it, message, type);
+                {
+                    auto reply = setParameter (*it, message, type);
+                    if (it->processor->refreshLatency() && broadcast) // a lookahead may change it
+                        broadcast (getState());
+                    return reply;
+                }
 
                 if (type == "SET_PLUGIN_BYPASS")
                 {
@@ -178,7 +188,7 @@ public:
 
                 for (auto& slot : chain->getSlots())
                     if (slot.id == slotId)
-                        return openEditor (slot, message, type, broadcast);
+                        return openEditor (slot, message, type, broadcast, [this] { return getState(); });
             }
 
             if (type == "CLOSE_EDITOR")
@@ -209,7 +219,10 @@ public:
                         juce::DynamicObject::Ptr request = new juce::DynamicObject();
                         request->setProperty ("parameterIndex", index);
                         request->setProperty ("value", p.minValue + normalized * (p.maxValue - p.minValue));
-                        return setParameter (slot, juce::var (request.get()), type);
+                        auto reply = setParameter (slot, juce::var (request.get()), type);
+                        if (slot.processor->refreshLatency() && broadcast)
+                            broadcast (getState());
+                        return reply;
                     }
                     return makeError (name + " has no parameter " + juce::String (index), type);
                 }
@@ -350,7 +363,15 @@ public:
         {
             if (stream.chain.getSlots().empty())
                 return makeError ("No plugin loaded", "STREAM_" + type);
-            return openEditor (stream.chain.getSlots().front(), message, "STREAM_" + type, stream.sendToBrowser);
+            auto streamId = stream.id;
+            return openEditor (stream.chain.getSlots().front(), message, "STREAM_" + type, stream.sendToBrowser,
+                               [this, streamId]
+                               {
+                                   for (auto& s : streams)
+                                       if (s->id == streamId)
+                                           return describeStream (*s);
+                                   return juce::var();
+                               });
         }
 
         if (type == "CLOSE_EDITOR")
@@ -369,6 +390,7 @@ public:
                     if (p.id.isNotEmpty() && values->hasProperty (p.id) && ! p.readOnly)
                         processor->setParameterValue (p.index, juce::jlimit (p.minValue, p.maxValue,
                                                                               static_cast<float> (values->getProperty (p.id))));
+            processor->refreshLatency(); // the saved values may include a lookahead
 
             InsertChain::Slot slot;
             slot.id = "insert-" + juce::String (nextSlotNumber++);
@@ -389,7 +411,11 @@ public:
         {
             if (stream.chain.getSlots().empty())
                 return makeError ("No plugin loaded", "STREAM_" + type);
-            return setParameter (stream.chain.getSlots().front(), message, "STREAM_" + type);
+            auto reply = setParameter (stream.chain.getSlots().front(), message, "STREAM_" + type);
+            // A latency change: the browser re-compensates from the new state
+            if (stream.chain.getSlots().front().processor->refreshLatency() && stream.sendToBrowser)
+                stream.sendToBrowser (describeStream (stream));
+            return reply;
         }
 
         if (type == "GET_STATE")
@@ -558,8 +584,10 @@ private:
         return nullptr;
     }
 
+    // `notify` sends to whoever shows this insert; `describe` makes the state
+    // message they need when its latency changes
     juce::var openEditor (const InsertChain::Slot& slot, const juce::var& message, const juce::String& type,
-                          std::function<void (const juce::var&)> notify)
+                          std::function<void (const juce::var&)> notify, std::function<juce::var()> describe)
     {
         auto* lpi = dynamic_cast<LpiInsert*> (slot.processor.get());
         if (lpi == nullptr || ! lpi->hasEditor())
@@ -583,7 +611,7 @@ private:
             if (auto s = weak.lock())
                 s->markClosed();
         };
-        session->onParametersChanged = [slotId = slot.id, notify, lpi] (const std::vector<PluginParameterChange>& changed)
+        session->onParametersChanged = [slotId = slot.id, notify, describe, lpi] (const std::vector<PluginParameterChange>& changed)
         {
             // (only called while the editor, and so the plugin, is open)
             if (! notify)
@@ -599,6 +627,9 @@ private:
                     m->setProperty ("gestureEnd", true);
                 notify (message);
             }
+            if (lpi->refreshLatency() && describe)
+                if (auto state = describe(); ! state.isVoid())
+                    notify (state);
         };
 
         {

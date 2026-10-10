@@ -19,8 +19,9 @@
 //
 // Build variants (compile definitions):
 //   LPI_TEST_GUI_POLLING     without lpi.params.changes.v1 (the host polls)
-//   LPI_TEST_GUI_LATENCY=n   delays its audio by n samples and reports it
-//                            through lpi.latency.v1
+//   LPI_TEST_GUI_LATENCY=n   delays its audio by a "lookahead" parameter
+//                            (default n samples) and reports it through
+//                            lpi.latency.v1, following the parameter
 //   LPI_TEST_GUI_TRANSPORT   takes lpi.transport.v1 and shows the last
 //                            transport it got in read-only parameters
 
@@ -38,8 +39,10 @@
 namespace
 {
 enum { kGain = 0, kViolations = 1, kKeyboardFocused = 2, kKeyboardViolations = 3, kTransportTempo = 4 };
-#ifdef LPI_TEST_GUI_TRANSPORT
+#if defined(LPI_TEST_GUI_TRANSPORT)
 enum { kTransportPpq = 5, kTransportFlags = 6, kTransportCalls = 7, kNumParams = 8 };
+#elif defined(LPI_TEST_GUI_LATENCY)
+enum { kLookahead = 4, kNumParams = 5 };
 #else
 enum { kNumParams = 4 };
 #endif
@@ -50,6 +53,7 @@ constexpr uint32_t kLatency = LPI_TEST_GUI_LATENCY;
 #else
 constexpr uint32_t kLatency = 0;
 #endif
+constexpr uint32_t kMaxDelay = 512; // the delay line; the lookahead goes up to 256
 
 std::atomic<bool> editorOpenInProcess { false }; // lpi.h v1: one editor per process
 
@@ -91,8 +95,10 @@ struct Instance
         changeFlags |= flags;
     }
 
-    // Audio thread: the latency variant's delay line, frame-interleaved
-    std::vector<float> delay = std::vector<float> (kLatency * 2, 0.0f);
+    // The latency variant: the lookahead (set from the GUI thread), and the
+    // delay line (audio thread, frame-interleaved)
+    std::atomic<float> lookahead { static_cast<float> (kLatency) };
+    std::vector<float> delay = std::vector<float> (kLatency > 0 ? kMaxDelay * 2 : 0, 0.0f);
     uint32_t delayPos = 0;
 
     // The first thread to touch the GUI or set a parameter is the GUI thread
@@ -135,16 +141,16 @@ void process (lpi_plugin* p, const lpi_process_data* data)
         return;
     }
 
+    auto lookahead = static_cast<uint32_t> (s->lookahead.load (std::memory_order_relaxed));
     for (uint32_t i = 0; i < data->num_frames; ++i)
     {
+        auto from = (s->delayPos + kMaxDelay - lookahead) % kMaxDelay;
         for (uint32_t ch = 0; ch < channels; ++ch)
         {
-            auto& slot = s->delay[s->delayPos * 2 + ch];
-            auto delayed = slot;
-            slot = data->inputs[ch][i];
-            data->outputs[ch][i] = delayed * s->appliedGain;
+            s->delay[s->delayPos * 2 + ch] = data->inputs[ch][i];
+            data->outputs[ch][i] = s->delay[from * 2 + ch] * s->appliedGain;
         }
-        s->delayPos = (s->delayPos + 1) % (kLatency > 0 ? kLatency : 1);
+        s->delayPos = (s->delayPos + 1) % kMaxDelay;
     }
 }
 
@@ -165,6 +171,17 @@ bool getParameterInfo (lpi_plugin*, uint32_t index, lpi_parameter_info* info)
         info->default_value = 1.0f;
         info->flags = 0;
     }
+#ifdef LPI_TEST_GUI_LATENCY
+    else if (index == kLookahead)
+    {
+        info->id = "lookahead";
+        info->name = "Lookahead";
+        info->min_value = 0.0f;
+        info->max_value = 256.0f;
+        info->default_value = static_cast<float> (kLatency);
+        info->flags = LPI_PARAM_STEPPED;
+    }
+#endif
     else if (index == kViolations || index == kKeyboardViolations)
     {
         info->id = index == kViolations ? "guiThreadViolations" : "keyboardContractViolations";
@@ -207,6 +224,10 @@ float getParameterValue (lpi_plugin* p, uint32_t index)
         return self (p)->focusedShown.load() ? 1.0f : 0.0f;
     if (index == kKeyboardViolations)
         return static_cast<float> (self (p)->keyboardViolations.load());
+#ifdef LPI_TEST_GUI_LATENCY
+    if (index == kLookahead)
+        return self (p)->lookahead.load();
+#endif
 #ifdef LPI_TEST_GUI_TRANSPORT
     if (index == kTransportTempo)
         return static_cast<float> (self (p)->transportTempo.load());
@@ -223,6 +244,13 @@ float getParameterValue (lpi_plugin* p, uint32_t index)
 bool setParameterValue (lpi_plugin* p, uint32_t index, float value)
 {
     self (p)->checkThread();
+#ifdef LPI_TEST_GUI_LATENCY
+    if (index == kLookahead)
+    {
+        self (p)->lookahead.store (std::round (value < 0.0f ? 0.0f : value > 256.0f ? 256.0f : value));
+        return true;
+    }
+#endif
     if (index != kGain)
         return false;
     self (p)->gain.store (value);
@@ -422,10 +450,11 @@ uint32_t getParameterChanges (lpi_plugin* p, lpi_param_change* out, uint32_t max
 
 const lpi_param_changes_v1 paramChanges { getParameterChanges };
 
+// Follows the lookahead as soon as it is set (before process() applies it)
 uint32_t getLatency (lpi_plugin* p)
 {
     self (p)->checkThread();
-    return kLatency;
+    return static_cast<uint32_t> (self (p)->lookahead.load());
 }
 
 const lpi_latency_v1 latency { getLatency };

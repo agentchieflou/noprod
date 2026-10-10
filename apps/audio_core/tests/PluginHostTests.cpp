@@ -896,6 +896,12 @@ static void testEditors()
         auto out = runProcessor (delayed, impulse);
         CHECK (out.getSample (0, 64) == 1.0f && out.getSample (1, 64) == 1.0f && out.getSample (0, 0) == 0.0f); // it really is 64 samples late
         CHECK (delayed.prepare (44100.0, 256, error) && delayed.getLatencySamples() == 64); // read again per activation
+
+        // A lookahead parameter moves it: re-read after the change
+        CHECK (delayed.setParameterValue (4, 128.0f) && delayed.refreshLatency() && delayed.getLatencySamples() == 128);
+        CHECK (! delayed.refreshLatency());
+        out = runProcessor (delayed, impulse);
+        CHECK (out.getSample (0, 128) == 1.0f && out.getSample (0, 64) == 0.0f);
     }
 
     section ("Editors: OPEN_EDITOR / CLOSE_EDITOR and the stream source");
@@ -1167,6 +1173,50 @@ static void testEditorKeyboard()
     cache.deleteFile();
 }
 
+// A plugin whose latency follows a parameter (lpi.latency.v1 re-read after
+// each change): the new latency reaches whoever shows the insert
+static void testLatencyFollowsParameters()
+{
+    section ("Latency: a lookahead parameter's latency is republished");
+    auto cache = juce::File::createTempFile (".xml");
+    HapAudioEngine engine;
+    Mixer mixer (engine);
+    PluginHost host (mixer, cache);
+    juce::Array<juce::var> broadcasts, sent;
+    host.broadcast = [&] (const juce::var& m) { broadcasts.add (m); };
+
+    // A browser track's plugin: the saved lookahead counts from LOAD, and a
+    // change sends the stream a fresh STREAM_STATE
+    auto stream = std::make_shared<TrackStream>();
+    stream->id = "device-l";
+    juce::StringArray errors;
+    stream->chain.prepare (stream->sampleRate, stream->maxBlockSize, errors);
+    stream->sendToBrowser = [&] (const juce::var& m) { sent.add (m); };
+    host.registerStream (stream);
+    juce::DynamicObject::Ptr saved = new juce::DynamicObject();
+    saved->setProperty ("lookahead", 32);
+    auto state = host.handleStreamCommand (*stream, command ({ { "type", "LOAD" }, { "path", LPI_TEST_GUI_LATENCY_PATH }, { "parameters", juce::var (saved.get()) } }));
+    CHECK (static_cast<int> (state["insert"]["latencySamples"]) == 32);
+
+    auto reply = host.handleStreamCommand (*stream, command ({ { "type", "SET_PARAM" }, { "parameterId", "lookahead" }, { "value", 100 } }));
+    CHECK (reply["type"].toString() == "PLUGIN_PARAMETER_CHANGED");
+    CHECK (sent.size() == 1 && sent[0]["type"].toString() == "STREAM_STATE" && static_cast<int> (sent[0]["insert"]["latencySamples"]) == 100);
+    host.handleStreamCommand (*stream, command ({ { "type", "SET_PARAM" }, { "parameterId", "gain" }, { "value", 0.5 } }));
+    CHECK (sent.size() == 1); // no latency change, nothing extra
+
+    // A bus insert: everyone gets the new AUDIO_CORE_STATE
+    state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GUI_LATENCY_PATH }, { "bus", 2 } }));
+    auto slotId = busInserts (state, 2)[0]["slotId"];
+    CHECK (static_cast<int> (busInserts (state, 2)[0]["latencySamples"]) == 64);
+    host.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", slotId }, { "parameterId", "lookahead" }, { "value", 200 } }));
+    CHECK (broadcasts.size() == 1 && broadcasts[0]["type"].toString() == "AUDIO_CORE_STATE");
+    CHECK (static_cast<int> (busInserts (broadcasts[0], 2)[0]["latencySamples"]) == 200);
+
+    host.closeStream (stream);
+    host.clearAllInserts();
+    cache.deleteFile();
+}
+
 // A stream audio message carrying a transport block (TrackStreams.h)
 static std::vector<uint8_t> streamFrameWithTransport (uint32_t seq, const juce::AudioBuffer<float>& audio,
                                                       double tempo, double ppq, uint32_t transportFlags)
@@ -1287,6 +1337,7 @@ int main()
     testEditors();
     testEditorKeyboard();
     testTransport();
+    testLatencyFollowsParameters();
 
     std::cout << (failures == 0 ? "PASS" : "FAIL") << ": " << (checks - failures) << "/" << checks << " checks" << std::endl;
     return failures == 0 ? 0 : 1;

@@ -199,9 +199,8 @@ public:
         for (size_t i = 0; i < values.size(); ++i)
             reported.push_back (api.get_parameter_value (instance, static_cast<uint32_t> (i)));
 
-        auto* latencyExtension = getExtension<lpi_latency_v1> (LPI_EXT_LATENCY_V1);
-        latency = latencyExtension != nullptr && latencyExtension->get_latency != nullptr
-                    ? static_cast<int> (latencyExtension->get_latency (instance)) : 0;
+        latency = 0;
+        refreshLatency();
 
         // Looked up here, on the control thread: process() runs on the audio thread
         transport = getExtension<lpi_transport_v1> (LPI_EXT_TRANSPORT_V1);
@@ -211,8 +210,19 @@ public:
         return true;
     }
 
-    // lpi.latency.v1, read once per activation
+    // lpi.latency.v1: read at activation, and again after parameter changes
+    // (a lookahead parameter may change it)
     int getLatencySamples() const override { return latency; }
+
+    bool refreshLatency() override
+    {
+        auto* extension = getExtension<lpi_latency_v1> (LPI_EXT_LATENCY_V1);
+        auto now = extension != nullptr && extension->get_latency != nullptr ? static_cast<int> (extension->get_latency (instance)) : 0;
+        if (now == latency)
+            return false;
+        latency = now;
+        return true;
+    }
 
     void process (const float* const* inputs, float* const* outputs, int numChannels, int numSamples) noexcept override
     {

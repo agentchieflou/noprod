@@ -134,7 +134,9 @@ VST3/AU editors need a native window.
 
 A plugin with `lpi.latency.v1` reports its latency, which shows as the
 insert's `latencySamples`. The browser delays its other tracks to match a
-track device's plugin.
+track device's plugin. The latency is read again after every parameter
+change, since a lookahead may set it. When it moves, the insert's state is
+sent again and the browser re-compensates.
 
 lpi.h requires every GUI call, and every parameter write, on one thread.
 GhostDAW uses the message thread, which already runs every other plugin call
