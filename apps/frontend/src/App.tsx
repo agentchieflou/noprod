@@ -14,9 +14,11 @@ import InstrumentCard from './components/InstrumentCard';
 import TakeLane from './components/TakeLane';
 import BrowserSidebar, { SAMPLE_DRAG_TYPE, SOUND_DRAG_TYPE } from './components/BrowserSidebar';
 import { getFile } from './browser/library';
-import { findSound } from '@noprod/sound';
 import { createLibraryInstrument, soundAsBuffer } from './audio/library';
 import { startLibraryWarmup } from './audio/libraryWarmup';
+import { findAnySound, loadUserSounds } from './audio/userSounds';
+import SoundDesigner from './components/SoundDesigner';
+import type { SoundRecipe } from '@noprod/sound';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
 import { initMidi } from './audio/inputs';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
@@ -59,6 +61,7 @@ onSegmentScheduled(nativeTransportChanged);
 
 // Library sounds render ahead of playback, as the project changes
 startLibraryWarmup(useDAWStore);
+loadUserSounds();
 
 // Ableton-style Color Palette Presets
 const PRESET_COLORS = [
@@ -164,7 +167,7 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggedOverTrack, setDraggedOverTrack] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'vst-paths' | 'dictation'>('devices');
+  const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'vst-paths' | 'dictation'>('devices');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [newVstPathInput, setNewVstPathInput] = useState('');
@@ -270,7 +273,7 @@ function App() {
 
     // A library sound: a MIDI track plays it as its instrument, anything
     // else gets it as a rendered audio clip
-    const sound = findSound(e.dataTransfer.getData(SOUND_DRAG_TYPE));
+    const sound = findAnySound(e.dataTransfer.getData(SOUND_DRAG_TYPE));
     if (sound) {
       if (tracks.find((t: any) => t.id === trackId)?.type === 'midi') {
         setTrackInstrument(trackId, createLibraryInstrument(sound));
@@ -440,6 +443,16 @@ function App() {
       velocity: 0.9
     }));
     addMidiRegion(trackId, startTime, barLength, seedNotes);
+  };
+
+  // Edit a library sound: it plays on the selected MIDI track (or a new one)
+  // and opens in the Sound Designer
+  const editSound = (recipe: SoundRecipe) => {
+    const st = useDAWStore.getState();
+    const target = st.tracks.find((t: any) => t.id === st.selectedTrackId && t.type === 'midi');
+    if (target) setTrackInstrument(target.id, createLibraryInstrument(recipe));
+    else st.addMidiTrackWithInstrument(createLibraryInstrument(recipe), recipe.name);
+    setActiveTab('sound');
   };
 
   // Audition a note immediately through the track's channel (instrument panel keyboard)
@@ -810,7 +823,7 @@ function App() {
 
       <div className="main-workspace">
         {/* Browser Sidebar */}
-        <BrowserSidebar onShowPluginScan={() => setActiveTab('vst-paths')} />
+        <BrowserSidebar onShowPluginScan={() => setActiveTab('vst-paths')} onEditSound={editSound} />
 
         {/* Timeline / Grid - Tracks moved to the right! */}
         <div className="timeline-section">
@@ -1210,10 +1223,11 @@ function App() {
       <PluginEditorWindow />
 
       {/* Bottom Detail panel */}
-      <div className={`bottom-detail-panel ${activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi' ? 'tall' : ''}`}>
+      <div className={`bottom-detail-panel ${(activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi') || activeTab === 'sound' ? 'tall' : ''}`}>
         <div className="detail-tabs">
           <button className={`detail-tab ${activeTab === 'devices' ? 'active' : ''}`} onClick={() => setActiveTab('devices')}>Device Chain</button>
           <button className={`detail-tab ${activeTab === 'clip' ? 'active' : ''}`} onClick={() => setActiveTab('clip')}>Clip View</button>
+          <button className={`detail-tab ${activeTab === 'sound' ? 'active' : ''}`} onClick={() => setActiveTab('sound')}>Sound Designer</button>
           <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>
           <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>
         </div>
@@ -1287,7 +1301,7 @@ function App() {
                   {/* Instrument Card (MIDI tracks) */}
                   {selectedTrack.type === 'midi' && (
                     selectedTrack.instrument ? (
-                      <InstrumentCard track={selectedTrack} onAudition={(pitch: number) => auditionNote(selectedTrack, pitch)} />
+                      <InstrumentCard track={selectedTrack} onAudition={(pitch: number) => auditionNote(selectedTrack, pitch)} onEditSound={() => setActiveTab('sound')} />
                     ) : (
                       <button className="btn-add-track" style={{ backgroundColor: '#10b981', alignSelf: 'flex-start' }}
                         onClick={() => setTrackInstrument(selectedTrack.id, createDefaultInstrument())}>
@@ -1348,6 +1362,10 @@ function App() {
             </div>
           )}
           
+          {activeTab === 'sound' && (
+            <SoundDesigner track={selectedTrack?.type === 'midi' ? selectedTrack : null} />
+          )}
+
           {activeTab === 'vst-paths' && (
             <div className="plugin-tab-columns">
             <div className="vst-paths-view">

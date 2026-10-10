@@ -7,7 +7,7 @@
 // changes the samples; `prewarmLibrary` renders what the project's clips
 // need ahead of playback, since a note's render can take tens of milliseconds.
 
-import { render, findSound, type DrumKit, type SoundRecipe } from '@noprod/sound';
+import { render, findSound, encodeWav, zip, type DrumKit, type RenderOptions, type RenderedSound, type SoundRecipe } from '@noprod/sound';
 import { v4 as uuidv4 } from 'uuid';
 import { audioContext } from './engine';
 
@@ -247,6 +247,79 @@ export function previewKit(kit: DrumKit, sounds: Record<string, SoundRecipe>) {
 export function soundAsBuffer(recipe: SoundRecipe): AudioBuffer {
   const r = resolve({ Kit: 'library', Library: { sound: recipe } }, recipe.root ?? 60, 1, recipe.pitched ? 1 : undefined)!;
   return bufferFor(r, audioContext.sampleRate);
+}
+
+// --------------------------------------------------------------- designing
+
+// One worker of its own, so the Sound Designer never waits behind prewarm
+let designWorker: Worker | null = null;
+let designId = 0;
+const designing = new Map<number, { resolve: (sound: RenderedSound) => void; sampleRate: number }>();
+
+// Render off the main thread (or on it, if workers can't start)
+export function renderSound(recipe: SoundRecipe, options: RenderOptions): Promise<RenderedSound> {
+  if (!designWorker) {
+    try {
+      designWorker = new Worker(new URL('./libraryWorker.ts', import.meta.url), { type: 'module' });
+      designWorker.onmessage = (e: MessageEvent<{ id: number; left: Float32Array<ArrayBuffer>; right: Float32Array<ArrayBuffer> }>) => {
+        const job = designing.get(e.data.id);
+        designing.delete(e.data.id);
+        job?.resolve({ left: e.data.left, right: e.data.right, sampleRate: job.sampleRate });
+      };
+    } catch {
+      return Promise.resolve(render(recipe, options));
+    }
+  }
+  const id = designId++;
+  const sampleRate = options.sampleRate ?? audioContext.sampleRate;
+  return new Promise((resolve) => {
+    designing.set(id, { resolve, sampleRate });
+    designWorker!.postMessage({ id, recipe, options: { ...options, sampleRate } });
+  });
+}
+
+export function toAudioBuffer({ left, right, sampleRate }: RenderedSound) {
+  const buffer = new AudioBuffer({ numberOfChannels: 2, length: left.length, sampleRate });
+  buffer.copyToChannel(left, 0);
+  buffer.copyToChannel(right, 1);
+  return buffer;
+}
+
+// Plays a rendered sound into `destination` (a track's strip, or the speakers)
+export function playRendered(buffer: AudioBuffer, destination: AudioNode = previewGain) {
+  if (audioContext.state === 'suspended') audioContext.resume();
+  const src = audioContext.createBufferSource();
+  src.buffer = buffer;
+  src.connect(destination);
+  src.start();
+  return src;
+}
+
+const download = (data: Uint8Array<ArrayBuffer>, name: string, type: string) => {
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const fileName = (name: string) => name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Sound';
+
+// A sound as a 24-bit WAV file, at a note (pitched sounds held for a second)
+export async function exportWav(recipe: SoundRecipe, note = recipe.root ?? 60, velocity = 1) {
+  const sound = await renderSound(recipe, { note, velocity, gate: recipe.pitched ? 1 : undefined });
+  download(encodeWav([sound.left, sound.right], sound.sampleRate, 24) as Uint8Array<ArrayBuffer>, `${fileName(recipe.name)}.wav`, 'audio/wav');
+}
+
+// Several sounds as a zip of WAVs
+export async function exportZip(name: string, recipes: SoundRecipe[]) {
+  const files = [];
+  for (const r of recipes) {
+    const sound = await renderSound(r, { note: r.root ?? 60, velocity: 1, gate: r.pitched ? 1 : undefined });
+    files.push({ name: `${fileName(name)}/${fileName(r.name)}.wav`, data: encodeWav([sound.left, sound.right], sound.sampleRate, 24) });
+  }
+  download(zip(files) as Uint8Array<ArrayBuffer>, `${fileName(name)}.zip`, 'application/zip');
 }
 
 // ---------------------------------------------------------------- prewarm

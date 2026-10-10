@@ -49,6 +49,11 @@ export function render(recipe: SoundRecipe, options: RenderOptions = {}): Render
   return sound;
 }
 
+// The same sound under another id: the seed changes with it, so the noise
+// (seeded from both) stays exactly the same
+export const withId = (recipe: SoundRecipe, id: string): SoundRecipe =>
+  ({ ...recipe, id, seed: ((recipe.seed ?? 0) ^ hashString(recipe.id) ^ hashString(id)) >>> 0 });
+
 // How much `render` scales a recipe so every sound sounds equally loud (the
 // loudest 100 ms, K-weighted, at -12 LUFS, peaks at most -1 dBFS): measured
 // once, at the root note, full velocity. Cached per recipe object,
@@ -102,11 +107,11 @@ function renderRaw(recipe: SoundRecipe, options: RenderOptions, sampleRate: numb
 
   const left = new Float32Array(frames);
   const right = new Float32Array(frames);
-  recipe.layers.forEach((layer, i) => renderLayer(layer, i, ctx, left, right));
+  recipe.layers.forEach((layer, i) => { if (!layer.mute) renderLayer(layer, i, ctx, left, right); });
   return trim(left, right, sampleRate);
 }
 
-const longestRelease = (layer: Layer) => Math.max(
+const longestRelease = (layer: Layer) => layer.mute ? 0 : Math.max(
   releaseTime(layer.env),
   ...filtersOf(layer).map((f) => (f.env ? releaseTime(f.env) : 0))
 );
