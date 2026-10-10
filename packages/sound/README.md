@@ -75,6 +75,23 @@ the General MIDI drum notes, with hat chokes). So far:
   - FX (8): riser, downlifter, impact, noise sweep, zap, laser, wind, sub drop.
 - **Kits**: Acoustic, 808, Electronic, Lo-Fi and Hard, each covering GM notes 35-81.
 
+## Resynthesis
+
+`resynthesize(samples, sampleRate)` runs the renderer backwards: any
+recording becomes a recipe. A short-time Fourier transform finds the
+spectral peaks in each frame; peaks are tracked from frame to frame into
+partials (frequency, level, attack, decay); what the partials don't explain
+becomes bands of noise with their own envelopes. Notes that hold sustain for
+as long as the recording held them and release as it did. A recording with a
+pitch (periodic at its YIN estimate) comes back as a pitched sound rooted at
+its note, playable across the keys.
+
+`spectralDistance(a, b, sampleRate)` says how close it got: the mean
+difference in dB between two spectrograms. Round trips of library sounds
+come back within about 1 dB for mallets and bells, 2-3 dB for the kick, sub,
+organ, harp and piano, 5-8 dB for noisy hits, and 10-15 dB for unison pads,
+whose beating voices one partial per harmonic can't hold.
+
 Rendering is deterministic: the same recipe, note, velocity and gate give the
 same samples (noise is seeded from the recipe's id and `seed`). Sounds are
 normalized to sound equally loud: the loudest 100 ms, K-weighted as in

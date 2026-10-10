@@ -7,6 +7,8 @@ export { midiToHz } from './dsp.ts';
 export { encodeWav, decodeWav } from './wav.ts';
 export type { WavBits, DecodedWav } from './wav.ts';
 export { zip, crc32 } from './zip.ts';
+export { resynthesize, spectralDistance } from './resynth.ts';
+export type { ResynthOptions } from './resynth.ts';
 export type { ZipEntry } from './zip.ts';
 export * as analysis from './analysis.ts';
 export { LIBRARY, KITS, GM_DRUM_NAMES, CATEGORY_NAMES, findSound, findKit } from './library/index.ts';

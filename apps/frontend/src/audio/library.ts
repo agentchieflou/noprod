@@ -7,7 +7,7 @@
 // changes the samples; `prewarmLibrary` renders what the project's clips
 // need ahead of playback, since a note's render can take tens of milliseconds.
 
-import { render, findSound, encodeWav, zip, type DrumKit, type RenderOptions, type RenderedSound, type SoundRecipe } from '@noprod/sound';
+import { render, findSound, encodeWav, resynthesize, zip, type DrumKit, type RenderOptions, type RenderedSound, type SoundRecipe } from '@noprod/sound';
 import { v4 as uuidv4 } from 'uuid';
 import { audioContext } from './engine';
 
@@ -252,30 +252,51 @@ export function soundAsBuffer(recipe: SoundRecipe): AudioBuffer {
 // --------------------------------------------------------------- designing
 
 // One worker of its own, so the Sound Designer never waits behind prewarm
-let designWorker: Worker | null = null;
+let designWorker: Worker | null | undefined;
 let designId = 0;
-const designing = new Map<number, { resolve: (sound: RenderedSound) => void; sampleRate: number }>();
+const designing = new Map<number, (data: any) => void>();
 
-// Render off the main thread (or on it, if workers can't start)
-export function renderSound(recipe: SoundRecipe, options: RenderOptions): Promise<RenderedSound> {
-  if (!designWorker) {
+function ask<T>(message: Record<string, unknown>, transfer: Transferable[], fallback: () => T): Promise<T> {
+  if (designWorker === undefined) {
     try {
       designWorker = new Worker(new URL('./libraryWorker.ts', import.meta.url), { type: 'module' });
-      designWorker.onmessage = (e: MessageEvent<{ id: number; left: Float32Array<ArrayBuffer>; right: Float32Array<ArrayBuffer> }>) => {
-        const job = designing.get(e.data.id);
+      designWorker.onmessage = (e: MessageEvent<{ id: number }>) => {
+        const resolve = designing.get(e.data.id);
         designing.delete(e.data.id);
-        job?.resolve({ left: e.data.left, right: e.data.right, sampleRate: job.sampleRate });
+        resolve?.(e.data);
       };
     } catch {
-      return Promise.resolve(render(recipe, options));
+      designWorker = null;
     }
   }
+  if (!designWorker) return Promise.resolve(fallback()); // no workers: do it here
   const id = designId++;
-  const sampleRate = options.sampleRate ?? audioContext.sampleRate;
   return new Promise((resolve) => {
-    designing.set(id, { resolve, sampleRate });
-    designWorker!.postMessage({ id, recipe, options: { ...options, sampleRate } });
+    designing.set(id, resolve);
+    designWorker!.postMessage({ ...message, id }, transfer);
   });
+}
+
+// Render off the main thread
+export function renderSound(recipe: SoundRecipe, options: RenderOptions): Promise<RenderedSound> {
+  const sampleRate = options.sampleRate ?? audioContext.sampleRate;
+  return ask({ recipe, options: { ...options, sampleRate } }, [], () => render(recipe, { ...options, sampleRate }))
+    .then((data: any) => ({ left: data.left, right: data.right, sampleRate }));
+}
+
+// A recording as a recipe: partials and noise bands (the first 12 s, mixed to mono)
+export function resynthesizeBuffer(buffer: AudioBuffer, name: string): Promise<SoundRecipe> {
+  const length = Math.min(buffer.length, Math.round(12 * buffer.sampleRate));
+  const samples = new Float32Array(length);
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const data = buffer.getChannelData(c);
+    for (let i = 0; i < length; i++) samples[i] += data[i] / buffer.numberOfChannels;
+  }
+  const recipeId = `resynth-${uuidv4().slice(0, 8)}`;
+  const options = { name, id: recipeId };
+  return ask({ kind: 'resynth', samples, sampleRate: buffer.sampleRate, name, recipeId }, [samples.buffer],
+    () => resynthesize(samples, buffer.sampleRate, options))
+    .then((data: any) => data.recipe ?? data);
 }
 
 export function toAudioBuffer({ left, right, sampleRate }: RenderedSound) {
