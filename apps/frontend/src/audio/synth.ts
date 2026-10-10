@@ -1,5 +1,8 @@
 // NoProd Synth: a minimal subtractive-style WebAudio voice (oscillator + ADSR).
 // One voice per note; the caller owns routing by passing a destination node.
+// Library instruments (Kit 'library', see library.ts) play from here too.
+
+import { triggerLibrary, startLibraryVoice, type LibraryInstrument } from './library';
 
 export interface SynthParams {
   Waveform?: OscillatorType | string;
@@ -8,8 +11,9 @@ export interface SynthParams {
   Sustain?: number;  // 0..1 fraction of peak
   Release?: number;  // seconds
   Gain?: number;     // 0..1 peak gain
-  Kit?: string;      // 'drums' = NoProd Drums kit instead of the oscillator voice
-  Tune?: number;     // drums: semitones
+  Kit?: string;      // 'drums' = NoProd Drums kit, 'library' = a library sound or kit
+  Tune?: number;     // drums and library: semitones
+  Library?: LibraryInstrument;
 }
 
 export const midiToFreq = (note: number): number => 440 * Math.pow(2, (note - 69) / 12);
@@ -101,6 +105,7 @@ export function triggerNote(
   velocity = 1
 ): AudioScheduledSourceNode {
   if (params.Kit === 'drums') return triggerDrum(ctx, destination, params, midiNote, when, velocity);
+  if (params.Kit === 'library') return triggerLibrary(ctx, destination, params, midiNote, when, duration, velocity);
   const osc = ctx.createOscillator();
   const validTypes = ['sine', 'square', 'sawtooth', 'triangle'];
   osc.type = (validTypes.includes(params.Waveform as string) ? params.Waveform : 'sawtooth') as OscillatorType;
@@ -141,6 +146,7 @@ export function startVoice(
     triggerDrum(ctx, destination, params, midiNote, when, velocity);
     return { release: () => {} };
   }
+  if (params.Kit === 'library') return startLibraryVoice(ctx, destination, params, midiNote, when, velocity);
   const osc = ctx.createOscillator();
   const validTypes = ['sine', 'square', 'sawtooth', 'triangle'];
   osc.type = (validTypes.includes(params.Waveform as string) ? params.Waveform : 'sawtooth') as OscillatorType;

@@ -154,6 +154,6 @@ export interface RenderOptions {
 
 export interface RenderedSound {
   sampleRate: number;
-  left: Float32Array;
-  right: Float32Array;
+  left: Float32Array<ArrayBuffer>;
+  right: Float32Array<ArrayBuffer>;
 }

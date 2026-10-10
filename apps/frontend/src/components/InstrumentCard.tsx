@@ -1,5 +1,7 @@
 import { useDAWStore, createDefaultInstrument, createDrumKit } from '../store/useDAWStore';
 import { midiNoteName, DRUM_NAMES } from '../audio/synth';
+import { libraryOf } from '../audio/library';
+import { CATEGORY_NAMES, GM_DRUM_NAMES } from '@noprod/sound';
 
 const INSTRUMENTS = [
   { label: 'NoProd Synth', create: createDefaultInstrument },
@@ -8,11 +10,24 @@ const INSTRUMENTS = [
 
 // A MIDI track's instrument: swap between the synth and the drum kit, edit
 // its parameters, and audition notes (keyboard for the synth, pads for drums).
+// Library sounds and kits (from the Browser) show here too.
 export default function InstrumentCard({ track, onAudition }: { track: any; onAudition: (pitch: number) => void }) {
   const { updateInstrumentParameter, setTrackInstrument } = useDAWStore();
   const inst = track.instrument;
   const p = inst.parameters;
-  const isDrums = p.Kit === 'drums';
+  const library = libraryOf(p);
+  const isDrums = p.Kit === 'drums' || !!library?.kit;
+
+  // Pads to audition: the classic kit's, or the library kit's first 16 notes,
+  // named by sound (or by their General MIDI role where a sound repeats)
+  const pads: [number, string][] = library?.kit
+    ? (() => {
+      const notes = Object.keys(library.kit.pads).map(Number).sort((a, b) => a - b).slice(0, 16);
+      const sound = (note: number) => library.sounds?.[library.kit!.pads[note].sound]?.name || GM_DRUM_NAMES[note] || `${note}`;
+      return notes.map((note): [number, string] => [note,
+        notes.filter((n) => sound(n) === sound(note)).length > 1 ? GM_DRUM_NAMES[note] || sound(note) : sound(note)]);
+    })()
+    : Object.entries(DRUM_NAMES).map(([note, name]) => [Number(note), name]);
 
   const slider = (name: string, min: number, max: number, step: number, fmt = (v: number) => v.toFixed(2)) => (
     <div key={name} className="param-slider-row">
@@ -39,12 +54,20 @@ export default function InstrumentCard({ track, onAudition }: { track: any; onAu
           }}
           title="Instrument"
         >
+          {library && <option value={inst.name}>{inst.name}</option>}
           {INSTRUMENTS.map((i) => <option key={i.label} value={i.label}>{i.label}</option>)}
         </select>
-        <span style={{ fontSize: '9px', color: 'var(--accent-green)' }}>INSTRUMENT</span>
+        <span style={{ fontSize: '9px', color: 'var(--accent-green)' }}>
+          {library ? `LIBRARY · ${library.kit ? 'KIT' : CATEGORY_NAMES[library.sound!.category].toUpperCase()}` : 'INSTRUMENT'}
+        </span>
       </div>
       <div className="device-card-params">
-        {isDrums ? (
+        {library ? (
+          <>
+            {slider('Tune', -24, 24, 1, (v) => `${v > 0 ? '+' : ''}${v} st`)}
+            {slider('Gain', 0, 1, 0.01)}
+          </>
+        ) : isDrums ? (
           <>
             {slider('Tune', -12, 12, 0.1, (v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} st`)}
             {slider('Decay', 0.2, 2.5, 0.01, (v) => `×${v.toFixed(2)}`)}
@@ -68,8 +91,8 @@ export default function InstrumentCard({ track, onAudition }: { track: any; onAu
       </div>
       {isDrums ? (
         <div className="drum-pads">
-          {Object.entries(DRUM_NAMES).map(([note, name]) => (
-            <button key={note} className="drum-pad" onMouseDown={() => onAudition(Number(note))} title={`${name} (MIDI ${note})`}>
+          {pads.map(([note, name]) => (
+            <button key={note} className="drum-pad" onMouseDown={() => onAudition(note)} title={`${name} (MIDI ${note})`}>
               {name}
             </button>
           ))}
