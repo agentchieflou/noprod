@@ -116,8 +116,10 @@ function renderRaw(recipe: SoundRecipe, options: RenderOptions, sampleRate: numb
 const longestRelease = (layer: Layer) => layer.mute ? 0 : Math.max(
   releaseTime(layer.env),
   ...filtersOf(layer).map((f) => (f.env ? releaseTime(f.env) : 0)),
-  layer.type === 'model' ? Math.min(modelTail(layer), MAX_TAIL) : 0
+  layer.type === 'model' ? Math.min((closedLoop(layer.exciter) ? releaseOf(layer, new Set(layer.bypass)) : 0) + modelTail(layer), MAX_TAIL) : 0
 );
+// The release's T60: how long the player takes to stop
+const releaseOf = (layer: Layer, off: Set<string>) => (off.has('env') ? GATE : layer.env)?.release ?? 0.05;
 
 const filtersOf = (layer: Layer): Filter[] =>
   !layer.filter ? [] : Array.isArray(layer.filter) ? layer.filter : [layer.filter];
@@ -171,9 +173,14 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
     amp[frames] = envelope.next();
     if (envelope.finished(SILENT)) break;
   }
-  // A physical model rings on after the player stops
-  const playing = frames;
-  if (layer.type === 'model') frames = Math.min(amp.length, frames + Math.round(modelTail(layer) * sr));
+  // A physical model rings on after the player stops: a plucked string from
+  // when its damper has silenced it, a bowed or blown one from when the
+  // player's input has fallen 60 dB (its ring-out is its own, not the envelope's)
+  let playing = frames;
+  if (layer.type === 'model') {
+    if (closedLoop(layer.exciter)) playing = Math.min(frames, gate + Math.round(releaseOf(layer, off) * sr));
+    frames = Math.min(amp.length, playing + Math.round(modelTail(layer) * sr));
+  }
   if (frames === 0) return;
 
   const baseHz = (layer.hz ?? ctx.rootHz * (layer.ratio ?? 1)) * ctx.pitchScale;

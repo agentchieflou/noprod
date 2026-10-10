@@ -30,14 +30,21 @@ const SOUNDS: [RegExp, string][] = [
   [/reese/, 'bass-reese'],
   [/sub/, 'bass-sub'],
   [/fm_?bass/, 'bass-fm'],
+  [/contrabass|double_?bass/, 'double-bass'],
   [/finger|electric_bass|fretless|acoustic_bass|upright/, 'bass-finger'],
   [/bass/, 'bass-pluck'],
   [/pizz/, 'pizzicato'],
-  [/string|violin|viola|cello|contrabass/, 'strings-ensemble'],
+  [/violin|fiddle/, 'violin'],
+  [/viola/, 'viola'],
+  [/cello/, 'cello'],
+  [/string/, 'strings-ensemble'],
   [/trumpet/, 'brass-trumpet'],
-  [/brass|horn|trombone|tuba/, 'brass-section'],
+  [/trombone/, 'trombone'],
+  [/french_?horn|^horn$/, 'french-horn'],
+  [/brass|horn|tuba/, 'brass-section'],
   [/pan_?flute/, 'pan-flute'],
-  [/flute|piccolo|recorder/, 'flute'],
+  [/recorder/, 'recorder'],
+  [/flute|piccolo/, 'flute'],
   [/clarinet|oboe|bassoon|sax/, 'clarinet'],
   [/choir|voice|aah|ooh/, 'pad-choir'],
   [/pad/, 'pad-warm'],
@@ -46,9 +53,12 @@ const SOUNDS: [RegExp, string][] = [
   [/glock/, 'glockenspiel'],
   [/celesta|music_?box/, 'music-box'],
   [/kalimba|mbira/, 'kalimba'],
+  [/guitar_steel|steel_guitar|steel_string/, 'guitar-steel'],
   [/steel/, 'steel-drum'],
   [/tubular|chime|bell/, 'bell-tubular'],
   [/harp/, 'harp'],
+  [/banjo/, 'banjo'],
+  [/dulcimer/, 'dulcimer'],
   [/koto/, 'koto'],
   [/guitar/, 'guitar-nylon'],
   [/pluck/, 'pluck-synth'],
@@ -59,9 +69,10 @@ const SOUNDS: [RegExp, string][] = [
 // The names AI dictation is told about (apps/orchestrator's prompt lists these)
 export const STRUDEL_SYNTHS = [
   'sawtooth', 'square', 'triangle', 'sine', 'supersaw', 'piano', 'epiano', 'organ', 'clav', 'harpsichord',
-  'bass', 'sub', 'acid', 'reese', 'strings', 'pizzicato', 'brass', 'trumpet', 'flute', 'clarinet', 'choir',
+  'bass', 'sub', 'acid', 'reese', 'strings', 'violin', 'viola', 'cello', 'contrabass', 'pizzicato', 'brass', 'trumpet',
+  'trombone', 'horn', 'flute', 'recorder', 'clarinet', 'choir',
   'pad', 'marimba', 'vibraphone', 'glockenspiel', 'kalimba', 'steeldrum', 'musicbox', 'bell', 'harp', 'koto',
-  'guitar', 'pluck', 'chip'
+  'guitar', 'banjo', 'dulcimer', 'pluck', 'chip'
 ];
 export const STRUDEL_DRUM_NAMES = ['bd', 'sd', 'rim', 'cp', 'hh', 'oh', 'lt', 'mt', 'ht', 'cr', 'rd', 'cb', 'sh', 'tb', 'perc'];
 

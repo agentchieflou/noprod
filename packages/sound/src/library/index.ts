@@ -5,6 +5,7 @@ import { DRUMS } from './drums.ts';
 import { PERCUSSION } from './percussion.ts';
 import { KITS } from './kits.ts';
 import { TONAL } from './tonal.ts';
+import { MODELED } from './modeled.ts';
 
 export { KITS, GM_DRUM_NAMES } from './kits.ts';
 export type { DrumKit, KitPad } from './kits.ts';
@@ -13,7 +14,7 @@ export {
 } from './strudel.ts';
 export type { StrudelHap, StrudelPart } from './strudel.ts';
 
-export const LIBRARY: SoundRecipe[] = [...DRUMS, ...PERCUSSION, ...TONAL];
+export const LIBRARY: SoundRecipe[] = [...DRUMS, ...PERCUSSION, ...TONAL, ...MODELED];
 
 export const CATEGORY_NAMES: Record<Category, string> = {
   drums: 'Drums', percussion: 'Percussion', bass: 'Bass', keys: 'Keys', mallets: 'Mallets',

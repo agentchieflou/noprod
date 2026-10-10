@@ -5,9 +5,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { render } from '../src/index.ts';
-import type { SoundRecipe } from '../src/index.ts';
+import type { ModelLayer, SoundRecipe } from '../src/index.ts';
 import { CATEGORY_NAMES, GM_DRUM_NAMES, KITS, LIBRARY, findSound } from '../src/library/index.ts';
-import { bandShare, loudness, mean, peak, periodicity, spectralCentroid, toDb } from '../src/analysis.ts';
+import { bandShare, levelAt, loudness, mean, peak, periodicity, spectralCentroid, toDb } from '../src/analysis.ts';
 import { midiToHz } from '../src/dsp.ts';
 
 const SR = 44100;
@@ -86,6 +86,49 @@ test('pitched sounds stay clean across the keyboard', () => {
       assert.ok(top < 1, `${r.id} clips at note ${note} (${toDb(top).toFixed(1)} dBFS)`);
       for (let i = 0; i < left.length; i++) assert.ok(Number.isFinite(left[i]), `${r.id} at ${note}: sample ${i}`);
     }
+  }
+});
+
+// ------------------------------------------------------------ modeled (#79)
+
+const modeled = tagged('modeled');
+
+test('modeled instruments are physical models, the bowed and blown ones in a closed loop', () => {
+  assert.ok(modeled.length >= 16, `${modeled.length} modeled sounds`);
+  for (const r of modeled) {
+    assert.ok(r.layers.every((l) => l.type === 'model'), `${r.id} isn't all model layers`);
+    const kinds = r.layers.map((l) => l.type === 'model' && l.exciter.kind);
+    assert.ok(kinds.every((k) => k === kinds[0]));
+  }
+});
+
+test('bowed and blown instruments sustain while played and stop when the player does', () => {
+  for (const r of modeled.filter((s) => s.layers[0].type === 'model' && !['pluck', 'strike'].includes(s.layers[0].exciter.kind))) {
+    const { left } = render(r, { sampleRate: SR, gate: 2.5 });
+    const a = levelAt(left, SR, 1, 0.1), b = levelAt(left, SR, 2.3, 0.1);
+    assert.ok(Math.abs(toDb(b / a)) < 3, `${r.id} doesn't hold: ${toDb(a).toFixed(1)} → ${toDb(b).toFixed(1)} dB`);
+    // a string rings on for its decay when the bow leaves it; air stops at once
+    const l = r.layers[0] as ModelLayer;
+    const ring = l.resonator.kind === 'string' ? l.resonator.decay ?? 3 : 0.25;
+    const release = l.env?.release ?? 0.05;
+    const t = 2.5 + release + ring * 0.75;
+    const after = t * SR < left.length ? levelAt(left, SR, t, 0.05) : 0;
+    assert.ok(after < b * 0.01, `${r.id} keeps sounding after release (${toDb(after / b).toFixed(1)} dB at ${t.toFixed(2)} s)`);
+    // and it has died away by its end, not been cut off
+    const end = levelAt(left, SR, left.length / SR - 0.03, 0.05);
+    assert.ok(end < b * 0.01, `${r.id} is cut off ${toDb(end / b).toFixed(1)} dB down`);
+    assert.ok(left.length / SR <= 2.5 + release + ring + 0.05, `${r.id} rings on ${(left.length / SR - 2.5).toFixed(2)} s after release`);
+  }
+});
+
+test('plucked and struck instruments ring down on their own, and stop on release', () => {
+  for (const r of modeled.filter((s) => s.layers[0].type === 'model' && ['pluck', 'strike'].includes(s.layers[0].exciter.kind))) {
+    const { left } = render(r, { sampleRate: SR, gate: 3 });
+    assert.ok(levelAt(left, SR, 1, 0.05) < levelAt(left, SR, 0.1, 0.05) * 0.7, `${r.id} doesn't ring down`);
+    const held = render(r, { sampleRate: SR, gate: 0.3 }).left;
+    // 40 dB down, or gone (-70 dBFS) if it had all but died away already
+    const end = levelAt(held, SR, held.length / SR - 0.03, 0.05);
+    assert.ok(end < Math.max(levelAt(held, SR, 0.25, 0.05) * 0.01, 3e-4), `${r.id} isn't damped on release (${toDb(end).toFixed(1)} dB)`);
   }
 });
 
