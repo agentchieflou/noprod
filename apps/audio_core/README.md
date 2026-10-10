@@ -70,6 +70,11 @@ Commands (types in `packages/shared/index.d.ts`): `GET_AUDIO_CORE_STATE`,
 Each command except the parameter ones gets an `AUDIO_CORE_STATE` reply (or
 `AUDIO_CORE_ERROR`). The frontend's **VST Folders Scan** tab drives them.
 
-Not yet: plugin editors (LPI's off-screen GUI extension and the frame
-streaming in #44 B6), and delay compensation inside the Audio Core's own
-buses (the browser compensates its tracks).
+Plugin editors will be streamed to the browser as frames (#44 B6).
+`src/editor/EditorStream.h` and `tools/EditorStreamSpike.cpp`
+(`-DGHOSTDAW_BUILD_TOOLS=ON`) are the B6a latency spike; results and
+recommendations are in [docs/editor-streaming-latency.md](docs/editor-streaming-latency.md).
+
+Not yet: real plugin editors (they need LPI's off-screen GUI extension), and
+delay compensation inside the Audio Core's own buses (the browser compensates
+its tracks).

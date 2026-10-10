@@ -36,6 +36,16 @@ target_link_libraries(GhostDAW
         juce::juce_events
 )
 
+option(GHOSTDAW_BUILD_TOOLS "Build development tools (the editor streaming latency spike)" OFF)
+if(GHOSTDAW_BUILD_TOOLS)
+    juce_add_console_app(EditorStreamSpike PRODUCT_NAME "EditorStreamSpike")
+    juce_generate_juce_header(EditorStreamSpike)
+    target_sources(EditorStreamSpike PRIVATE tools/EditorStreamSpike.cpp)
+    target_include_directories(EditorStreamSpike PRIVATE src)
+    target_compile_definitions(EditorStreamSpike PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries(EditorStreamSpike PRIVATE juce::juce_core juce::juce_events juce::juce_graphics juce::juce_gui_basics)
+endif()
+
 option(GHOSTDAW_BUILD_TESTS "Build the plugin-hosting tests and their test plugins" OFF)
 if(GHOSTDAW_BUILD_TESTS)
     add_subdirectory(tests)
