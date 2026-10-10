@@ -48,7 +48,9 @@ const sentValues = new Map<string, Record<string, ParamValue>>();
 // A parameter changed in the plug-in's own editor: the owner of the device
 // (the store) keeps the new value. Its update comes back through the DSP's
 // update() as the value already sent, so it isn't echoed to the plug-in.
-type EditorParameterListener = (deviceId: string, parameterId: string, value: number) => void;
+// `gesture` marks a drag's start and release, when the plug-in reports them.
+export interface EditorGesture { begin: boolean; end: boolean }
+type EditorParameterListener = (deviceId: string, parameterId: string, value: number, gesture: EditorGesture | null) => void;
 let editorParameterListener: EditorParameterListener | null = null;
 export const onNativeEditorParameter = (fn: EditorParameterListener) => {
   editorParameterListener = fn;
@@ -95,7 +97,8 @@ const getWorker = () => {
       if (message.source === 'editor' && param?.id && !param.readOnly) {
         sentValues.set(streamId, { ...(sentValues.get(streamId) || {}), [param.id]: message.value });
         worker?.postMessage({ type: 'remember', streamId, parameterId: param.id, value: message.value }); // for a reconnect's LOAD
-        editorParameterListener?.(streamId, param.id, message.value);
+        const gesture = message.gestureBegin || message.gestureEnd ? { begin: !!message.gestureBegin, end: !!message.gestureEnd } : null;
+        editorParameterListener?.(streamId, param.id, message.value, gesture);
       }
     } else if (message?.type === 'EDITOR_OPENED') {
       showPluginEditor(message, () => worker?.postMessage({ type: 'command', streamId, message: { type: 'CLOSE_EDITOR' } }));

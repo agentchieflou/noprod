@@ -77,6 +77,11 @@ const mapStripPlugins = (state, stripId, fn) => {
 const mapRack = (state, stripId, rackId, fn) =>
   mapStripPlugins(state, stripId, plugins => plugins.map(p => p.id === rackId ? fn(p) : p));
 
+// Devices whose plug-in editor is mid-drag, and the last value each
+// plug-in parameter was set to from its editor (setDeviceParameterFromPlugin)
+const pluginGestures = new Set();
+const lastPluginValues = new Map();
+
 // Applies `fn` to the device with this id, wherever it sits (any strip, or
 // inside a rack). Unchanged lists and strips keep their identity.
 const mapDeviceAnywhere = (state, deviceId, fn) => {
@@ -702,10 +707,28 @@ export const useDAWStore = create((set, get) => ({
   ); },
 
   // A hosted plug-in's own editor changed a parameter (#44 B6): the device
-  // keeps it, so it is saved and undoable like a change made here
-  setDeviceParameterFromPlugin: (deviceId, paramName, val) => { get().record(`device-param-${deviceId}`); set((state) =>
-    mapDeviceAnywhere(state, deviceId, p => ({ ...p, parameters: { ...p.parameters, [paramName]: val } }))
-  ); },
+  // keeps it, so it is saved and undoable like a change made here. A drag
+  // the plug-in reports as a gesture ({ begin, end }) is one undo step;
+  // without gestures, changes close together in time are.
+  setDeviceParameterFromPlugin: (deviceId, paramName, val, gesture = null) => {
+    const key = `${deviceId}:${paramName}`;
+    // A release that only repeats the drag's last value changes nothing.
+    // Applying it anyway would redo a drag undone between the last move
+    // and the release arriving.
+    if (gesture?.end && !gesture.begin && pluginGestures.has(deviceId) && lastPluginValues.get(key) === val) {
+      pluginGestures.delete(deviceId);
+      return;
+    }
+    if (gesture?.begin && !pluginGestures.has(deviceId)) {
+      get().record();
+      pluginGestures.add(deviceId);
+    } else if (!pluginGestures.has(deviceId)) {
+      get().record(`device-param-${deviceId}`);
+    }
+    if (gesture?.end) pluginGestures.delete(deviceId);
+    lastPluginValues.set(key, val);
+    set((state) => mapDeviceAnywhere(state, deviceId, p => ({ ...p, parameters: { ...p.parameters, [paramName]: val } })));
+  },
 
   // Audio Effect Rack Actions
   addRackToTrack: (stripId) => { get().record(); set((state) =>

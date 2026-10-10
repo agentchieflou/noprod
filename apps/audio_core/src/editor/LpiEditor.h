@@ -47,8 +47,10 @@ public:
     {
         if (insert != nullptr)
         {
+            publishChanges(); // the last of a drag still in flight
             insert->onEditorClosed = nullptr;
             insert->closeEditor();
+            publishChanges(); // a gesture end the plugin emits on close
         }
         markClosed();
     }
@@ -67,26 +69,31 @@ public:
 
         rgba.resize (static_cast<size_t> (width) * static_cast<size_t> (height) * 4);
         auto ok = insert->renderEditor (rgba.data(), rgba.size());
-
-        // Edits made in the editor go to the plugin directly: pass them on
-        auto changed = insert->takeParameterChanges();
-        if (! changed.empty() && onParametersChanged)
-            onParametersChanged (changed);
-
+        publishChanges();
         return ok;
     }
 
     // Coordinates in frame (physical) pixels
     void mouse (int type, float x, float y)
     {
-        if (insert != nullptr)
-            insert->editorMouse (type, x / scale, y / scale);
+        if (insert == nullptr)
+            return;
+        insert->editorMouse (type, x / scale, y / scale);
+        publishChanges(); // a gesture's start before the values that follow it
     }
 
-    // Parameters the editor changed (their indices), found after a render
-    std::function<void (const std::vector<int>&)> onParametersChanged;
+    // Parameters the editor changed, found after each mouse event and frame
+    std::function<void (const std::vector<PluginParameterChange>&)> onParametersChanged;
 
 private:
+    // Edits made in the editor go to the plugin directly: pass them on
+    void publishChanges()
+    {
+        auto changed = insert->takeParameterChanges();
+        if (! changed.empty() && onParametersChanged)
+            onParametersChanged (changed);
+    }
+
     LpiInsert* insert; // null once closed
     std::atomic<bool> closed { false };
 };

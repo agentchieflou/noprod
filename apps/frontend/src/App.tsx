@@ -46,8 +46,8 @@ if (import.meta.env.DEV) {
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 
 // A hosted plug-in's own editor changed a parameter: its device keeps it
-onNativeEditorParameter((deviceId, parameterId, value) =>
-  useDAWStore.getState().setDeviceParameterFromPlugin(deviceId, parameterId, value));
+onNativeEditorParameter((deviceId, parameterId, value, gesture) =>
+  useDAWStore.getState().setDeviceParameterFromPlugin(deviceId, parameterId, value, gesture));
 
 // Ableton-style Color Palette Presets
 const PRESET_COLORS = [

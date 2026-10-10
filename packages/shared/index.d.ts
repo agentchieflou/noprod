@@ -105,6 +105,10 @@ export interface PluginParameterChangedEvent {
   type: 'PLUGIN_PARAMETER_CHANGED';
   slotId: string; parameterIndex: number; value: number; text: string;
   source?: 'editor'; // changed in the plug-in's own editor, not an answer to a SET
+  // A drag in the editor: its first change, and its release (with the final
+  // value). Only from plug-ins that report gestures (LPI lpi.params.changes.v1).
+  gestureBegin?: boolean;
+  gestureEnd?: boolean;
 }
 
 export interface AudioCoreErrorEvent { type: 'AUDIO_CORE_ERROR'; message: string; request: string }

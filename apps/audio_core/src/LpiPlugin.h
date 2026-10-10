@@ -101,6 +101,14 @@ private:
     const lpi_plugin_api* api = nullptr;
 };
 
+// A parameter the plugin changed by itself (in its editor), with the
+// gesture marks of lpi.params.changes.v1 when the plugin reports them
+struct PluginParameterChange
+{
+    int index = 0;
+    bool gestureBegin = false, gestureEnd = false;
+};
+
 // One LPI plugin instance as an insert.
 //
 // LPI fixes sample rate and block size at create(), so prepare() destroys
@@ -111,7 +119,9 @@ private:
 // Plugins with the lpi.gui.offscreen.v1 extension also have an editor, which
 // is rendered off-screen and streamed to the browser (editor/LpiEditor.h).
 // lpi.h requires every GUI call on the thread that sets parameters: the
-// control thread here, like everything else but process().
+// control thread here, like everything else but process(). Two more
+// extensions are used when present: lpi.latency.v1 (the latency the browser
+// compensates for) and lpi.params.changes.v1 (what the editor changed).
 class LpiInsert : public InsertProcessor
 {
 public:
@@ -169,18 +179,33 @@ public:
         preparedBlockSize = maxBlockSize;
 
         if (values.empty())
+        {
             for (auto& p : getParameters())
+            {
                 values.push_back (api.get_parameter_value (instance, static_cast<uint32_t> (p.index)));
+                readOnly.push_back (p.readOnly);
+            }
+        }
         else
+        {
             for (size_t i = 0; i < values.size(); ++i)
-                api.set_parameter_value (instance, static_cast<uint32_t> (i), values[i]);
+                if (! readOnly[i])
+                    api.set_parameter_value (instance, static_cast<uint32_t> (i), values[i]);
+        }
 
         reported.clear();
         for (size_t i = 0; i < values.size(); ++i)
             reported.push_back (api.get_parameter_value (instance, static_cast<uint32_t> (i)));
 
+        auto* latencyExtension = getExtension<lpi_latency_v1> (LPI_EXT_LATENCY_V1);
+        latency = latencyExtension != nullptr && latencyExtension->get_latency != nullptr
+                    ? static_cast<int> (latencyExtension->get_latency (instance)) : 0;
+
         return true;
     }
+
+    // lpi.latency.v1, read once per activation
+    int getLatencySamples() const override { return latency; }
 
     void process (const float* const* inputs, float* const* outputs, int numChannels, int numSamples) noexcept override
     {
@@ -232,11 +257,13 @@ public:
 
     // The value this host last set (or the plugin's initial value). An LPI
     // plugin applies queued changes inside process(), so asking the plugin
-    // directly would lag until the next audio block.
+    // directly would lag until the next audio block. Read-only parameters
+    // are the plugin's outputs (meters and the like): those are read live.
     float getParameterValue (int index) override
     {
-        if (index >= 0 && static_cast<size_t> (index) < values.size())
-            return values[static_cast<size_t> (index)];
+        auto i = static_cast<size_t> (index);
+        if (index >= 0 && i < values.size() && ! readOnly[i])
+            return values[i];
         return instance != nullptr ? library->getApi().get_parameter_value (instance, static_cast<uint32_t> (index)) : 0.0f;
     }
 
@@ -258,21 +285,49 @@ public:
     }
 
     // Parameters the plugin changed by itself (its editor) since the last
-    // call: their indices, with getParameterValue updated to match.
+    // call, with getParameterValue updated to match. Control thread (which
+    // is also the plugin's GUI thread).
     //
-    // A change shows as the plugin reporting a value it didn't report last
-    // time. A value this host set doesn't count: the plugin may report it
-    // only once process() has applied it, and by then this host already
-    // holds it.
-    std::vector<int> takeParameterChanges()
+    // A plugin with lpi.params.changes.v1 says what changed, with gesture
+    // marks. For any other plugin, a change shows as the plugin reporting a
+    // value it didn't report last time. A value this host set doesn't count:
+    // the plugin may report it only once process() has applied it, and by
+    // then this host already holds it.
+    std::vector<PluginParameterChange> takeParameterChanges()
     {
-        std::vector<int> changed;
+        std::vector<PluginParameterChange> changed;
         if (instance == nullptr)
             return changed;
+
+        if (auto* extension = getExtension<lpi_param_changes_v1> (LPI_EXT_PARAM_CHANGES_V1);
+            extension != nullptr && extension->get_parameter_changes != nullptr)
+        {
+            // At most one entry per parameter is queued, so a plugin that
+            // keeps returning full batches is cut off after that many
+            lpi_param_change batch[32];
+            for (size_t taken = 0; taken <= values.size(); taken += 32)
+            {
+                auto count = juce::jmin (extension->get_parameter_changes (instance, batch, 32), 32u);
+                for (uint32_t n = 0; n < count; ++n)
+                {
+                    auto i = static_cast<size_t> (batch[n].index);
+                    if (i >= values.size() || readOnly[i])
+                        continue;
+                    values[i] = batch[n].value;
+                    changed.push_back ({ static_cast<int> (i), (batch[n].flags & LPI_PARAM_CHANGE_GESTURE_BEGIN) != 0,
+                                         (batch[n].flags & LPI_PARAM_CHANGE_GESTURE_END) != 0 });
+                }
+                if (count < 32)
+                    break;
+            }
+            return changed;
+        }
 
         auto& api = library->getApi();
         for (size_t i = 0; i < reported.size() && i < values.size(); ++i)
         {
+            if (readOnly[i])
+                continue;
             auto now = api.get_parameter_value (instance, static_cast<uint32_t> (i));
             if (now == reported[i])
                 continue;
@@ -280,7 +335,7 @@ public:
             if (now != values[i])
             {
                 values[i] = now;
-                changed.push_back (static_cast<int> (i));
+                changed.push_back ({ static_cast<int> (i) });
             }
         }
         return changed;
@@ -347,13 +402,18 @@ public:
     std::function<void()> onEditorClosed;
 
 private:
-    const lpi_gui_offscreen_v1* getGui() const
+    template <typename Extension>
+    const Extension* getExtension (const char* id) const
     {
         auto& api = library->getApi();
         if (instance == nullptr || api.get_extension == nullptr)
             return nullptr;
+        return static_cast<const Extension*> (api.get_extension (instance, id));
+    }
 
-        auto* gui = static_cast<const lpi_gui_offscreen_v1*> (api.get_extension (instance, LPI_EXT_GUI_OFFSCREEN_V1));
+    const lpi_gui_offscreen_v1* getGui() const
+    {
+        auto* gui = getExtension<lpi_gui_offscreen_v1> (LPI_EXT_GUI_OFFSCREEN_V1);
         if (gui == nullptr || gui->open == nullptr || gui->close == nullptr || gui->render == nullptr
             || gui->read_pixels == nullptr || gui->mouse_event == nullptr)
             return nullptr;
@@ -386,5 +446,7 @@ private:
     int preparedBlockSize = 0;
     std::vector<float> values;   // what this host set, or the plugin's own changes it has seen
     std::vector<float> reported; // what the plugin last reported (see takeParameterChanges)
+    std::vector<bool> readOnly;  // the plugin's outputs, never set
+    int latency = 0;
     bool editorOpen = false;
 };

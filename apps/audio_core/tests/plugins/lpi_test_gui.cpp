@@ -9,6 +9,12 @@
 // It also checks the host against lpi.h's GUI threading rule: every GUI call
 // and every set_parameter_value must come from one thread. Calls from any
 // other thread are counted in the read-only "guiThreadViolations" parameter.
+//
+// It reports its editor's changes through lpi.params.changes.v1, with a
+// gesture per drag. Build variants (compile definitions):
+//   LPI_TEST_GUI_POLLING     without lpi.params.changes.v1 (the host polls)
+//   LPI_TEST_GUI_LATENCY=n   delays its audio by n samples and reports it
+//                            through lpi.latency.v1
 
 #include <lpi/lpi.h>
 
@@ -24,6 +30,11 @@ namespace
 enum { kGain = 0, kViolations = 1, kNumParams = 2 };
 
 constexpr uint32_t kLogicalWidth = 200, kLogicalHeight = 150;
+#ifdef LPI_TEST_GUI_LATENCY
+constexpr uint32_t kLatency = LPI_TEST_GUI_LATENCY;
+#else
+constexpr uint32_t kLatency = 0;
+#endif
 
 std::atomic<bool> editorOpenInProcess { false }; // lpi.h v1: one editor per process
 
@@ -41,6 +52,23 @@ struct Instance
     std::vector<uint8_t> pixels;
     bool dragging = false;
     float lastX = -100.0f, lastY = -100.0f;
+
+    // lpi.params.changes.v1: the gain's change since the host last asked
+    bool dragChanged = false; // this drag has changed the gain already
+    bool changePending = false;
+    float changeValue = 0.0f;
+    uint32_t changeFlags = 0;
+
+    void queueChange (float value, uint32_t flags)
+    {
+        changePending = true;
+        changeValue = value;
+        changeFlags |= flags;
+    }
+
+    // Audio thread: the latency variant's delay line, frame-interleaved
+    std::vector<float> delay = std::vector<float> (kLatency * 2, 0.0f);
+    uint32_t delayPos = 0;
 
     // The first thread to touch the GUI or set a parameter is the GUI thread
     void checkThread()
@@ -71,9 +99,28 @@ void process (lpi_plugin* p, const lpi_process_data* data)
     auto* s = self (p);
     s->appliedGain = s->gain.load (std::memory_order_relaxed);
     auto channels = data->num_input_channels < data->num_output_channels ? data->num_input_channels : data->num_output_channels;
-    for (uint32_t ch = 0; ch < channels; ++ch)
-        for (uint32_t i = 0; i < data->num_frames; ++i)
-            data->outputs[ch][i] = data->inputs[ch][i] * s->appliedGain;
+    if (channels > 2)
+        channels = 2;
+
+    if (kLatency == 0)
+    {
+        for (uint32_t ch = 0; ch < channels; ++ch)
+            for (uint32_t i = 0; i < data->num_frames; ++i)
+                data->outputs[ch][i] = data->inputs[ch][i] * s->appliedGain;
+        return;
+    }
+
+    for (uint32_t i = 0; i < data->num_frames; ++i)
+    {
+        for (uint32_t ch = 0; ch < channels; ++ch)
+        {
+            auto& slot = s->delay[s->delayPos * 2 + ch];
+            auto delayed = slot;
+            slot = data->inputs[ch][i];
+            data->outputs[ch][i] = delayed * s->appliedGain;
+        }
+        s->delayPos = (s->delayPos + 1) % (kLatency > 0 ? kLatency : 1);
+    }
 }
 
 uint32_t getParameterCount (lpi_plugin*) { return kNumParams; }
@@ -169,6 +216,8 @@ void guiClose (lpi_plugin* p)
     s->checkThread();
     if (! s->open)
         return;
+    if (s->dragging && s->dragChanged)
+        s->queueChange (s->gain.load(), LPI_PARAM_CHANGE_GESTURE_END); // closed mid-drag
     s->open = false;
     s->dragging = false;
     editorOpenInProcess = false;
@@ -222,13 +271,26 @@ void guiMouse (lpi_plugin* p, int type, float x, float y)
         return;
 
     if (type == LPI_MOUSE_DOWN)
+    {
         s->dragging = true;
+        s->dragChanged = false;
+    }
     else if (type == LPI_MOUSE_UP)
+    {
+        if (s->dragging && s->dragChanged)
+            s->queueChange (s->gain.load(), LPI_PARAM_CHANGE_GESTURE_END);
         s->dragging = false;
+    }
     else if (type == LPI_MOUSE_MOVE && s->dragging)
     {
         auto gain = s->gain.load() + (s->lastY - y) * 0.02f;
-        s->gain.store (gain < 0.0f ? 0.0f : gain > 2.0f ? 2.0f : gain);
+        gain = gain < 0.0f ? 0.0f : gain > 2.0f ? 2.0f : gain;
+        if (gain != s->gain.load())
+        {
+            s->gain.store (gain);
+            s->queueChange (gain, s->dragChanged ? 0u : static_cast<uint32_t> (LPI_PARAM_CHANGE_GESTURE_BEGIN));
+            s->dragChanged = true;
+        }
     }
     s->lastX = x;
     s->lastY = y;
@@ -236,9 +298,42 @@ void guiMouse (lpi_plugin* p, int type, float x, float y)
 
 const lpi_gui_offscreen_v1 gui { guiOpen, guiClose, guiRender, guiReadPixels, guiMouse };
 
+// lpi.params.changes.v1 (GUI thread): only the gain ever changes by itself
+uint32_t getParameterChanges (lpi_plugin* p, lpi_param_change* out, uint32_t max)
+{
+    auto* s = self (p);
+    s->checkThread();
+    if (! s->changePending || max == 0 || out == nullptr)
+        return 0;
+    out[0] = { kGain, s->changeValue, s->changeFlags };
+    s->changePending = false;
+    s->changeFlags = 0;
+    return 1;
+}
+
+const lpi_param_changes_v1 paramChanges { getParameterChanges };
+
+uint32_t getLatency (lpi_plugin* p)
+{
+    self (p)->checkThread();
+    return kLatency;
+}
+
+const lpi_latency_v1 latency { getLatency };
+
 void* getExtension (lpi_plugin*, const char* id)
 {
-    return id != nullptr && std::strcmp (id, LPI_EXT_GUI_OFFSCREEN_V1) == 0 ? const_cast<lpi_gui_offscreen_v1*> (&gui) : nullptr;
+    if (id == nullptr)
+        return nullptr;
+    if (std::strcmp (id, LPI_EXT_GUI_OFFSCREEN_V1) == 0)
+        return const_cast<lpi_gui_offscreen_v1*> (&gui);
+   #ifndef LPI_TEST_GUI_POLLING
+    if (std::strcmp (id, LPI_EXT_PARAM_CHANGES_V1) == 0)
+        return const_cast<lpi_param_changes_v1*> (&paramChanges);
+   #endif
+    if (kLatency > 0 && std::strcmp (id, LPI_EXT_LATENCY_V1) == 0)
+        return const_cast<lpi_latency_v1*> (&latency);
+    return nullptr;
 }
 
 const lpi_plugin_api api {
@@ -247,7 +342,13 @@ const lpi_plugin_api api {
     getState, setState, getExtension
 };
 
+#if defined(LPI_TEST_GUI_POLLING)
+const lpi_plugin_info info { "com.noprod.test.gui.polling", "NoProd Test GUI (polling)", "NoProd", 2, 2 };
+#elif defined(LPI_TEST_GUI_LATENCY)
+const lpi_plugin_info info { "com.noprod.test.gui.latency", "NoProd Test GUI (latency)", "NoProd", 2, 2 };
+#else
 const lpi_plugin_info info { "com.noprod.test.gui", "NoProd Test GUI", "NoProd", 2, 2 };
+#endif
 
 const lpi_plugin_info* getInfo() { return &info; }
 const lpi_plugin_api* getApi() { return &api; }
