@@ -24,8 +24,15 @@
 //   float64 inputClientMs  the browser's timestamp of the input this frame
 //                          answers, or 0 for an ambient frame
 //   (padding to 64 bytes), then the pixels.
-// Text messages from the browser: START { fps?, compression?: 'none'|'deflate', level? },
-// INPUT { kind: 'down'|'move'|'up', x, y, buttons, t }, STOP.
+// Text messages from the browser: START { fps?, compression?: 'none'|'deflate', level?, acks?, window? },
+// INPUT { kind: 'down'|'move'|'up', x, y, buttons, t }, ACK { frameId }, STOP.
+//
+// Backpressure: with `acks`, the browser acknowledges each frame once it has
+// decoded it, and no new frame is rendered while `window` frames are still
+// unacknowledged. Input received meanwhile is answered by the frame rendered
+// right after the next acknowledgement, so frames never queue behind a slow
+// decoder or link; a window of 2 lets the next frame encode while the
+// browser decodes the last one.
 
 // What gets streamed: a plugin editor (or, for the spike, a synthetic one)
 class FrameSource
@@ -51,7 +58,9 @@ public:
     {
         double fps = 20.0;
         Compression compression = Compression::deflate;
-        int level = 1; // zlib level: 1 is fastest
+        int level = 1;      // zlib level: 1 is fastest
+        bool acks = false;  // the browser acknowledges frames (backpressure)
+        int window = 2;     // frames that may be unacknowledged at once
     };
 
     EditorStreamer (HapWebSocketServer::ConnectionPtr connectionToSendTo, std::unique_ptr<FrameSource> frameSource, Settings streamSettings)
@@ -75,6 +84,14 @@ public:
         notify();
     }
 
+    // Connection thread: the browser has this frame on screen
+    void acknowledge (int64_t acknowledgedFrame)
+    {
+        auto previous = lastAcknowledged.load();
+        while (acknowledgedFrame > previous && ! lastAcknowledged.compare_exchange_weak (previous, acknowledgedFrame)) {}
+        notify();
+    }
+
     static double wallClockMs()
     {
         using namespace std::chrono;
@@ -90,15 +107,29 @@ private:
         while (! threadShouldExit())
         {
             auto now = juce::Time::getMillisecondCounterHiRes();
-            if (now < nextAmbient && pendingInputTime.load() == 0.0)
-                wait (static_cast<int> (std::ceil (nextAmbient - now))); // returns early on input
-            if (threadShouldExit())
-                break;
+            auto inputPending = pendingInputTime.load() != 0.0;
+            auto due = now >= nextAmbient;
 
-            auto ambient = juce::Time::getMillisecondCounterHiRes() >= nextAmbient;
+            // Nothing to draw yet: sleep until the next ambient frame (input
+            // and acknowledgements wake it early, then it re-checks)
+            if (! inputPending && ! due)
+            {
+                wait (static_cast<int> (std::ceil (nextAmbient - now)));
+                continue;
+            }
+
+            // Hold the next frame until the browser has shown the last one
+            // (a lost acknowledgement only stalls for a second)
+            if (settings.acks && static_cast<int64_t> (frameId) - 1 - lastAcknowledged.load() >= settings.window
+                && now - lastSendTime < 1000.0)
+            {
+                wait (50);
+                continue;
+            }
+
             renderAndSend();
             // Ambient frames keep a fixed cadence; frames answering input don't move it
-            if (ambient)
+            if (due)
                 nextAmbient = juce::jmax (nextAmbient + interval, juce::Time::getMillisecondCounterHiRes());
         }
     }
@@ -163,6 +194,7 @@ private:
         std::memcpy (message.data() + sizeof (ints), doubles, sizeof (doubles));
 
         connection->sendBinary (message.data(), message.size());
+        lastSendTime = juce::Time::getMillisecondCounterHiRes();
     }
 
     HapWebSocketServer::ConnectionPtr connection;
@@ -171,7 +203,9 @@ private:
     juce::Image image;
     std::vector<uint8_t> rgba, message;
     uint32_t frameId = 0;
+    double lastSendTime = 0.0;
     std::atomic<double> pendingInputTime { 0.0 };
+    std::atomic<int64_t> lastAcknowledged { -1 };
 };
 
 // Server handlers: START creates the connection's streamer around a fresh
@@ -191,6 +225,11 @@ inline HapWebSocketServer::Handlers makeEditorStreamHandlers (std::function<std:
             settings.compression = message["compression"].toString() == "none" ? EditorStreamer::Compression::none
                                                                                 : EditorStreamer::Compression::deflate;
             settings.level = juce::jlimit (1, 9, static_cast<int> (message.getProperty ("level", 1)));
+            settings.acks = static_cast<bool> (message.getProperty ("acks", false));
+            // Measured best (docs/editor-streaming-latency.md): 2 frames ahead
+            // for deflated frames, 1 for raw ones, which otherwise queue in the socket
+            auto defaultWindow = settings.compression == EditorStreamer::Compression::none ? 1 : 2;
+            settings.window = juce::jlimit (1, 8, static_cast<int> (message.getProperty ("window", defaultWindow)));
             connection->context.reset(); // stop any previous streamer first
             connection->context = std::make_shared<EditorStreamer> (connection, makeSource(), settings);
         }
@@ -198,6 +237,11 @@ inline HapWebSocketServer::Handlers makeEditorStreamHandlers (std::function<std:
         {
             if (auto streamer = std::static_pointer_cast<EditorStreamer> (connection->context))
                 streamer->handleInput (message);
+        }
+        else if (type == "ACK")
+        {
+            if (auto streamer = std::static_pointer_cast<EditorStreamer> (connection->context))
+                streamer->acknowledge (static_cast<int64_t> (static_cast<double> (message["frameId"])));
         }
         else if (type == "STOP")
         {
