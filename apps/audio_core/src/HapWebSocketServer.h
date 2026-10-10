@@ -203,6 +203,15 @@ private:
                 return false;
         }
 
+        auto origin = extractHeaderValue (request, "Origin");
+        if (! isAllowedOrigin (origin))
+        {
+            std::cerr << "HapWebSocketServer: rejected connection from origin " << origin << std::endl;
+            const char* forbidden = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            socket.write (forbidden, (int) strlen (forbidden));
+            return false;
+        }
+
         auto key = extractHeaderValue (request, "Sec-WebSocket-Key");
         if (key.isEmpty())
         {
@@ -222,6 +231,35 @@ private:
         return socket.write (utf8, (int) strlen (utf8)) > 0;
     }
 
+public:
+    // Browsers send an Origin header with every WebSocket handshake, and any
+    // web page can try ws://localhost. Plugin commands load code from disk,
+    // so only non-browser clients (the Orchestrator sends no Origin) and
+    // pages served from this machine are let in, plus any origins listed in
+    // NOPROD_ALLOWED_ORIGINS (comma-separated).
+    static bool isAllowedOrigin (const juce::String& origin)
+    {
+        if (origin.isEmpty())
+            return true;
+
+        auto extra = juce::StringArray::fromTokens (juce::SystemStats::getEnvironmentVariable ("NOPROD_ALLOWED_ORIGINS", {}), ",", {});
+        extra.trim();
+        if (extra.contains (origin))
+            return true;
+
+        // An Origin is exactly scheme://host[:port]
+        auto scheme = origin.upToFirstOccurrenceOf ("://", false, false);
+        auto rest = origin.fromFirstOccurrenceOf ("://", false, false);
+        auto host = rest.startsWithChar ('[') ? rest.upToFirstOccurrenceOf ("]", true, false)
+                                              : rest.upToFirstOccurrenceOf (":", false, false);
+        auto port = rest.substring (host.length());
+        bool portOk = port.isEmpty() || (port.startsWithChar (':') && port.length() > 1 && port.substring (1).containsOnly ("0123456789"));
+
+        return (scheme == "http" || scheme == "https") && portOk
+            && (host == "localhost" || host == "127.0.0.1" || host == "[::1]");
+    }
+
+private:
     static juce::String extractHeaderValue (const juce::String& request, const juce::String& headerName)
     {
         auto lines = juce::StringArray::fromLines (request);

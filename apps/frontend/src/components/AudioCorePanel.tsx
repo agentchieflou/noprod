@@ -1,17 +1,23 @@
-import { useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { ArrowDown, ArrowUp, Plus, Power, RefreshCw, Trash2 } from 'lucide-react';
 import {
   subscribeAudioCore, getAudioCore, refreshAudioCore, scanNativePlugins, loadNativePlugin,
-  removeNativePlugin, moveNativePlugin, setNativeBypass, setNativeParameter, type NativeInsert
+  removeNativePlugin, moveNativePlugin, setNativeBypass, setNativeParameter, busInserts,
+  type NativeInsert, type NativeBusId
 } from '../native/audioCore';
 
+const busName = (bus: NativeBusId) => (bus === 'master' ? 'Master' : `Orbit ${bus}`);
+
 // Native plugin hosting in the Audio Core (GhostDAW): scan real plugin
-// folders on disk, load VST3 / AU / LPI plugins onto its master insert chain
-// (what the Sequencer's patterns play through) and edit their parameters.
+// folders on disk, load VST3 / AU / LPI plugins onto its master bus or onto
+// a track (one per Strudel orbit; .orbit(n) in a pattern picks it) and edit
+// their parameters.
 export default function AudioCorePanel({ scanPaths }: { scanPaths: string[] }) {
   const { connected, state, busy, error } = useSyncExternalStore(subscribeAudioCore, getAudioCore);
-  const inserts = state?.inserts ?? [];
+  const [bus, setBus] = useState<NativeBusId>('master');
+  const inserts = busInserts(state, bus);
   const available = state?.availablePlugins ?? [];
+  const busIds: NativeBusId[] = ['master', ...Array.from({ length: state?.trackCount ?? 0 }, (_, i) => i)];
 
   return (
     <div className="native-host">
@@ -44,6 +50,22 @@ export default function AudioCorePanel({ scanPaths }: { scanPaths: string[] }) {
             <span className="native-hint">{available.length} plug-in{available.length === 1 ? '' : 's'} found</span>
           </div>
 
+          <div className="native-row">
+            <span className="native-hint">Bus</span>
+            <select className="rack-map-select" value={String(bus)} title="Where added plug-ins go. Patterns pick a track with .orbit(n); orbit 1 is the default."
+              onChange={(e) => setBus(e.target.value === 'master' ? 'master' : Number(e.target.value))}>
+              {busIds.map((id) => {
+                const count = busInserts(state, id).length;
+                return <option key={String(id)} value={String(id)}>{busName(id)}{count ? ` (${count})` : ''}</option>;
+              })}
+            </select>
+            {state && state.buses.length > 1 && (
+              <span className="native-hint">
+                In use: {state.buses.filter((b) => b.inserts.length).map((b) => busName(b.bus)).join(', ') || 'none'}
+              </span>
+            )}
+          </div>
+
           {available.length > 0 && (
             <div className="vst-path-list native-available">
               {available.map((p) => (
@@ -53,8 +75,8 @@ export default function AudioCorePanel({ scanPaths }: { scanPaths: string[] }) {
                     <span className="native-format">{p.format}</span>
                     {p.vendor && <span className="native-vendor">{p.vendor}</span>}
                   </span>
-                  <button className="btn-icon" title="Add to the Audio Core's master inserts" disabled={busy === 'load'}
-                    onClick={() => loadNativePlugin(p)}>
+                  <button className="btn-icon" title={`Add to ${busName(bus)}`} disabled={busy === 'load'}
+                    onClick={() => loadNativePlugin(p, bus)}>
                     <Plus size={12} />
                   </button>
                 </div>
@@ -64,7 +86,7 @@ export default function AudioCorePanel({ scanPaths }: { scanPaths: string[] }) {
 
           <div className="native-inserts">
             {inserts.length === 0
-              ? <div className="native-hint">No master inserts. Add a plug-in above.</div>
+              ? <div className="native-hint">No inserts on {busName(bus)}. Add a plug-in above.</div>
               : inserts.map((ins, i) => <InsertCard key={ins.slotId} insert={ins} index={i} count={inserts.length} />)}
           </div>
         </>

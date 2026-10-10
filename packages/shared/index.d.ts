@@ -11,7 +11,7 @@ export interface HapEvent {
     
     // New fields for VST support
     vstPlugin?: string; // Optional: target VST name (e.g. "AutoTune")
-    trackIndex?: number;// Optional: track routing
+    trackIndex?: number;// Audio Core track (0-15) the hap plays on; the Sequencer sends the hap's Strudel orbit
   }>;
 }
 
@@ -25,25 +25,29 @@ export interface DictationCommand {
   text: string;
 }
 
-// Addresses a plugin on the Audio Core's master inserts by name. There is
-// one bus for now, so trackIndex is ignored (see SetPluginParameterCommand).
+// Addresses a plugin by name on an Audio Core track (trackIndex 0-15; a
+// negative or missing trackIndex means the master bus). See also
+// SetPluginParameterCommand, which addresses an insert by slotId.
 export interface SetVstParameterEvent {
   type: 'SET_VST_PARAMETER';
-  trackIndex: number;
+  trackIndex?: number;
   pluginName: string;
   parameterIndex: number;
   value: number; // 0.0 to 1.0 normalized value
 }
 
-// ---- Native plugin hosting (Audio Core master inserts; apps/audio_core/src/PluginHost.h)
-// Frontend -> Orchestrator -> Audio Core. Every command except
-// SET_PLUGIN_PARAMETER is answered with AUDIO_CORE_STATE (or AUDIO_CORE_ERROR).
+// ---- Native plugin hosting (Audio Core insert chains; apps/audio_core/src/PluginHost.h)
+// Frontend -> Orchestrator -> Audio Core. Every command except the two
+// parameter ones is answered with AUDIO_CORE_STATE (or AUDIO_CORE_ERROR).
 
 export type PluginFormat = 'VST3' | 'AudioUnit' | 'LPI';
 
+// The master bus, or a track (0-15) -- one per Strudel orbit
+export type AudioCoreBus = 'master' | number;
+
 export interface GetAudioCoreStateCommand { type: 'GET_AUDIO_CORE_STATE' }
 export interface ScanPluginsCommand { type: 'SCAN_PLUGINS'; paths?: string[] }
-export interface LoadPluginCommand { type: 'LOAD_PLUGIN'; path: string; format?: PluginFormat; pluginId?: string; index?: number }
+export interface LoadPluginCommand { type: 'LOAD_PLUGIN'; path: string; format?: PluginFormat; pluginId?: string; bus?: AudioCoreBus; index?: number }
 export interface RemovePluginCommand { type: 'REMOVE_PLUGIN'; slotId: string }
 export interface MovePluginCommand { type: 'MOVE_PLUGIN'; slotId: string; index: number }
 export interface SetPluginBypassCommand { type: 'SET_PLUGIN_BYPASS'; slotId: string; bypassed: boolean }
@@ -71,8 +75,9 @@ export interface AudioCoreStateEvent {
   sampleRate: number;
   blockSize: number;
   device?: { name: string; running: boolean };
-  outputPeak?: number; // post-insert peak since the previous state report
-  inserts: NativeInsertSlot[];
+  outputPeak?: number; // post-master peak since the previous state report
+  trackCount: number;
+  buses: Array<{ bus: AudioCoreBus; inserts: NativeInsertSlot[] }>; // master first, then tracks with inserts
   availablePlugins: Array<{ name: string; vendor: string; format: PluginFormat; path: string; pluginId: string }>;
   scanFolders: string[];
 }

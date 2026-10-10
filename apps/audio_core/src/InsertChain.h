@@ -112,14 +112,17 @@ public:
     // than the prepared maximum are processed in chunks. If the device rate
     // no longer matches the rate the chain was prepared for (the device was
     // just reconfigured), audio passes through until the control thread
-    // re-prepares.
-    void process (float* const* channels, int numChannels, int numSamples) noexcept
+    // re-prepares. Returns whether the chain has inserts it ran (bypassed
+    // ones count, so a bypass toggle doesn't change what the caller mixes).
+    bool process (float* const* channels, int numChannels, int numSamples) noexcept
     {
         auto* snapshot = published.load();
+        bool ran = false;
 
         if (snapshot != nullptr && ! snapshot->slots.empty() && numChannels > 0
             && snapshot->sampleRate == deviceRate.load())
         {
+            ran = true;
             numChannels = juce::jmin (numChannels, snapshot->dry.getNumChannels(), maxChannels);
 
             for (int offset = 0; offset < numSamples; offset += snapshot->maxBlockSize)
@@ -143,6 +146,7 @@ public:
         }
 
         completedCallbacks.fetch_add (1);
+        return ran;
     }
 
     static constexpr int maxChannels = 32;

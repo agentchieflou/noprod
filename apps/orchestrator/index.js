@@ -10,7 +10,28 @@ dotenv.config();
 // It also connects to the Sequencer (port 8081).
 // It connects to the Audio Core (port 8082 - Ghost DAW C++).
 
-const wss = new WebSocketServer({ port: 8080 });
+// Browsers attach an Origin header to WebSocket handshakes, and any web page
+// can try ws://localhost. Only accept non-browser clients (no Origin) and
+// pages served from this machine, plus any origins listed in
+// NOPROD_ALLOWED_ORIGINS (comma-separated).
+const extraOrigins = (process.env.NOPROD_ALLOWED_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (extraOrigins.includes(origin)) return true;
+  try {
+    const { protocol, hostname } = new URL(origin);
+    return (protocol === 'http:' || protocol === 'https:') && ['localhost', '127.0.0.1', '[::1]'].includes(hostname);
+  } catch {
+    return false;
+  }
+}
+const verifyClient = ({ origin }) => {
+  if (isAllowedOrigin(origin)) return true;
+  console.warn(`Rejected WebSocket connection from origin ${origin}`);
+  return false;
+};
+
+const wss = new WebSocketServer({ port: 8080, verifyClient });
 console.log('Orchestrator WebSocket Server listening on port 8080 (Frontend API)');
 
 const frontendClients = new Set();
