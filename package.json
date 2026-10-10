@@ -10,7 +10,9 @@
   "scripts": {
     "start:frontend": "npm run dev --workspace=apps/frontend",
     "start:orchestrator": "npm start --workspace=apps/orchestrator",
-    "start:sequencer": "npm start --workspace=apps/sequencer"
+    "start:sequencer": "npm start --workspace=apps/sequencer",
+    "test": "npm test --workspace=packages/sound --workspace=packages/theory",
+    "e2e": "npm run e2e --workspace=apps/frontend"
   },
   "keywords": [],
   "author": "",
