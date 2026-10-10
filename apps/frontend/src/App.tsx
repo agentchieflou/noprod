@@ -316,7 +316,9 @@ function App() {
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const isInput = (e.target as HTMLElement).tagName === 'INPUT';
+      // (a plugin editor with keyboard focus counts as typing)
+      const target = e.target as HTMLElement;
+      const isInput = target.tagName === 'INPUT' || !!target.closest?.('[data-keyboard-capture]');
       if (e.code === 'Space' && !isInput) {
         e.preventDefault();
         togglePlayback();

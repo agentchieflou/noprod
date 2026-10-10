@@ -11,7 +11,13 @@
 // other thread are counted in the read-only "guiThreadViolations" parameter.
 //
 // It reports its editor's changes through lpi.params.changes.v1, with a
-// gesture per drag. Build variants (compile definitions):
+// gesture per drag. Its editor takes keys (lpi.gui.keyboard.v1): with
+// keyboard focus it shows a yellow border, and digits and '.' typed then
+// Enter set the gain (Escape clears, Backspace deletes). Keys without focus,
+// or a close while focused, break the host contract and are counted in the
+// read-only "keyboardContractViolations".
+//
+// Build variants (compile definitions):
 //   LPI_TEST_GUI_POLLING     without lpi.params.changes.v1 (the host polls)
 //   LPI_TEST_GUI_LATENCY=n   delays its audio by n samples and reports it
 //                            through lpi.latency.v1
@@ -22,17 +28,20 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <new>
+#include <string>
 #include <thread>
 #include <vector>
 
 namespace
 {
+enum { kGain = 0, kViolations = 1, kKeyboardFocused = 2, kKeyboardViolations = 3, kTransportTempo = 4 };
 #ifdef LPI_TEST_GUI_TRANSPORT
-enum { kGain = 0, kViolations = 1, kTransportTempo = 2, kTransportPpq = 3, kTransportFlags = 4, kTransportCalls = 5, kNumParams = 6 };
+enum { kTransportPpq = 5, kTransportFlags = 6, kTransportCalls = 7, kNumParams = 8 };
 #else
-enum { kGain = 0, kViolations = 1, kNumParams = 2 };
+enum { kNumParams = 4 };
 #endif
 
 constexpr uint32_t kLogicalWidth = 200, kLogicalHeight = 150;
@@ -49,6 +58,12 @@ struct Instance
     std::atomic<float> gain { 1.0f };
     float appliedGain = 1.0f;
     std::atomic<int> violations { 0 };
+
+    // lpi.gui.keyboard.v1 (GUI thread), shown as read-only parameters
+    bool focused = false;
+    std::string entry; // digits typed so far
+    std::atomic<bool> focusedShown { false };
+    std::atomic<int> keyboardViolations { 0 };
 
     // lpi.transport.v1 (audio thread), read back as read-only parameters
     std::atomic<double> transportTempo { 0.0 }, transportPpq { 0.0 };
@@ -150,22 +165,31 @@ bool getParameterInfo (lpi_plugin*, uint32_t index, lpi_parameter_info* info)
         info->default_value = 1.0f;
         info->flags = 0;
     }
-    else if (index == kViolations)
+    else if (index == kViolations || index == kKeyboardViolations)
     {
-        info->id = "guiThreadViolations";
-        info->name = "GUI thread violations";
+        info->id = index == kViolations ? "guiThreadViolations" : "keyboardContractViolations";
+        info->name = index == kViolations ? "GUI thread violations" : "Keyboard contract violations";
         info->min_value = 0.0f;
         info->max_value = 1.0e9f;
         info->default_value = 0.0f;
         info->flags = LPI_PARAM_READONLY | LPI_PARAM_STEPPED;
     }
+    else if (index == kKeyboardFocused)
+    {
+        info->id = "keyboardFocused";
+        info->name = "Keyboard focused";
+        info->min_value = 0.0f;
+        info->max_value = 1.0f;
+        info->default_value = 0.0f;
+        info->flags = LPI_PARAM_READONLY | LPI_PARAM_BOOLEAN | LPI_PARAM_STEPPED;
+    }
     else
     {
         static const char* ids[] = { "transportTempo", "transportPpq", "transportFlags", "transportCalls" };
         static const char* names[] = { "Transport tempo", "Transport position", "Transport flags", "Transport calls" };
-        info->id = ids[index - 2];
-        info->name = names[index - 2];
-        info->min_value = index == 3 ? -1.0e9f : 0.0f;
+        info->id = ids[index - kTransportTempo];
+        info->name = names[index - kTransportTempo];
+        info->min_value = index == kTransportTempo + 1 ? -1.0e9f : 0.0f;
         info->max_value = 1.0e9f;
         info->default_value = 0.0f;
         info->flags = LPI_PARAM_READONLY;
@@ -179,6 +203,10 @@ float getParameterValue (lpi_plugin* p, uint32_t index)
         return self (p)->gain.load();
     if (index == kViolations)
         return static_cast<float> (self (p)->violations.load());
+    if (index == kKeyboardFocused)
+        return self (p)->focusedShown.load() ? 1.0f : 0.0f;
+    if (index == kKeyboardViolations)
+        return static_cast<float> (self (p)->keyboardViolations.load());
 #ifdef LPI_TEST_GUI_TRANSPORT
     if (index == kTransportTempo)
         return static_cast<float> (self (p)->transportTempo.load());
@@ -247,6 +275,8 @@ void guiClose (lpi_plugin* p)
     s->checkThread();
     if (! s->open)
         return;
+    if (s->focused)
+        ++s->keyboardViolations; // the host must call focus(false) before close
     if (s->dragging && s->dragChanged)
         s->queueChange (s->gain.load(), LPI_PARAM_CHANGE_GESTURE_END); // closed mid-drag
     s->open = false;
@@ -280,6 +310,13 @@ bool guiRender (lpi_plugin* p)
     fill (*s, w / 4, h - barHeight, w * 3 / 4, h, 59, 130, 246);
     auto mx = static_cast<int> (s->lastX * s->scale), my = static_cast<int> (s->lastY * s->scale);
     fill (*s, mx - 2, my - 2, mx + 3, my + 3, 255, 255, 255);
+    if (s->focused) // a yellow border while it has the keyboard
+    {
+        fill (*s, 0, 0, w, 2, 255, 212, 0);
+        fill (*s, 0, h - 2, w, h, 255, 212, 0);
+        fill (*s, 0, 0, 2, h, 255, 212, 0);
+        fill (*s, w - 2, 0, w, h, 255, 212, 0);
+    }
     return true;
 }
 
@@ -329,6 +366,47 @@ void guiMouse (lpi_plugin* p, int type, float x, float y)
 
 const lpi_gui_offscreen_v1 gui { guiOpen, guiClose, guiRender, guiReadPixels, guiMouse };
 
+// lpi.gui.keyboard.v1 (GUI thread): a one-line gain entry
+void keyEvent (lpi_plugin* p, int type, uint32_t key, uint32_t)
+{
+    auto* s = self (p);
+    s->checkThread();
+    if (! s->open)
+        return;
+    if (! s->focused)
+    {
+        ++s->keyboardViolations; // keys only go to an editor that has focus
+        return;
+    }
+
+    if (type == LPI_KEY_CHAR && ((key >= '0' && key <= '9') || key == '.'))
+        s->entry.push_back (static_cast<char> (key));
+    else if (type == LPI_KEY_DOWN && key == LPI_VK_ESCAPE)
+        s->entry.clear();
+    else if (type == LPI_KEY_DOWN && key == LPI_VK_BACKSPACE && ! s->entry.empty())
+        s->entry.pop_back();
+    else if (type == LPI_KEY_DOWN && key == LPI_VK_ENTER && ! s->entry.empty())
+    {
+        auto gain = std::strtof (s->entry.c_str(), nullptr);
+        gain = gain < 0.0f ? 0.0f : gain > 2.0f ? 2.0f : gain;
+        s->gain.store (gain);
+        s->queueChange (gain, LPI_PARAM_CHANGE_GESTURE_BEGIN | LPI_PARAM_CHANGE_GESTURE_END);
+        s->entry.clear();
+    }
+}
+
+void keyboardFocus (lpi_plugin* p, bool focused)
+{
+    auto* s = self (p);
+    s->checkThread();
+    s->focused = focused;
+    s->focusedShown = focused;
+    if (! focused)
+        s->entry.clear();
+}
+
+const lpi_gui_keyboard_v1 keyboard { keyEvent, keyboardFocus };
+
 // lpi.params.changes.v1 (GUI thread): only the gain ever changes by itself
 uint32_t getParameterChanges (lpi_plugin* p, lpi_param_change* out, uint32_t max)
 {
@@ -370,6 +448,8 @@ void* getExtension (lpi_plugin*, const char* id)
         return nullptr;
     if (std::strcmp (id, LPI_EXT_GUI_OFFSCREEN_V1) == 0)
         return const_cast<lpi_gui_offscreen_v1*> (&gui);
+    if (std::strcmp (id, LPI_EXT_GUI_KEYBOARD_V1) == 0)
+        return const_cast<lpi_gui_keyboard_v1*> (&keyboard);
    #ifndef LPI_TEST_GUI_POLLING
     if (std::strcmp (id, LPI_EXT_PARAM_CHANGES_V1) == 0)
         return const_cast<lpi_param_changes_v1*> (&paramChanges);

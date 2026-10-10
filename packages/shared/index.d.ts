@@ -85,6 +85,7 @@ export interface EditorOpenedEvent {
   port: number;
   width: number; height: number; // frame size in pixels
   scale: number;                 // frame pixels per CSS pixel
+  keyboard: boolean;             // takes keys while focused (LPI lpi.gui.keyboard.v1)
 }
 export interface EditorClosedEvent { type: 'EDITOR_CLOSED'; editorId?: string; slotId?: string }
 

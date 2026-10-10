@@ -226,6 +226,75 @@ typedef struct lpi_gui_offscreen_v1 {
 } lpi_gui_offscreen_v1;
 
 /* ------------------------------------------------------------------------
+ * Extension: "lpi.gui.keyboard.v1"
+ * ------------------------------------------------------------------------
+ * Keyboard input for an lpi.gui.offscreen.v1 editor (text entry in numeric
+ * readouts, #131). Obtained via get_extension(instance,
+ * LPI_EXT_GUI_KEYBOARD_V1); NULL if the editor takes no keyboard input.
+ * Same thread as the other GUI calls. Both functions return void: routing
+ * is purely by focus, the plugin never "consumes" a key for the host.
+ *
+ * Focus: the host decides when its editor surface has keyboard focus
+ * (e.g. a click on the editor canvas; a click elsewhere or closing the
+ * editor ends it) and calls focus(true/false) at the transitions, always
+ * focus(false) before close. While focused, every key goes to the plugin
+ * with none reserved by the host, so Escape, arrows and Space reach a text
+ * field. On focus(false) the plugin ends any text entry and forgets held
+ * keys: UPs for keys held across a blur never arrive.
+ *
+ * Events, delivered in the order they happened:
+ *   - LPI_KEY_DOWN / LPI_KEY_UP: key is an LPI_VK_* code. Letters map from
+ *     the typed letter when it is ASCII A-Z (so Ctrl+A is Ctrl+A on any
+ *     layout), the physical key otherwise.
+ *   - LPI_KEY_CHAR: key is a UTF-32 code point. Sent right after DOWN only
+ *     when the key produces a single printable character and none of
+ *     Ctrl/Alt/Meta is held.
+ *   - Auto-repeat is DOWN (then CHAR) again with no UP in between.
+ *   - IME composition is out of scope for v1.
+ */
+#define LPI_EXT_GUI_KEYBOARD_V1 "lpi.gui.keyboard.v1"
+
+enum {
+    LPI_KEY_DOWN = 0,
+    LPI_KEY_UP   = 1,
+    LPI_KEY_CHAR = 2
+};
+
+enum {
+    LPI_MOD_SHIFT = 1u << 0,
+    LPI_MOD_CTRL  = 1u << 1,
+    LPI_MOD_ALT   = 1u << 2,
+    LPI_MOD_META  = 1u << 3  /* Cmd on macOS, Win key elsewhere */
+};
+
+/* Digits and letters are their ASCII code; everything else is >= 0x100. */
+enum {
+    LPI_VK_NONE      = 0,
+    LPI_VK_SPACE     = 0x20,
+    LPI_VK_0 = '0', LPI_VK_9 = '9',
+    LPI_VK_A = 'A', LPI_VK_Z = 'Z',
+    LPI_VK_ENTER     = 0x101,
+    LPI_VK_ESCAPE    = 0x102,
+    LPI_VK_BACKSPACE = 0x103,
+    LPI_VK_TAB       = 0x104,
+    LPI_VK_DELETE    = 0x105,
+    LPI_VK_HOME      = 0x106,
+    LPI_VK_END       = 0x107,
+    LPI_VK_LEFT      = 0x108,
+    LPI_VK_RIGHT     = 0x109,
+    LPI_VK_UP        = 0x10A,
+    LPI_VK_DOWN      = 0x10B,
+    LPI_VK_MINUS     = 0x10C,
+    LPI_VK_PERIOD    = 0x10D,
+    LPI_VK_COMMA     = 0x10E
+};
+
+typedef struct lpi_gui_keyboard_v1 {
+    void (*key_event)(lpi_plugin* instance, int event_type, uint32_t key, uint32_t modifiers);
+    void (*focus)(lpi_plugin* instance, bool focused);
+} lpi_gui_keyboard_v1;
+
+/* ------------------------------------------------------------------------
  * Extension: "lpi.latency.v1"
  * ------------------------------------------------------------------------
  * Processing latency in samples, for host delay compensation. Call from the

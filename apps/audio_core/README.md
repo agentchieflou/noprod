@@ -108,7 +108,13 @@ VST3/AU editors need a native window.
      input. A frame identical to the last one sent is skipped, so an idle
      editor costs nothing. Frame format and backpressure:
      `src/editor/EditorStream.h`.
-   - Mouse input goes the other way.
+   - Mouse input goes the other way, and so do keys for plugins with
+     `lpi.gui.keyboard.v1` (`keyboard` in EDITOR_OPENED). A click on the
+     editor gives it keyboard focus. While it has focus, every key goes to
+     the plugin, and the DAW's shortcuts and the computer MIDI keyboard
+     stand down. A click elsewhere, closing the window, or the stream
+     dropping takes focus away, and the plugin is always told before its
+     editor closes.
    - The browser shows it in a floating window (`PluginEditorWindow`).
 3. **Parameter changes.** Changes made in the editor are announced as
    `PLUGIN_PARAMETER_CHANGED { ..., source: 'editor' }`.

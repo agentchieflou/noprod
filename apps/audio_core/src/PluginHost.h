@@ -34,7 +34,7 @@
 //   SET_PLUGIN_BYPASS     { slotId, bypassed }
 //   SET_PLUGIN_PARAMETER  { slotId, parameterIndex | parameterId, value }        -> PLUGIN_PARAMETER_CHANGED
 //   SET_VST_PARAMETER     { trackIndex, pluginName, parameterIndex, value (0..1) } -> PLUGIN_PARAMETER_CHANGED
-//   OPEN_EDITOR           { slotId, scale? }  -> EDITOR_OPENED { editorId, slotId, name, port, width, height, scale }
+//   OPEN_EDITOR           { slotId, scale? }  -> EDITOR_OPENED { editorId, slotId, name, port, width, height, scale, keyboard }
 //   CLOSE_EDITOR                              -> EDITOR_CLOSED { editorId, slotId }
 // Failures reply AUDIO_CORE_ERROR { message, request }.
 //
@@ -619,6 +619,8 @@ private:
         reply->setProperty ("width", session.width);
         reply->setProperty ("height", session.height);
         reply->setProperty ("scale", session.scale);
+        auto* lpi = dynamic_cast<LpiInsert*> (&processor);
+        reply->setProperty ("keyboard", lpi != nullptr && lpi->hasKeyboard());
         return juce::var (reply.get());
     }
 

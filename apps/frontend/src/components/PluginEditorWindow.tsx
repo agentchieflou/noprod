@@ -41,6 +41,7 @@ export default function PluginEditorWindow() {
         className="plugin-editor-canvas"
         url={editor.url}
         editorId={editor.editorId}
+        keyboard={editor.keyboard}
         width={editor.width}
         height={editor.height}
         style={{ width: editor.width / editor.scale }}

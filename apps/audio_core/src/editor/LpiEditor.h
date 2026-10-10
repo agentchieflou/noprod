@@ -82,7 +82,21 @@ public:
         publishChanges(); // a gesture's start before the values that follow it
     }
 
-    // Parameters the editor changed, found after each mouse event and frame
+    void key (int type, uint32_t key, uint32_t modifiers)
+    {
+        if (insert == nullptr)
+            return;
+        insert->editorKey (type, key, modifiers);
+        publishChanges(); // e.g. a value typed into a readout
+    }
+
+    void focus (bool focused)
+    {
+        if (insert != nullptr)
+            insert->editorFocus (focused);
+    }
+
+    // Parameters the editor changed, found after each key, mouse event and frame
     std::function<void (const std::vector<PluginParameterChange>&)> onParametersChanged;
 
 private:
@@ -109,9 +123,12 @@ public:
 
     ~LpiEditorSource() override
     {
-        // A drag cut short by the stream closing mustn't leave the button down
+        // A drag cut short by the stream closing mustn't leave the button
+        // down, nor the editor holding the keyboard
         if (leftDown)
             post (LPI_MOUSE_UP, lastX, lastY);
+        if (focused)
+            juce::MessageManager::callAsync ([s = session] { s->focus (false); });
     }
 
     int getWidth() const override { return session->width; }
@@ -173,6 +190,21 @@ public:
         }
     }
 
+    // Connection thread
+    void key (const juce::String& kind, uint32_t key, uint32_t modifiers) override
+    {
+        auto type = kind == "down" ? LPI_KEY_DOWN : kind == "up" ? LPI_KEY_UP : kind == "char" ? LPI_KEY_CHAR : -1;
+        if (type < 0 || ! focused)
+            return;
+        juce::MessageManager::callAsync ([s = session, type, key, modifiers] { s->key (type, key, modifiers); });
+    }
+
+    void focus (bool isFocused) override
+    {
+        focused = isFocused;
+        juce::MessageManager::callAsync ([s = session, isFocused] { s->focus (isFocused); });
+    }
+
 private:
     struct Job
     {
@@ -191,6 +223,6 @@ private:
     std::shared_ptr<EditorSession> session;
     int timeoutMs;
     std::shared_ptr<Job> job;
-    bool leftDown = false;
+    bool leftDown = false, focused = false;
     float lastX = 0.0f, lastY = 0.0f;
 };
