@@ -2,10 +2,10 @@
 // chords, the key) and says which keys to play next, as highlights on the
 // keyboard and a short readout. Same notes in, same suggestions out.
 
-import { recognizeChord, romanNumeral, type Chord, type ChordQuality } from './chords.ts';
+import { chordFamily, recognizeChord, romanNumeral, type Chord, type ChordQuality } from './chords.ts';
 import { complements } from './complement.ts';
 import { nextChords } from './harmony.ts';
-import { KeyTracker } from './keys.ts';
+import { findKey, KeyTracker } from './keys.ts';
 import { findLesson, LessonRunner } from './lessons.ts';
 import { nextNotes } from './melody.ts';
 import { fitRange, pc, pitchClasses } from './notes.ts';
@@ -44,6 +44,8 @@ const RECENT_CHORDS = 8;
 // The auto key stays C major until there's something to go on
 const AUTO_KEY_NOTES = 8;
 const AUTO_KEY_PITCH_CLASSES = 4;
+// Keys that fit within this of the best are a toss-up
+const KEY_TIE = 0.06;
 
 interface Played {
   root: number;
@@ -102,7 +104,21 @@ export class Coach {
     if (this.mode === 'lesson' && this.runner) return this.runner.lesson.key;
     if (this.keySetting !== 'auto') return this.keySetting;
     if (this.notesSeen < AUTO_KEY_NOTES || this.pitchClassesSeen.size < AUTO_KEY_PITCH_CLASSES) return C_MAJOR;
-    return this.tracker.key();
+    return this.homeKey() ?? this.tracker.key();
+  }
+
+  // Several keys can fit the notes about as well: C, G/B and Am fit C major,
+  // E minor and G major. A progression usually starts at home, so of those,
+  // the one whose home chord was played first.
+  private homeKey(): Key | null {
+    const { ranked } = findKey(this.tracker.histogram());
+    const close = ranked.filter(r => r.score >= ranked[0].score - KEY_TIE);
+    for (const c of this.chords) {
+      const family = chordFamily(c.root, c.quality);
+      const home = close.find(r => r.key.tonic === c.root && family === (r.key.mode === 'major' ? 'maj' : 'min'));
+      if (home) return home.key;
+    }
+    return null;
   }
 
   held(): number[] {

@@ -147,6 +147,20 @@ test('the auto key starts in C major and follows what is played', () => {
   assert.equal(coach.suggest().readout.keyName, 'F major');
 });
 
+test('the auto key hears a progression from its first chord', () => {
+  // C, G/B, Am fit C major, E minor and G major about equally: it started on C
+  const coach = new Coach({ mode: 'chords' });
+  [[60, 64, 67], [59, 62, 67], [57, 60, 64]].forEach((chord, i) => play(coach, chord, i));
+  const { readout } = coach.suggest();
+  assert.equal(readout.keyName, 'C major');
+  assert.equal(readout.roman, 'vi');
+  assert.ok(readout.suggestions.slice(0, 2).some(s => s.label.startsWith('F ')), readout.message);
+  // the same chords from Am read as A minor
+  const minor = new Coach({ mode: 'chords' });
+  [[57, 60, 64], [53, 57, 60], [55, 59, 62], [57, 60, 64]].forEach((chord, i) => play(minor, chord, i));
+  assert.equal(minor.suggest().readout.keyName, 'A minor');
+});
+
 test('the coach is deterministic', () => {
   const run = () => {
     const coach = new Coach({ mode: 'chords' });

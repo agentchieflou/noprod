@@ -41,7 +41,9 @@ const { highlights, readout } = coach.suggest();
 - **Key finding** is Krumhansl-Schmuckler: correlate a pitch-class
   histogram with the Krumhansl-Kessler profiles of all 24 keys. The tracker's
   histogram fades (half-life 8 s), counts long notes more, and only changes
-  key when another fits clearly better.
+  key when another fits clearly better. When several keys fit about as well
+  (C, G/B, Am fit C major, E minor and G major), the coach takes the one
+  whose home chord was played first: progressions usually start at home.
 - **Next chords** add three votes: functional harmony (45%, a table of where
   each chord of the key goes: V to I, ii to V...), progressions (45%, every
   place a known progression ends the way the last chords did; the chord
