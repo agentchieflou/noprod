@@ -7,37 +7,40 @@
 #include "InsertChain.h"
 #include "JucePluginInsert.h"
 #include "LpiPlugin.h"
+#include "Mixer.h"
 
-// Plugin scanning, loading and control for the master insert chain (B5b/B5c,
-// and the native-hosting half of #26). Owns the plugin format manager and
-// the list of known plugins, and turns JSON commands into chain changes.
+// Plugin scanning, loading and control for the Mixer's insert chains: the
+// master bus and one bus per track (B5b-d, and the native-hosting half of
+// #26). Owns the plugin format manager and the list of known plugins, and
+// turns JSON commands into chain changes.
 //
 // Runs entirely on the JUCE message thread: plugin creation (VST3 requires
 // it), chain publishing, and parameter writes (LPI requires a single
 // control thread per instance).
 //
+// A bus is "master" or a track number (0..15; tracks are Strudel orbits).
+// Slot ids are unique across buses, so commands on an existing insert only
+// need its slotId.
+//
 // Commands (all reply with AUDIO_CORE_STATE unless noted):
 //   GET_AUDIO_CORE_STATE
 //   SCAN_PLUGINS          { paths?: string[] }   VST3 + LPI in these folders and the default VST3 locations
-//   LOAD_PLUGIN           { path, format?: 'VST3'|'AU'|'LPI', pluginId?, index? }
+//   LOAD_PLUGIN           { path, format?: 'VST3'|'AU'|'LPI', pluginId?, bus?, index? }
 //   REMOVE_PLUGIN         { slotId }
-//   MOVE_PLUGIN           { slotId, index }
+//   MOVE_PLUGIN           { slotId, index }      (within its bus)
 //   SET_PLUGIN_BYPASS     { slotId, bypassed }
-//   SET_PLUGIN_PARAMETER  { slotId, parameterIndex | parameterId, value }  -> PLUGIN_PARAMETER_CHANGED
-//   SET_VST_PARAMETER     { pluginName, parameterIndex, value (0..1) }    -> PLUGIN_PARAMETER_CHANGED
+//   SET_PLUGIN_PARAMETER  { slotId, parameterIndex | parameterId, value }        -> PLUGIN_PARAMETER_CHANGED
+//   SET_VST_PARAMETER     { trackIndex, pluginName, parameterIndex, value (0..1) } -> PLUGIN_PARAMETER_CHANGED
 // Failures reply AUDIO_CORE_ERROR { message, request }.
 class PluginHost : private juce::Timer
 {
 public:
-    PluginHost (InsertChain& masterInserts, juce::File knownPluginsCacheFile)
-        : chain (masterInserts), cacheFile (std::move (knownPluginsCacheFile))
+    PluginHost (Mixer& mixerToControl, juce::File knownPluginsCacheFile)
+        : mixer (mixerToControl), cacheFile (std::move (knownPluginsCacheFile))
     {
         juce::addHeadlessDefaultFormatsToManager (formatManager);
         loadCache();
-
-        juce::StringArray errors;
-        chain.prepare (defaultSampleRate, defaultBlockSize, errors);
-
+        setAudioFormat (defaultSampleRate, defaultBlockSize);
         startTimer (100); // frees snapshots the audio thread has finished with
     }
 
@@ -56,7 +59,8 @@ public:
     juce::StringArray setAudioFormat (double sampleRate, int blockSize)
     {
         juce::StringArray errors;
-        chain.prepare (sampleRate, juce::jmax (blockSize, minimumBlockSize), errors);
+        for (auto* chain : allChains())
+            chain->prepare (sampleRate, juce::jmax (blockSize, minimumBlockSize), errors);
         return errors;
     }
 
@@ -88,33 +92,39 @@ public:
 
             if (type == "LOAD_PLUGIN")
             {
+                auto* chain = chainForBus (message["bus"]);
+                if (chain == nullptr)
+                    return makeError ("No bus '" + message["bus"].toString() + "' (use \"master\" or a track 0-" + juce::String (Mixer::numTracks - 1) + ")", type);
+
                 juce::String error;
                 auto processor = createProcessor (message["path"].toString(), message["format"].toString(),
                                                   message["pluginId"].toString(), error);
                 if (processor == nullptr)
                     return makeError (error, type);
 
-                if (! processor->prepare (chain.getSampleRate(), chain.getMaxBlockSize(), error))
+                if (! processor->prepare (chain->getSampleRate(), chain->getMaxBlockSize(), error))
                     return makeError (error, type);
 
-                auto slots = chain.getSlots();
+                auto slots = chain->getSlots();
                 InsertChain::Slot slot;
                 slot.id = "insert-" + juce::String (nextSlotNumber++);
                 slot.processor = std::move (processor);
 
                 auto index = message.hasProperty ("index") ? static_cast<int> (message["index"]) : static_cast<int> (slots.size());
                 slots.insert (slots.begin() + juce::jlimit (0, static_cast<int> (slots.size()), index), slot);
-                chain.setSlots (std::move (slots));
+                chain->setSlots (std::move (slots));
                 return getState();
             }
 
             if (type == "REMOVE_PLUGIN" || type == "MOVE_PLUGIN" || type == "SET_PLUGIN_BYPASS" || type == "SET_PLUGIN_PARAMETER")
             {
                 auto slotId = message["slotId"].toString();
-                auto slots = chain.getSlots();
-                auto it = std::find_if (slots.begin(), slots.end(), [&] (const InsertChain::Slot& s) { return s.id == slotId; });
-                if (it == slots.end())
+                auto* chain = chainHoldingSlot (slotId);
+                if (chain == nullptr)
                     return makeError ("No insert with id '" + slotId + "'", type);
+
+                auto slots = chain->getSlots();
+                auto it = std::find_if (slots.begin(), slots.end(), [&] (const InsertChain::Slot& s) { return s.id == slotId; });
 
                 if (type == "SET_PLUGIN_PARAMETER")
                     return setParameter (*it, message, type);
@@ -132,17 +142,22 @@ public:
                     auto index = juce::jlimit (0, static_cast<int> (slots.size()), static_cast<int> (message["index"]));
                     slots.insert (slots.begin() + index, slot);
                 }
-                chain.setSlots (std::move (slots));
+                chain->setSlots (std::move (slots));
                 return getState();
             }
 
             if (type == "SET_VST_PARAMETER")
             {
-                // Legacy message from packages/shared: addresses a plugin by name
-                // with a normalized value. There is one bus (the master) for now,
-                // so trackIndex is ignored.
+                // Message from packages/shared: addresses a plugin by name on a
+                // track (trackIndex; missing or negative means the master bus)
+                // with a normalized value.
+                auto trackIndex = message.hasProperty ("trackIndex") ? static_cast<int> (message["trackIndex"]) : -1;
+                auto* chain = trackIndex < 0 ? &mixer.getMasterChain() : chainForBus (trackIndex);
+                if (chain == nullptr)
+                    return makeError ("No track " + juce::String (trackIndex), type);
+
                 auto name = message["pluginName"].toString();
-                for (auto& slot : chain.getSlots())
+                for (auto& slot : chain->getSlots())
                 {
                     if (! slot.processor->getName().equalsIgnoreCase (name))
                         continue;
@@ -160,7 +175,7 @@ public:
                     }
                     return makeError (name + " has no parameter " + juce::String (index), type);
                 }
-                return makeError ("No loaded plugin named '" + name + "'", type);
+                return makeError ("No plugin named '" + name + "' on " + (trackIndex < 0 ? juce::String ("the master bus") : "track " + juce::String (trackIndex)), type);
             }
         }
         catch (const std::exception& e)
@@ -173,19 +188,35 @@ public:
 
     juce::var getState()
     {
+        auto& master = mixer.getMasterChain();
+
         juce::DynamicObject::Ptr state = new juce::DynamicObject();
         state->setProperty ("type", "AUDIO_CORE_STATE");
-        state->setProperty ("sampleRate", chain.getSampleRate());
-        state->setProperty ("blockSize", chain.getMaxBlockSize());
+        state->setProperty ("sampleRate", master.getSampleRate());
+        state->setProperty ("blockSize", master.getMaxBlockSize());
+        state->setProperty ("trackCount", Mixer::numTracks);
         if (describeDevice)
             state->setProperty ("device", describeDevice());
         if (takeOutputPeak)
             state->setProperty ("outputPeak", takeOutputPeak());
 
-        juce::Array<juce::var> inserts;
-        for (auto& slot : chain.getSlots())
-            inserts.add (describeSlot (slot));
-        state->setProperty ("inserts", inserts);
+        // The master bus, then every track bus that has inserts
+        juce::Array<juce::var> buses;
+        auto describeBus = [this] (const juce::var& id, InsertChain& chain)
+        {
+            juce::DynamicObject::Ptr bus = new juce::DynamicObject();
+            bus->setProperty ("bus", id);
+            juce::Array<juce::var> inserts;
+            for (auto& slot : chain.getSlots())
+                inserts.add (describeSlot (slot));
+            bus->setProperty ("inserts", inserts);
+            return juce::var (bus.get());
+        };
+        buses.add (describeBus ("master", master));
+        for (int t = 0; t < Mixer::numTracks; ++t)
+            if (! mixer.getTrackChain (t).getSlots().empty())
+                buses.add (describeBus (t, mixer.getTrackChain (t)));
+        state->setProperty ("buses", buses);
 
         juce::Array<juce::var> available;
         for (auto& desc : knownPlugins.getTypes())
@@ -218,7 +249,16 @@ public:
         return juce::var (state.get());
     }
 
-    InsertChain& getChain() { return chain; }
+    // Removes every insert from every bus (shutdown, before the message
+    // thread goes away).
+    void clearAllInserts()
+    {
+        for (auto* chain : allChains())
+        {
+            chain->setSlots ({});
+            chain->collectGarbage();
+        }
+    }
 
     static constexpr double defaultSampleRate = 48000.0;
     static constexpr int defaultBlockSize = 512;
@@ -232,7 +272,41 @@ private:
 
     void timerCallback() override
     {
-        chain.collectGarbage();
+        for (auto* chain : allChains())
+            chain->collectGarbage();
+    }
+
+    std::vector<InsertChain*> allChains()
+    {
+        std::vector<InsertChain*> chains { &mixer.getMasterChain() };
+        for (int t = 0; t < Mixer::numTracks; ++t)
+            chains.push_back (&mixer.getTrackChain (t));
+        return chains;
+    }
+
+    // "master" (or no bus) is the master bus; a number 0..15 is a track
+    InsertChain* chainForBus (const juce::var& bus)
+    {
+        if (bus.isVoid() || bus.toString() == "master")
+            return &mixer.getMasterChain();
+
+        auto text = bus.toString();
+        if (! (bus.isInt() || bus.isInt64() || bus.isDouble() || (text.isNotEmpty() && text.containsOnly ("0123456789"))))
+            return nullptr;
+
+        auto track = static_cast<int> (bus);
+        if (bus.isString())
+            track = text.getIntValue();
+        return juce::isPositiveAndBelow (track, Mixer::numTracks) ? &mixer.getTrackChain (track) : nullptr;
+    }
+
+    InsertChain* chainHoldingSlot (const juce::String& slotId)
+    {
+        for (auto* chain : allChains())
+            for (auto& slot : chain->getSlots())
+                if (slot.id == slotId)
+                    return chain;
+        return nullptr;
     }
 
     std::unique_ptr<InsertProcessor> createProcessor (const juce::String& path, juce::String format,
@@ -279,7 +353,8 @@ private:
 
         knownPlugins.addType (*description);
 
-        auto instance = formatManager.createPluginInstance (*description, chain.getSampleRate(), chain.getMaxBlockSize(), error);
+        auto instance = formatManager.createPluginInstance (*description, mixer.getMasterChain().getSampleRate(),
+                                                            mixer.getMasterChain().getMaxBlockSize(), error);
         if (instance == nullptr)
         {
             if (error.isEmpty())
@@ -463,7 +538,7 @@ private:
         return juce::var (error.get());
     }
 
-    InsertChain& chain;
+    Mixer& mixer;
     juce::File cacheFile;
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPlugins;

@@ -8,8 +8,11 @@
 #include <iostream>
 #include <thread>
 
+#include "HapAudioEngine.h"
+#include "HapWebSocketServer.h"
 #include "InsertChain.h"
 #include "LpiPlugin.h"
+#include "Mixer.h"
 #include "PluginHost.h"
 
 static int checks = 0, failures = 0;
@@ -83,6 +86,21 @@ static juce::var findByName (const juce::var& list, const juce::String& name)
         for (auto& item : *array)
             if (item["name"].toString() == name)
                 return item;
+    return {};
+}
+
+// The master bus's inserts from an AUDIO_CORE_STATE reply
+static juce::var masterInserts (const juce::var& state)
+{
+    return state["buses"][0]["inserts"];
+}
+
+static juce::var busInserts (const juce::var& state, const juce::var& bus)
+{
+    if (auto* buses = state["buses"].getArray())
+        for (auto& b : *buses)
+            if (b["bus"] == bus)
+                return b["inserts"];
     return {};
 }
 
@@ -296,23 +314,25 @@ static void testPluginHost()
 {
     section ("Plugin host: LOAD/SET/BYPASS/MOVE/REMOVE commands");
     auto cache = juce::File::createTempFile (".xml");
-    InsertChain chain;
+    HapAudioEngine engine;
+    Mixer mixer (engine);
+    auto& chain = mixer.getMasterChain();
     juce::var lpiSlot, vst3Slot;
 
     {
-        PluginHost host (chain, cache);
+        PluginHost host (mixer, cache);
         chain.audioStarted (PluginHost::defaultSampleRate);
         auto signal = makeSignal (512);
 
         auto state = host.handleCommand (command ({ { "type", "GET_AUDIO_CORE_STATE" } }));
         CHECK (state["type"].toString() == "AUDIO_CORE_STATE");
-        CHECK (state["inserts"].size() == 0);
+        CHECK (masterInserts (state).size() == 0);
         CHECK (static_cast<double> (state["sampleRate"]) == PluginHost::defaultSampleRate);
 
         state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GAIN_PATH } }));
         CHECK (state["type"].toString() == "AUDIO_CORE_STATE");
-        CHECK (state["inserts"].size() == 1);
-        lpiSlot = state["inserts"][0];
+        CHECK (masterInserts (state).size() == 1);
+        lpiSlot = masterInserts (state)[0];
         CHECK (lpiSlot["name"].toString() == "NoProd Test Gain");
         CHECK (lpiSlot["format"].toString() == "LPI");
         CHECK (lpiSlot["parameters"].size() == 2);
@@ -330,8 +350,8 @@ static void testPluginHost()
                                                   { "parameterIndex", 0 }, { "value", 9.0 } }));
         CHECK_NEAR (static_cast<float> (changed["value"]), 2.0f, 1e-6f);
 
-        // The legacy SET_VST_PARAMETER message: normalized 0.25 of 0..2 = 0.5
-        changed = host.handleCommand (command ({ { "type", "SET_VST_PARAMETER" }, { "trackIndex", 0 },
+        // SET_VST_PARAMETER (trackIndex -1 = master): normalized 0.25 of 0..2 = 0.5
+        changed = host.handleCommand (command ({ { "type", "SET_VST_PARAMETER" }, { "trackIndex", -1 },
                                                   { "pluginName", "NoProd Test Gain" }, { "parameterIndex", 0 }, { "value", 0.25 } }));
         CHECK (changed["type"].toString() == "PLUGIN_PARAMETER_CHANGED");
         CHECK_NEAR (static_cast<float> (changed["value"]), 0.5f, 1e-6f);
@@ -339,13 +359,13 @@ static void testPluginHost()
         section ("Plugin host: VST3 via JUCE");
         state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", TEST_VST3_PATH }, { "index", 0 } }));
         CHECK (state["type"].toString() == "AUDIO_CORE_STATE");
-        CHECK (state["inserts"].size() == 2);
-        if (state["inserts"].size() != 2)
+        CHECK (masterInserts (state).size() == 2);
+        if (masterInserts (state).size() != 2)
         {
             std::cerr << "  " << state["message"].toString() << std::endl;
             return;
         }
-        vst3Slot = state["inserts"][0];
+        vst3Slot = masterInserts (state)[0];
         CHECK (vst3Slot["format"].toString() == "VST3");
         CHECK (vst3Slot["name"].toString() == "NoProd Test Gain");
         auto gainParam = findByName (vst3Slot["parameters"], "Gain");
@@ -364,15 +384,15 @@ static void testPluginHost()
 
         section ("Plugin host: bypass, move, remove, errors");
         state = host.handleCommand (command ({ { "type", "SET_PLUGIN_BYPASS" }, { "slotId", lpiId }, { "bypassed", true } }));
-        CHECK (static_cast<bool> (state["inserts"][1]["bypassed"]));
+        CHECK (static_cast<bool> (masterInserts (state)[1]["bypassed"]));
         CHECK (errorAgainst (runChain (chain, signal), signal, 0.5f) < 1e-5f);
 
         state = host.handleCommand (command ({ { "type", "MOVE_PLUGIN" }, { "slotId", lpiId }, { "index", 0 } }));
-        CHECK (state["inserts"][0]["slotId"].toString() == lpiId);
+        CHECK (masterInserts (state)[0]["slotId"].toString() == lpiId);
 
         state = host.handleCommand (command ({ { "type", "REMOVE_PLUGIN" }, { "slotId", vst3Id } }));
-        CHECK (state["inserts"].size() == 1);
-        CHECK (state["inserts"][0]["slotId"].toString() == lpiId);
+        CHECK (masterInserts (state).size() == 1);
+        CHECK (masterInserts (state)[0]["slotId"].toString() == lpiId);
 
         auto error = host.handleCommand (command ({ { "type", "REMOVE_PLUGIN" }, { "slotId", "nope" } }));
         CHECK (error["type"].toString() == "AUDIO_CORE_ERROR");
@@ -415,18 +435,224 @@ static void testPluginHost()
         CHECK (state["scanFolders"].size() == 2);
 
         chain.audioStopped();
-        chain.setSlots ({});
-        chain.collectGarbage();
+        host.clearAllInserts();
     }
 
     section ("Plugin host: scanned list persists");
-    InsertChain otherChain;
-    PluginHost reloaded (otherChain, cache);
+    HapAudioEngine otherEngine;
+    Mixer otherMixer (otherEngine);
+    PluginHost reloaded (otherMixer, cache);
     auto available = reloaded.getState()["availablePlugins"];
     CHECK (! findByName (available, "NoProd Test Gain").isVoid());
     CHECK (available.size() == 2);
     CHECK (reloaded.getState()["scanFolders"].size() == 2);
     cache.deleteFile();
+}
+
+static juce::var haps (std::initializer_list<std::pair<const char*, int>> notes, double durationCycles = 0.01)
+{
+    juce::Array<juce::var> list;
+    for (auto& [note, track] : notes)
+        list.add (command ({ { "time", 0.0 }, { "duration", durationCycles }, { "note", note }, { "trackIndex", track } }));
+    return list;
+}
+
+static void testOrigins()
+{
+    section ("WebSocket origin policy");
+    CHECK (HapWebSocketServer::isAllowedOrigin ({}));                      // non-browser client (the Orchestrator)
+    CHECK (HapWebSocketServer::isAllowedOrigin ("http://localhost:5173"));
+    CHECK (HapWebSocketServer::isAllowedOrigin ("http://127.0.0.1"));
+    CHECK (HapWebSocketServer::isAllowedOrigin ("https://[::1]:4173"));
+    CHECK (! HapWebSocketServer::isAllowedOrigin ("https://evil.example"));
+    CHECK (! HapWebSocketServer::isAllowedOrigin ("http://localhost.evil.example"));
+    CHECK (! HapWebSocketServer::isAllowedOrigin ("http://localhost:80@evil.example"));
+    CHECK (! HapWebSocketServer::isAllowedOrigin ("http://localhost:"));
+    CHECK (! HapWebSocketServer::isAllowedOrigin ("null"));
+    CHECK (! HapWebSocketServer::isAllowedOrigin ("file://"));
+}
+
+static void testEngineTracks()
+{
+    section ("Hap engine: haps render on their track");
+    HapAudioEngine engine;
+    engine.prepare (rate, 512);
+
+    juce::Array<juce::var> list;
+    list.add (command ({ { "time", 0.0 }, { "duration", 0.01 }, { "note", "bd" } })); // no trackIndex: track 0
+    list.add (command ({ { "time", 0.0 }, { "duration", 0.01 }, { "note", "c4" }, { "trackIndex", 2 } }));
+    list.add (command ({ { "time", 0.0 }, { "duration", 0.01 }, { "note", "e4" }, { "trackIndex", 40 } })); // clamped to 15
+    engine.scheduleHaps (list);
+    engine.render (512);
+
+    CHECK (engine.isTrackActive (0) && engine.isTrackActive (2) && engine.isTrackActive (15));
+    int active = 0;
+    for (int t = 0; t < HapAudioEngine::maxTracks; ++t)
+        active += engine.isTrackActive (t) ? 1 : 0;
+    CHECK (active == 3);
+
+    section ("Hap engine: a burst bigger than the queue drops events instead of blocking");
+    juce::Array<juce::var> burst;
+    for (int i = 0; i < 5000; ++i)
+        burst.add (command ({ { "time", 0.0 }, { "duration", 0.01 }, { "note", "hh" }, { "trackIndex", 1 } }));
+    engine.scheduleHaps (burst);
+    engine.render (512);
+    CHECK (engine.getDroppedEvents() > 0);
+    CHECK (engine.isTrackActive (1));
+}
+
+static void testTrackBuses()
+{
+    section ("Track buses: inserts on a track only affect that track");
+    auto cache = juce::File::createTempFile (".xml");
+    HapAudioEngine engine;
+    Mixer mixer (engine);
+    PluginHost host (mixer, cache);
+    mixer.start (PluginHost::defaultSampleRate, 512);
+
+    auto render = [&] (int samples)
+    {
+        juce::AudioBuffer<float> out (2, samples);
+        mixer.renderBlock (out.getArrayOfWritePointers(), 2, samples);
+        return out.getMagnitude (0, samples);
+    };
+
+    engine.scheduleHaps (haps ({ { "a4", 3 } }));
+    auto dryPeak = render (2048);
+    CHECK (dryPeak > 0.05f);
+
+    auto state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GAIN_PATH }, { "bus", 2 } }));
+    CHECK (state["type"].toString() == "AUDIO_CORE_STATE");
+    CHECK (static_cast<int> (state["trackCount"]) == Mixer::numTracks);
+    CHECK (masterInserts (state).size() == 0);
+    CHECK (busInserts (state, 2).size() == 1);
+    auto slotId = busInserts (state, 2)[0]["slotId"].toString();
+
+    host.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", slotId }, { "parameterId", "gain" }, { "value", 0.5 } }));
+    engine.scheduleHaps (haps ({ { "a4", 2 } }));
+    CHECK_NEAR (render (2048), 0.5f * dryPeak, 1e-4f);  // track 2 through its gain
+    engine.scheduleHaps (haps ({ { "a4", 3 } }));
+    CHECK_NEAR (render (2048), dryPeak, 1e-4f);         // track 3 untouched
+
+    host.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", slotId }, { "parameterId", "mute" }, { "value", 1 } }));
+    engine.scheduleHaps (haps ({ { "a4", 2 } }));
+    CHECK (render (2048) < 1e-6f);
+
+    section ("Track buses: master inserts process every track");
+    state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GAIN_PATH }, { "bus", "master" } }));
+    auto masterId = masterInserts (state)[0]["slotId"].toString();
+    host.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", masterId }, { "parameterId", "gain" }, { "value", 0.25 } }));
+    engine.scheduleHaps (haps ({ { "a4", 3 } }));
+    CHECK_NEAR (render (2048), 0.25f * dryPeak, 1e-4f);
+
+    section ("Track buses: commands address buses and slots");
+    state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GAIN_PATH }, { "bus", "7" } }));
+    CHECK (busInserts (state, 7).size() == 1);
+    for (auto bad : { juce::var (99), juce::var (-1), juce::var ("nope") })
+    {
+        auto error = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GAIN_PATH }, { "bus", bad } }));
+        CHECK (error["type"].toString() == "AUDIO_CORE_ERROR");
+    }
+
+    // SET_VST_PARAMETER's trackIndex picks the bus: 0.75 of 0..2 = 1.5
+    host.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", slotId }, { "parameterId", "mute" }, { "value", 0 } }));
+    auto changed = host.handleCommand (command ({ { "type", "SET_VST_PARAMETER" }, { "trackIndex", 2 }, { "pluginName", "NoProd Test Gain" },
+                                                  { "parameterIndex", 0 }, { "value", 0.75 } }));
+    CHECK (changed["type"].toString() == "PLUGIN_PARAMETER_CHANGED" && changed["slotId"].toString() == slotId);
+    CHECK_NEAR (static_cast<float> (changed["value"]), 1.5f, 1e-6f);
+    auto error = host.handleCommand (command ({ { "type", "SET_VST_PARAMETER" }, { "trackIndex", 5 }, { "pluginName", "NoProd Test Gain" },
+                                                { "parameterIndex", 0 }, { "value", 0.5 } }));
+    CHECK (error["type"].toString() == "AUDIO_CORE_ERROR" && error["message"].toString().contains ("track 5"));
+
+    // Slot ids work across buses: remove the track 2 insert without naming its bus
+    state = host.handleCommand (command ({ { "type", "REMOVE_PLUGIN" }, { "slotId", slotId } }));
+    CHECK (busInserts (state, 2).isVoid()); // empty track buses aren't listed
+    CHECK (busInserts (state, 7).size() == 1 && masterInserts (state).size() == 1);
+
+    mixer.stop();
+    host.clearAllInserts();
+    cache.deleteFile();
+}
+
+static void testMixerConcurrency()
+{
+    section ("Mixer: haps, track and master swaps from other threads while audio runs");
+    juce::String error;
+    auto library = LpiLibrary::open (juce::File (LPI_TEST_GAIN_PATH), error);
+    if (library == nullptr)
+        return;
+
+    HapAudioEngine engine;
+    Mixer mixer (engine);
+    juce::StringArray errors;
+    std::vector<InsertChain*> chains { &mixer.getMasterChain() };
+    for (int t = 0; t < Mixer::numTracks; ++t)
+        chains.push_back (&mixer.getTrackChain (t));
+    for (auto* chain : chains)
+        chain->prepare (rate, 256, errors);
+    mixer.start (rate, 256);
+
+    std::atomic<bool> stop { false };
+    std::atomic<int> blocks { 0 };
+    std::thread audio ([&]
+    {
+        juce::AudioBuffer<float> out (2, 256);
+        while (! stop.load())
+        {
+            mixer.renderBlock (out.getArrayOfWritePointers(), 2, 256);
+            ++blocks;
+        }
+    });
+    std::thread producer ([&]
+    {
+        for (int i = 0; ! stop.load(); ++i)
+        {
+            engine.scheduleHaps (haps ({ { "c4", i % Mixer::numTracks }, { "bd", (i * 7) % Mixer::numTracks } }));
+            std::this_thread::sleep_for (std::chrono::microseconds (200));
+        }
+    });
+
+    int swaps = 0;
+    for (; swaps < 1500 || blocks.load() < 2000; ++swaps)
+    {
+        auto i = swaps;
+        auto* chain = chains[static_cast<size_t> (i % static_cast<int> (chains.size()))];
+        std::vector<InsertChain::Slot> slots;
+        for (int n = 0; n < i % 3; ++n)
+        {
+            InsertChain::Slot slot;
+            slot.id = juce::String (i) + "-" + juce::String (n);
+            if (n == 1)
+            {
+                auto lpi = std::make_shared<LpiInsert> (library);
+                lpi->prepare (rate, 256, error);
+                slot.processor = lpi;
+            }
+            else
+            {
+                slot.processor = std::make_shared<CanaryInsert>();
+            }
+            slots.push_back (slot);
+        }
+        chain->setSlots (std::move (slots));
+        for (auto* c : chains)
+            c->collectGarbage();
+    }
+
+    stop = true;
+    audio.join();
+    producer.join();
+    mixer.stop();
+    for (auto* chain : chains)
+    {
+        chain->setSlots ({});
+        chain->collectGarbage();
+    }
+
+    std::cout << "  " << blocks.load() << " audio blocks during " << swaps << " swaps across 17 buses" << std::endl;
+    CHECK (blocks.load() > 0);
+    CHECK (! CanaryInsert::usedAfterFree.load());
+    CHECK (CanaryInsert::live.load() == 0);
 }
 
 int main()
@@ -437,6 +663,10 @@ int main()
     testChain();
     testConcurrentSwaps();
     testPluginHost();
+    testOrigins();
+    testEngineTracks();
+    testTrackBuses();
+    testMixerConcurrency();
 
     std::cout << (failures == 0 ? "PASS" : "FAIL") << ": " << (checks - failures) << "/" << checks << " checks" << std::endl;
     return failures == 0 ? 0 : 1;

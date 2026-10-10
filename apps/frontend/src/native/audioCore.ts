@@ -1,8 +1,8 @@
 // Client for the Audio Core's native plugin host (apps/audio_core, GhostDAW),
 // reached through the Orchestrator's WebSocket. GhostDAW renders the
-// Sequencer's patterns through a master insert chain of VST3 / AU / LPI
-// plugins; this module mirrors that chain's state and sends it commands
-// (see apps/audio_core/src/PluginHost.h for the protocol).
+// Sequencer's patterns one track per Strudel orbit, through per-track and
+// master insert chains of VST3 / AU / LPI plugins; this module mirrors those
+// chains and sends them commands (see apps/audio_core/src/PluginHost.h).
 
 export interface NativeParameter {
   index: number;
@@ -36,14 +36,32 @@ export interface NativePlugin {
   pluginId: string;
 }
 
+// 'master', or a track number (= the Strudel orbit whose haps play on it)
+export type NativeBusId = 'master' | number;
+
+export interface NativeBus {
+  bus: NativeBusId;
+  inserts: NativeInsert[];
+}
+
 export interface AudioCoreState {
   sampleRate: number;
   blockSize: number;
+  trackCount: number;
   device?: { name: string; running: boolean };
-  inserts: NativeInsert[];
+  buses: NativeBus[];          // the master bus, then track buses that have inserts
   availablePlugins: NativePlugin[];
   scanFolders: string[];
 }
+
+export const busInserts = (state: AudioCoreState | null, bus: NativeBusId): NativeInsert[] =>
+  state?.buses.find((b) => b.bus === bus)?.inserts ?? [];
+
+// Applies a change to one insert, wherever it lives
+const mapInsert = (state: AudioCoreState, slotId: string, fn: (ins: NativeInsert) => NativeInsert): AudioCoreState => ({
+  ...state,
+  buses: state.buses.map((b) => ({ ...b, inserts: b.inserts.map((ins) => (ins.slotId === slotId ? fn(ins) : ins)) }))
+});
 
 interface Snapshot {
   connected: boolean;        // the Orchestrator reports the Audio Core is reachable
@@ -103,13 +121,10 @@ export function handleOrchestratorMessage(msg: any): boolean {
       const st = snapshot.state;
       if (!st) return true;
       update({
-        state: {
-          ...st,
-          inserts: st.inserts.map((ins) => ins.slotId !== msg.slotId ? ins : {
-            ...ins,
-            parameters: ins.parameters.map((p) => p.index === msg.parameterIndex ? { ...p, value: msg.value, text: msg.text } : p)
-          })
-        }
+        state: mapInsert(st, msg.slotId, (ins) => ({
+          ...ins,
+          parameters: ins.parameters.map((p) => p.index === msg.parameterIndex ? { ...p, value: msg.value, text: msg.text } : p)
+        }))
       });
       return true;
     }
@@ -129,8 +144,8 @@ export function scanNativePlugins(paths: string[]) {
   if (send({ type: 'SCAN_PLUGINS', paths })) update({ busy: 'scan', error: null });
 }
 
-export function loadNativePlugin(plugin: Pick<NativePlugin, 'path' | 'format'> & { pluginId?: string }) {
-  if (send({ type: 'LOAD_PLUGIN', path: plugin.path, format: plugin.format, pluginId: plugin.pluginId }))
+export function loadNativePlugin(plugin: Pick<NativePlugin, 'path' | 'format'> & { pluginId?: string }, bus: NativeBusId = 'master') {
+  if (send({ type: 'LOAD_PLUGIN', path: plugin.path, format: plugin.format, pluginId: plugin.pluginId, bus }))
     update({ busy: 'load', error: null });
 }
 
@@ -148,13 +163,10 @@ export function setNativeParameter(slotId: string, parameterIndex: number, value
   const st = snapshot.state;
   if (st) {
     update({
-      state: {
-        ...st,
-        inserts: st.inserts.map((ins) => ins.slotId !== slotId ? ins : {
-          ...ins,
-          parameters: ins.parameters.map((p) => p.index === parameterIndex ? { ...p, value } : p)
-        })
-      }
+      state: mapInsert(st, slotId, (ins) => ({
+        ...ins,
+        parameters: ins.parameters.map((p) => p.index === parameterIndex ? { ...p, value } : p)
+      }))
     });
   }
   if (flushScheduled) return;

@@ -2,6 +2,8 @@
 
 #include <JuceHeader.h>
 #include <array>
+#include <atomic>
+#include <mutex>
 #include <vector>
 
 // Turns Strudel haps (as sent by the Sequencer's HAP_STREAM message) into
@@ -13,60 +15,88 @@
 //     triggers an enveloped noise burst, with a handful of recognized names
 //     mapped to a distinct tone so a kick still sounds different from a hat.
 //
+// Each hap plays on a track (its `trackIndex`, which the Sequencer takes from
+// Strudel's .orbit()), rendered into that track's own stereo buffer so the
+// Mixer can run per-track inserts before summing.
+//
 // The wire format (HAP_STREAM) doesn't carry tempo, so hap `time`/`duration`
 // (fractions of a cycle, per Strudel's queryArc) are scaled by an assumed
 // fixed cycle length rather than the pattern's real cps/cpm. Precise tempo
 // sync would require the Sequencer to also transmit the pattern's tempo.
-class HapAudioEngine : public juce::AudioIODeviceCallback
+//
+// Threading: scheduleHaps may be called from any thread; it hands events to
+// the audio thread through a lock-free FIFO, so render() never blocks.
+class HapAudioEngine
 {
 public:
-    // Schedules one cycle's worth of haps, in JSON form:
-    // [{ "time": 0, "duration": 0.5, "note": "bd", ... }, ...]
-    // Safe to call from any thread.
+    static constexpr int maxTracks = 16;
+
+    HapAudioEngine()
+    {
+        pendingEvents.reserve (fifoCapacity);
+        for (auto& buffer : trackBuffers)
+            buffer.setSize (2, 512);
+    }
+
+    // Schedules one cycle's worth of haps, in JSON form, starting now:
+    // [{ "time": 0, "duration": 0.5, "note": "bd", "trackIndex": 1 }, ...]
     void scheduleHaps (const juce::var& haps)
     {
-        if (auto* array = haps.getArray())
+        auto* array = haps.getArray();
+        if (array == nullptr)
+            return;
+
+        std::lock_guard<std::mutex> producer (producerLock); // producers only; the audio thread never takes it
+
+        for (auto& hap : *array)
         {
-            const juce::ScopedLock sl (lock);
+            auto noteName = hap.getProperty ("note", juce::var()).toString();
+            bool isPitched = false;
 
-            for (auto& hap : *array)
+            Event event;
+            event.offsetSeconds = static_cast<double> (hap.getProperty ("time", 0.0)) * assumedCycleSeconds;
+            event.durationSeconds = juce::jmax (0.02, static_cast<double> (hap.getProperty ("duration", 0.25)) * assumedCycleSeconds);
+            event.freqHz = noteNameToFrequency (noteName, isPitched);
+            event.percussive = ! isPitched;
+            event.track = juce::jlimit (0, maxTracks - 1, static_cast<int> (hap.getProperty ("trackIndex", 0)));
+
+            const auto scope = fifo.write (1);
+            if (scope.blockSize1 + scope.blockSize2 == 0)
             {
-                auto time = static_cast<double> (hap.getProperty ("time", 0.0));
-                auto duration = static_cast<double> (hap.getProperty ("duration", 0.25));
-                auto noteName = hap.getProperty ("note", juce::var()).toString();
-
-                bool isPitched = false;
-                double freqHz = noteNameToFrequency (noteName, isPitched);
-
-                PendingEvent event;
-                event.triggerSample = currentSamplePosition + static_cast<juce::int64> (time * assumedCycleSeconds * sampleRate);
-                event.durationSeconds = juce::jmax (0.02, duration * assumedCycleSeconds);
-                event.freqHz = freqHz;
-                event.percussive = ! isPitched;
-                pendingEvents.push_back (event);
+                ++droppedEvents;
+                continue;
             }
+            fifoData[static_cast<size_t> (scope.blockSize1 > 0 ? scope.startIndex1 : scope.startIndex2)] = event;
         }
     }
 
-    void audioDeviceAboutToStart (juce::AudioIODevice* device) override
+    // Called before audio starts (or when the device changes).
+    void prepare (double newSampleRate, int maxBlockSize)
     {
-        sampleRate = device->getCurrentSampleRate() > 0 ? device->getCurrentSampleRate() : 44100.0;
+        sampleRate = newSampleRate > 0 ? newSampleRate : 44100.0;
+        blockSize = juce::jmax (1, maxBlockSize);
+        for (auto& buffer : trackBuffers)
+            buffer.setSize (2, blockSize);
         currentSamplePosition = 0;
+        for (auto& voice : voices)
+            voice.active = false;
+        pendingEvents.clear();
     }
 
-    void audioDeviceStopped() override
-    {
-    }
+    int getMaxBlockSize() const { return blockSize; }
+    int getDroppedEvents() const { return droppedEvents.load(); }
 
-    void audioDeviceIOCallbackWithContext (const float* const*, int,
-                                            float* const* outputChannelData, int numOutputChannels,
-                                            int numSamples, const juce::AudioIODeviceCallbackContext&) override
+    // Audio thread: renders numSamples (<= getMaxBlockSize()) into the
+    // per-track buffers.
+    void render (int numSamples) noexcept
     {
-        for (int ch = 0; ch < numOutputChannels; ++ch)
-            if (outputChannelData[ch] != nullptr)
-                juce::FloatVectorOperations::clear (outputChannelData[ch], numSamples);
+        drainFifo();
 
-        const juce::ScopedLock sl (lock);
+        for (int t = 0; t < maxTracks; ++t)
+        {
+            trackBuffers[static_cast<size_t> (t)].clear (0, numSamples);
+            trackActive[static_cast<size_t> (t)] = false;
+        }
 
         for (int n = 0; n < numSamples; ++n)
         {
@@ -77,7 +107,8 @@ public:
                 if (pendingEvents[i].triggerSample <= sampleIndex)
                 {
                     activateVoice (pendingEvents[i]);
-                    pendingEvents.erase (pendingEvents.begin() + static_cast<long> (i));
+                    pendingEvents[i] = pendingEvents.back(); // order doesn't matter; no allocation
+                    pendingEvents.pop_back();
                 }
                 else
                 {
@@ -85,27 +116,29 @@ public:
                 }
             }
 
-            float mixed = 0.0f;
             for (auto& voice : voices)
             {
                 if (! voice.active)
                     continue;
 
-                mixed += renderVoiceSample (voice);
+                auto sample = renderVoiceSample (voice);
+                auto& buffer = trackBuffers[static_cast<size_t> (voice.track)];
+                buffer.addSample (0, n, sample);
+                buffer.addSample (1, n, sample);
+                trackActive[static_cast<size_t> (voice.track)] = true;
 
                 if (--voice.samplesRemaining <= 0)
                     voice.active = false;
             }
-
-            mixed = juce::jlimit (-1.0f, 1.0f, mixed);
-
-            for (int ch = 0; ch < numOutputChannels; ++ch)
-                if (outputChannelData[ch] != nullptr)
-                    outputChannelData[ch][n] = mixed;
         }
 
         currentSamplePosition += numSamples;
     }
+
+    float* const* getTrackChannels (int track) { return trackBuffers[static_cast<size_t> (track)].getArrayOfWritePointers(); }
+
+    // Whether the track made any sound in the last render()
+    bool isTrackActive (int track) const { return trackActive[static_cast<size_t> (track)]; }
 
 private:
     struct Voice
@@ -116,27 +149,63 @@ private:
         int samplesRemaining = 0;
         int totalSamples = 1;
         bool percussive = false;
+        int track = 0;
         juce::Random random;
     };
 
-    struct PendingEvent
+    struct Event
     {
-        juce::int64 triggerSample = 0;
+        double offsetSeconds = 0.0;   // from when the audio thread picks it up
         double durationSeconds = 0.1;
         double freqHz = 440.0;
         bool percussive = false;
+        int track = 0;
+        juce::int64 triggerSample = 0; // set by the audio thread
     };
 
     static constexpr int maxVoices = 16;
+    static constexpr int fifoCapacity = 4096;
     static constexpr double assumedCycleSeconds = 2.0;
 
     std::array<Voice, maxVoices> voices;
-    std::vector<PendingEvent> pendingEvents;
-    juce::CriticalSection lock;
+
+    juce::AbstractFifo fifo { fifoCapacity };
+    std::array<Event, fifoCapacity> fifoData;
+    std::mutex producerLock;
+    std::atomic<int> droppedEvents { 0 };
+
+    std::vector<Event> pendingEvents; // audio thread only, capacity reserved up front
+    std::array<juce::AudioBuffer<float>, maxTracks> trackBuffers;
+    std::array<bool, maxTracks> trackActive {};
+
     double sampleRate = 44100.0;
+    int blockSize = 512;
     juce::int64 currentSamplePosition = 0;
 
-    void activateVoice (const PendingEvent& event)
+    // Moves newly scheduled haps onto the audio thread's pending list, timed
+    // from the current sample position.
+    void drainFifo() noexcept
+    {
+        const auto scope = fifo.read (fifo.getNumReady());
+        auto take = [this] (int start, int count)
+        {
+            for (int i = start; i < start + count; ++i)
+            {
+                auto event = fifoData[static_cast<size_t> (i)];
+                if (pendingEvents.size() == pendingEvents.capacity())
+                {
+                    ++droppedEvents;
+                    continue;
+                }
+                event.triggerSample = currentSamplePosition + static_cast<juce::int64> (event.offsetSeconds * sampleRate);
+                pendingEvents.push_back (event);
+            }
+        };
+        take (scope.startIndex1, scope.blockSize1);
+        take (scope.startIndex2, scope.blockSize2);
+    }
+
+    void activateVoice (const Event& event)
     {
         // Steal the oldest-triggered voice (lowest samplesRemaining) if all are busy.
         size_t slot = 0;
@@ -153,6 +222,7 @@ private:
         voice.totalSamples = juce::jmax (1, static_cast<int> (event.durationSeconds * sampleRate));
         voice.samplesRemaining = voice.totalSamples;
         voice.percussive = event.percussive;
+        voice.track = event.track;
     }
 
     static float renderVoiceSample (Voice& voice)

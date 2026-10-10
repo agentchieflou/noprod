@@ -3,14 +3,14 @@
 
 #include "HapAudioEngine.h"
 #include "HapWebSocketServer.h"
-#include "InsertChain.h"
-#include "MasterBus.h"
+#include "Mixer.h"
 #include "PluginHost.h"
 
 // The Ghost DAW is a headless C++ application acting as the Audio Muscle.
 // It connects to the Orchestrator / Sequencer via WebSockets or UDP.
-// It renders the Sequencer's haps in real time through a master insert
-// chain of hosted plugins (VST3, AU on macOS, and LPI).
+// It renders the Sequencer's haps in real time, one track per Strudel orbit,
+// through per-track and master insert chains of hosted plugins (VST3, AU on
+// macOS, and LPI).
 
 using namespace juce;
 
@@ -29,7 +29,7 @@ public:
     {
         std::cout << "Ghost DAW (NoProd Audio Core) initializing..." << std::endl;
 
-        // 1. Plugin host: format manager, cached plugin list, master inserts.
+        // 1. Plugin host: format manager, cached plugin list, insert chains.
         //    --plugin-cache <file> overrides where the scanned list is kept.
         auto args = StringArray::fromTokens (commandLine, true);
         auto cacheArg = args.indexOf ("--plugin-cache");
@@ -37,9 +37,9 @@ public:
             ? File (args[cacheArg + 1].unquoted())
             : File::getSpecialLocation (File::userApplicationDataDirectory).getChildFile ("NoProd/GhostDAW/known-plugins.xml");
 
-        pluginHost = std::make_unique<PluginHost> (masterInserts, cacheFile);
+        pluginHost = std::make_unique<PluginHost> (mixer, cacheFile);
         pluginHost->describeDevice = [this] { return describeDevice(); };
-        pluginHost->takeOutputPeak = [this] { return masterBus.takePeak(); };
+        pluginHost->takeOutputPeak = [this] { return mixer.takePeak(); };
 
         // 2. Scan for plugins (default VST3 locations plus remembered folders;
         //    plugins already in the cache aren't rescanned).
@@ -52,7 +52,7 @@ public:
         }
 
         // 3. Re-prepare the inserts whenever the device (re)starts
-        masterBus.onDeviceStarted = [this] (double sampleRate, int blockSize)
+        mixer.onDeviceStarted = [this] (double sampleRate, int blockSize)
         {
             MessageManager::callAsync ([this, sampleRate, blockSize]
             {
@@ -63,13 +63,13 @@ public:
         };
 
         // 4. Initialize the audio device and start rendering the Hap engine
-        //    through the master inserts
+        //    through the track and master inserts
         String audioError = deviceManager.initialiseWithDefaultDevices (2, 2);
         if (audioError.isNotEmpty())
         {
             std::cerr << "Audio Device Error: " << audioError << std::endl;
         }
-        deviceManager.addAudioCallback (&masterBus);
+        deviceManager.addAudioCallback (&mixer);
 
         // 5. Listen for the Orchestrator, which connects out to ws://localhost:8082,
         //    forwards the Sequencer's HAP_STREAM messages and the frontend's plugin
@@ -85,12 +85,11 @@ public:
     {
         std::cout << "Ghost DAW shutting down..." << std::endl;
         webSocketServer.reset();
-        deviceManager.removeAudioCallback (&masterBus);
+        deviceManager.removeAudioCallback (&mixer);
         deviceManager.closeAudioDevice();
 
         // Destroy the hosted plugins while the message thread still exists
-        masterInserts.setSlots ({});
-        masterInserts.collectGarbage();
+        pluginHost->clearAllInserts();
         pluginHost.reset();
     }
 
@@ -141,8 +140,7 @@ private:
 
     AudioDeviceManager deviceManager;
     HapAudioEngine audioEngine;
-    InsertChain masterInserts;
-    MasterBus masterBus { audioEngine, masterInserts };
+    Mixer mixer { audioEngine };
     std::unique_ptr<PluginHost> pluginHost;
     std::unique_ptr<HapWebSocketServer> webSocketServer;
 };

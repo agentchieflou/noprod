@@ -1,7 +1,28 @@
 import { WebSocketServer } from 'ws';
 import puppeteer from 'puppeteer';
 
-const wss = new WebSocketServer({ port: 8081 });
+// Browsers attach an Origin header to WebSocket handshakes, and any web page
+// can try ws://localhost. Only accept non-browser clients (no Origin) and
+// pages served from this machine, plus any origins listed in
+// NOPROD_ALLOWED_ORIGINS (comma-separated).
+const extraOrigins = (process.env.NOPROD_ALLOWED_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (extraOrigins.includes(origin)) return true;
+  try {
+    const { protocol, hostname } = new URL(origin);
+    return (protocol === 'http:' || protocol === 'https:') && ['localhost', '127.0.0.1', '[::1]'].includes(hostname);
+  } catch {
+    return false;
+  }
+}
+const verifyClient = ({ origin }) => {
+  if (isAllowedOrigin(origin)) return true;
+  console.warn(`Rejected WebSocket connection from origin ${origin}`);
+  return false;
+};
+
+const wss = new WebSocketServer({ port: 8081, verifyClient });
 console.log('Sequencer WebSocket Server listening on port 8081');
 
 const ENGINE_INIT_TIMEOUT_MS = 20000;
@@ -76,7 +97,10 @@ wss.on('connection', (ws) => {
               note: hap.value?.note ?? hap.value?.s ?? JSON.stringify(hap.value),
               duration: hap.whole ? hap.whole.end.valueOf() - hap.whole.begin.valueOf() : 0,
               sourceCode: code,
-              engine: 'strudel-web'
+              engine: 'strudel-web',
+              // Strudel's .orbit(n) picks the Audio Core track (and its
+              // inserts) the hap plays on; orbit 1 is Strudel's default
+              trackIndex: Number.isFinite(hap.value?.orbit) ? hap.value.orbit : 1
             }));
             // evaluate() starts the real-time scheduler (cyclist); stop it
             // since we only want this cycle's data, not live playback.
