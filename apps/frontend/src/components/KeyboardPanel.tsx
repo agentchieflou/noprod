@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useDAWStore } from '../store/useDAWStore';
 import {
@@ -6,6 +6,8 @@ import {
   setKeyboardEnabled, setOctave, setVelocity, setKeyboardMode, setScale,
   PIANO_LOWER, PIANO_UPPER, SCALE_LOWER, SCALE_UPPER, DRUM_PADS, SCALES, NOTE_NAMES, usesFlats, spellNote, type KeyboardMode
 } from '../audio/computerKeyboard';
+import { subscribeCoach, getCoachState, keyMarks, pretty } from '../audio/coach';
+import KeyboardCoach from './KeyboardCoach';
 
 const isBlack = (pitch: number) => [1, 3, 6, 8, 10].includes(((pitch % 12) + 12) % 12);
 const noteName = (pitch: number, flats = false) => `${spellNote(pitch, flats)}${Math.floor(pitch / 12) - 1}`;
@@ -26,7 +28,10 @@ const pointerHandlers = (id: string, pitches: number[] | null) => ({
   onLostPointerCapture: () => release(id)
 });
 
-function PianoKeys({ base, sounding }: { base: number; sounding: number[] }) {
+// The coach's marks: what each key is suggested as, and every note held
+type CoachMarks = ReturnType<typeof keyMarks>;
+
+function PianoKeys({ base, sounding, letters, coach }: { base: number; sounding: number[]; letters: boolean; coach: CoachMarks | null }) {
   // 32 semitones: the Z row covers 0-16, the Q row 12-31
   const labelsFor = (offset: number) => [
     ...PIANO_LOWER.filter(([, o]) => o === offset).map(([c]) => keyLabel(c)),
@@ -35,14 +40,33 @@ function PianoKeys({ base, sounding }: { base: number; sounding: number[] }) {
   const offsets = Array.from({ length: 32 }, (_, i) => i);
   const whites = offsets.filter((o) => !isBlack(base + o));
   const whiteW = 100 / whites.length;
+  // A key's look and contents: lit while held, marked by the coach
+  const keyFor = (o: number, kind: 'kb-white' | 'kb-black') => {
+    const pitch = base + o;
+    const mark = coach?.marks.get(pitch);
+    const lit = sounding.includes(pitch) || !!coach?.held.has(pitch);
+    return {
+      className: `${kind} ${lit ? 'lit' : ''} ${mark ? `marked coach-${mark.role}` : ''}`,
+      'data-pitch': pitch,
+      'data-glow': mark ? mark.glow.toFixed(2) : undefined,
+      children: (
+        <>
+          {mark && <span className="kb-mark" style={{ '--glow': mark.glow } as React.CSSProperties} />}
+          {mark?.label && <span className="kb-coach-label">{pretty(mark.label)}</span>}
+          {letters && <span className="kb-key-label">{labelsFor(o).join(' ')}</span>}
+        </>
+      )
+    };
+  };
   return (
-    <div className="kb-piano">
+    <div className={`kb-piano ${coach?.marks.size ? 'coached' : ''}`}>
       {whites.map((o, i) => {
         const pitch = base + o;
+        const { children, ...key } = keyFor(o, 'kb-white');
         return (
-          <div key={o} className={`kb-white ${sounding.includes(pitch) ? 'lit' : ''}`} style={{ left: `${i * whiteW}%`, width: `${whiteW}%` }}
+          <div key={o} {...key} style={{ left: `${i * whiteW}%`, width: `${whiteW}%` }}
             {...pointerHandlers(`pointer:${pitch}`, [pitch])} title={noteName(pitch)}>
-            <span className="kb-key-label">{labelsFor(o).join(' ')}</span>
+            {children}
             {pitch % 12 === 0 && <span className="kb-note-label">{noteName(pitch)}</span>}
           </div>
         );
@@ -50,11 +74,12 @@ function PianoKeys({ base, sounding }: { base: number; sounding: number[] }) {
       {offsets.filter((o) => isBlack(base + o)).map((o) => {
         const pitch = base + o;
         const whitesBefore = whites.filter((w) => w < o).length;
+        const { children, ...key } = keyFor(o, 'kb-black');
         return (
-          <div key={o} className={`kb-black ${sounding.includes(pitch) ? 'lit' : ''}`}
+          <div key={o} {...key}
             style={{ left: `${whitesBefore * whiteW - whiteW * 0.3}%`, width: `${whiteW * 0.6}%` }}
             {...pointerHandlers(`pointer:${pitch}`, [pitch])} title={noteName(pitch)}>
-            <span className="kb-key-label">{labelsFor(o).join(' ')}</span>
+            {children}
           </div>
         );
       })}
@@ -84,18 +109,22 @@ function PadRow({ codes, mode, sounding, extraLabel, flats = false }: {
 }
 
 // On-screen computer keyboard: shows what every key plays, lights up as you
-// play (keys or mouse), and holds the mode, scale, octave and velocity.
+// play (keys or mouse), and holds the mode, scale, octave and velocity. The
+// Keyboard Coach shows here too, also with the computer keyboard off (then
+// the keys are a piano, played with the mouse or a MIDI keyboard).
 export default function KeyboardPanel() {
   const kb = useSyncExternalStore(subscribeKeyboard, getKeyboardState);
+  const coach = useSyncExternalStore(subscribeCoach, getCoachState);
   const st = useDAWStore();
-  const mode = effectiveMode(st);
+  const mode = kb.enabled ? effectiveMode(st) : 'piano';
   const base = (kb.octave + 1) * 12;
+  const marks = useMemo(() => keyMarks(coach.highlights, coach.readout.key, coach.focus), [coach.highlights, coach.readout.key, coach.focus]);
 
   const modes: [KeyboardMode, string][] = [['auto', 'Auto'], ['piano', 'Piano'], ['scale', 'Scale'], ['drums', 'Drums']];
 
   return (
-    <div className="kb-panel">
-      <div className="kb-controls">
+    <div className={`kb-panel ${coach.open ? 'coached' : ''}`}>
+      {kb.enabled && <div className="kb-controls">
         <div className="kb-title">
           Computer keyboard →{' '}
           {kb.targetName ? <b>{kb.targetName}</b> : <span className="kb-warn">select or arm a MIDI track</span>}
@@ -138,10 +167,11 @@ export default function KeyboardPanel() {
           <span className="kb-value">{Math.round(kb.velocity * 127)}</span>
         </div>
         <div className="kb-help">Shift = accent · ←/→ octave · ↑/↓ velocity · Esc = stop all</div>
-      </div>
+      </div>}
+      {coach.open && <KeyboardCoach onPiano={mode === 'piano'} />}
 
       <div className="kb-keys">
-        {mode === 'piano' && <PianoKeys base={base} sounding={kb.sounding} />}
+        {mode === 'piano' && <PianoKeys base={base} sounding={kb.sounding} letters={kb.enabled} coach={coach.open ? marks : null} />}
         {mode === 'scale' && (
           <div className="kb-pads">
             <PadRow codes={SCALE_UPPER} mode="scale" sounding={kb.sounding} flats={usesFlats(kb.root, kb.scale)} />
