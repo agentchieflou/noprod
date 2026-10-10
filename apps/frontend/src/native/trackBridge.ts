@@ -113,6 +113,20 @@ const getWorker = () => {
 
 const sampleRates = new Map<string, number>();
 
+// The transport as the worklets need it (audio/transport.ts
+// getTransportSnapshot): each one stamps its blocks with tempo and position.
+// `source` gives the current one to a new worklet; `changed` sends every
+// worklet the new one.
+const nodes = new Map<string, AudioWorkletNode>();
+let transportSource: (() => unknown) | null = null;
+export function connectNativeTransport(source: () => unknown) {
+  transportSource = source;
+  return function changed() {
+    const transport = source();
+    nodes.forEach((node) => node.port.postMessage({ type: 'transport', transport }));
+  };
+}
+
 // The device's DSP: the worklet node plus parameter sync. `update` sends the
 // parameter values that changed since the last update.
 export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): DeviceDSP {
@@ -126,6 +140,8 @@ export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): Devic
   });
   const streamId: string = device.id;
   sampleRates.set(streamId, ctx.sampleRate);
+  nodes.set(streamId, node);
+  if (transportSource) node.port.postMessage({ type: 'transport', transport: transportSource() });
   states.set(streamId, { connected: false, insert: null, error: null, latencyFrames: latency, stats: null });
   emit();
   latencyListeners.forEach((fn) => fn());
@@ -175,6 +191,7 @@ export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): Devic
       states.delete(streamId);
       sampleRates.delete(streamId);
       sentValues.delete(streamId);
+      nodes.delete(streamId);
       emit();
       latencyListeners.forEach((fn) => fn());
     }

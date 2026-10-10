@@ -1,9 +1,11 @@
 // Plugin-hosting tests for the Audio Core: LPI loading (B5a), the master
 // insert chain and its lock-free publishing (B5b), the JSON command path
-// (B5c), VST3 hosting through JUCE (#26), and LPI plugin editors (#44 B6c).
+// (B5c), VST3 hosting through JUCE (#26), LPI plugin editors (#44 B6c), and
+// the transport tempo-synced plugins get.
 // Exits non-zero on failure.
 
 #include <JuceHeader.h>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -435,7 +437,7 @@ static void testPluginHost()
             if (p["format"].toString() == "LPI") ++lpiFound;
             if (p["format"].toString() == "VST3" && p["name"].toString() == "NoProd Test Gain") ++vst3Found;
         }
-        CHECK (lpiFound == 4); // the gain and the three GUI test plugins; the wrong-ABI and no-export variants are not listed
+        CHECK (lpiFound == 5); // the gain and the four GUI test plugins; the wrong-ABI and no-export variants are not listed
         CHECK (! findByName (available, "NoProd Test GUI").isVoid());
         CHECK (vst3Found == 1);
         CHECK (state["scanFolders"].size() == 2);
@@ -450,7 +452,7 @@ static void testPluginHost()
     PluginHost reloaded (otherMixer, cache);
     auto available = reloaded.getState()["availablePlugins"];
     CHECK (! findByName (available, "NoProd Test Gain").isVoid());
-    CHECK (available.size() == 5);
+    CHECK (available.size() == 6);
     CHECK (reloaded.getState()["scanFolders"].size() == 2);
     cache.deleteFile();
 }
@@ -1060,6 +1062,110 @@ static void testEditors()
     cache.deleteFile();
 }
 
+// A stream audio message carrying a transport block (TrackStreams.h)
+static std::vector<uint8_t> streamFrameWithTransport (uint32_t seq, const juce::AudioBuffer<float>& audio,
+                                                      double tempo, double ppq, uint32_t transportFlags)
+{
+    auto plain = streamFrame (seq, audio);
+    std::vector<uint8_t> data (plain.size() + TrackStream::transportBytes);
+    std::memcpy (data.data(), plain.data(), TrackStream::headerBytes);
+    auto flags = TrackStream::hasTransport;
+    std::memcpy (data.data() + 12, &flags, 4);
+    std::memcpy (data.data() + 16, &tempo, 8);
+    std::memcpy (data.data() + 24, &ppq, 8);
+    std::memcpy (data.data() + 32, &transportFlags, 4);
+    std::memcpy (data.data() + TrackStream::headerBytes + TrackStream::transportBytes, plain.data() + TrackStream::headerBytes,
+                 plain.size() - TrackStream::headerBytes);
+    return data;
+}
+
+// What the transport test plugin last got: tempo, position, flags, calls
+static std::array<float, 4> transportSeen (PluginHost& host, TrackStream& stream)
+{
+    auto params = host.handleStreamCommand (stream, command ({ { "type", "GET_STATE" } }))["insert"]["parameters"];
+    return { static_cast<float> (findByName (params, "Transport tempo")["value"]), static_cast<float> (findByName (params, "Transport position")["value"]),
+             static_cast<float> (findByName (params, "Transport flags")["value"]), static_cast<float> (findByName (params, "Transport calls")["value"]) };
+}
+
+static void testTransport()
+{
+    section ("Transport: a stream block's transport reaches lpi.transport.v1");
+    auto cache = juce::File::createTempFile (".xml");
+    HapAudioEngine engine;
+    Mixer mixer (engine);
+    PluginHost host (mixer, cache);
+
+    auto stream = std::make_shared<TrackStream>();
+    stream->id = "device-t";
+    stream->sampleRate = 48000.0;
+    stream->maxBlockSize = 256;
+    juce::StringArray errors;
+    stream->chain.prepare (stream->sampleRate, stream->maxBlockSize, errors);
+    stream->chain.audioStarted (stream->sampleRate);
+    host.registerStream (stream);
+    auto state = host.handleStreamCommand (*stream, command ({ { "type", "LOAD" }, { "path", LPI_TEST_GUI_TRANSPORT_PATH } }));
+    CHECK (state["insert"]["name"].toString() == "NoProd Test GUI (transport)");
+
+    constexpr uint32_t playing = TransportInfo::playing, tempoValid = TransportInfo::tempoValid, ppqValid = TransportInfo::ppqValid;
+    auto signal = makeSignal (256);
+    auto frame = streamFrameWithTransport (3, signal, 120.0, 8.0, playing | tempoValid | ppqValid);
+    CHECK (stream->processFrame (frame.data(), frame.size()));
+    auto seen = transportSeen (host, *stream);
+    CHECK (seen[0] == 120.0f && seen[1] == 8.0f && seen[2] == static_cast<float> (playing | tempoValid | ppqValid) && seen[3] == 1.0f);
+    // The audio itself sits after the transport block, and goes back processed (gain 1)
+    juce::AudioBuffer<float> back (2, 256);
+    for (int ch = 0; ch < 2; ++ch)
+        std::memcpy (back.getWritePointer (ch), frame.data() + TrackStream::headerBytes + TrackStream::transportBytes + static_cast<size_t> (ch) * 256 * sizeof (float), 256 * sizeof (float));
+    CHECK (errorAgainst (back, signal, 1.0f) < 1e-6f);
+
+    // A block bigger than the chain's runs in chunks, each told where it starts:
+    // the last of 1000 frames starts 768 frames (0.032 quarter notes at 120 bpm) in
+    auto big = makeSignal (1000);
+    frame = streamFrameWithTransport (4, big, 120.0, 8.0, playing | tempoValid | ppqValid);
+    CHECK (stream->processFrame (frame.data(), frame.size()));
+    seen = transportSeen (host, *stream);
+    CHECK_NEAR (seen[1], 8.032f, 1e-5f);
+    CHECK (seen[3] == 5.0f);
+
+    // Stopped: the position stays put
+    frame = streamFrameWithTransport (5, big, 120.0, 8.0, tempoValid | ppqValid);
+    stream->processFrame (frame.data(), frame.size());
+    seen = transportSeen (host, *stream);
+    CHECK (seen[1] == 8.0f && seen[2] == static_cast<float> (tempoValid | ppqValid));
+
+    // A tempo that isn't one isn't passed on as valid
+    frame = streamFrameWithTransport (6, signal, std::nan (""), 9.0, playing | tempoValid | ppqValid);
+    stream->processFrame (frame.data(), frame.size());
+    CHECK (transportSeen (host, *stream)[2] == static_cast<float> (playing | ppqValid));
+
+    // Blocks without a transport (older senders) still work, and tell the plugin nothing
+    auto calls = transportSeen (host, *stream)[3];
+    auto plain = streamFrame (7, signal);
+    CHECK (stream->processFrame (plain.data(), plain.size()));
+    CHECK (transportSeen (host, *stream)[3] == calls);
+
+    // A transport flag on a block too short to hold one is refused
+    plain = streamFrame (8, signal);
+    auto flagOnly = TrackStream::hasTransport;
+    std::memcpy (plain.data() + 12, &flagOnly, 4);
+    CHECK (! stream->processFrame (plain.data(), plain.size()));
+
+    section ("Transport: a VST3 sees it through its play head");
+    state = host.handleStreamCommand (*stream, command ({ { "type", "LOAD" }, { "path", TEST_VST3_PATH } }));
+    CHECK (state["insert"]["format"].toString() == "VST3");
+    for (int i = 0; i < 3; ++i) // the plugin's parameter change reaches the host with the following block
+    {
+        frame = streamFrameWithTransport (static_cast<uint32_t> (10 + i), signal, 133.0, 0.0, playing | tempoValid | ppqValid);
+        stream->processFrame (frame.data(), frame.size());
+    }
+    auto hostTempo = findByName (host.handleStreamCommand (*stream, command ({ { "type", "GET_STATE" } }))["insert"]["parameters"], "Host tempo");
+    CHECK_NEAR (static_cast<float> (hostTempo["value"]), 0.133f, 1e-4f);
+
+    stream->chain.audioStopped();
+    host.closeStream (stream);
+    cache.deleteFile();
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juce; // this thread is the message thread
@@ -1074,6 +1180,7 @@ int main()
     testMixerConcurrency();
     testTrackStreams();
     testEditors();
+    testTransport();
 
     std::cout << (failures == 0 ? "PASS" : "FAIL") << ": " << (checks - failures) << "/" << checks << " checks" << std::endl;
     return failures == 0 ? 0 : 1;

@@ -114,7 +114,9 @@ public:
     // just reconfigured), audio passes through until the control thread
     // re-prepares. Returns whether the chain has inserts it ran (bypassed
     // ones count, so a bypass toggle doesn't change what the caller mixes).
-    bool process (float* const* channels, int numChannels, int numSamples) noexcept
+    // With a transport (where the block's first frame sits), each insert is
+    // told where its chunk starts.
+    bool process (float* const* channels, int numChannels, int numSamples, const TransportInfo* transport = nullptr) noexcept
     {
         auto* snapshot = published.load();
         bool ran = false;
@@ -132,6 +134,10 @@ public:
                 for (int ch = 0; ch < numChannels; ++ch)
                     outputs[ch] = channels[ch] + offset;
 
+                TransportInfo chunkTransport;
+                if (transport != nullptr)
+                    chunkTransport = transport->advancedBy (offset, snapshot->sampleRate);
+
                 for (auto& slot : snapshot->slots)
                 {
                     if (slot.bypassed->load (std::memory_order_relaxed))
@@ -140,6 +146,8 @@ public:
                     for (int ch = 0; ch < numChannels; ++ch)
                         juce::FloatVectorOperations::copy (snapshot->dry.getWritePointer (ch), outputs[ch], count);
 
+                    if (transport != nullptr)
+                        slot.processor->setTransport (chunkTransport);
                     slot.processor->process (snapshot->dry.getArrayOfReadPointers(), outputs, numChannels, count);
                 }
             }

@@ -82,7 +82,10 @@ export function initTransport(store: { getState: () => any; subscribe: (fn: (s: 
       else play();
       return;
     }
-    if (!playing) return;
+    if (!playing) {
+      if (st.bpm !== prev.bpm) notify(); // the transport snapshot's tempo changed
+      return;
+    }
     if (st.isLoopEnabled !== prev.isLoopEnabled || st.loopStart !== prev.loopStart || st.loopEnd !== prev.loopEnd) {
       // brace drags fire continuously; rebuild once the drag settles
       if (loopDebounce) clearTimeout(loopDebounce);
@@ -199,6 +202,24 @@ export const onSegmentScheduled = (fn: (s: SegmentInfo) => void) => {
 };
 export const getSegments = (): SegmentInfo[] =>
   segments.map(({ ctxStart, posStart, posEnd }) => ({ ctxStart, posStart, posEnd }));
+
+// Everything needed to work out the musical position at any context time
+// (tempo-synced plugins on browser tracks, trackBridge.ts). Changes are
+// announced through onTransportChange and onSegmentScheduled.
+export interface TransportSnapshot {
+  playing: boolean;
+  bpm: number;
+  stoppedPosition: number; // seconds
+  countInEnd: number;      // ctx time; 0 = no count-in
+  segments: SegmentInfo[]; // the most recent ones
+}
+export const getTransportSnapshot = (): TransportSnapshot => ({
+  playing,
+  bpm: getState().bpm || 120,
+  stoppedPosition,
+  countInEnd,
+  segments: getSegments().slice(-8)
+});
 export const getCountInEnd = () => countInEnd;
 
 // ----------------------------------------------------------------- automation

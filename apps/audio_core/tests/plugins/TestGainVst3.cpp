@@ -1,5 +1,6 @@
-// VST3 test plugin for the audio_core host tests: stereo gain, one
-// parameter ("gain", 0..1, default 1). Built with JUCE so the tests can host
+// VST3 test plugin for the audio_core host tests: stereo gain ("gain", 0..1,
+// default 1). It also shows the tempo its host's play head last reported, in
+// "hostTempo" (normalized: bpm / 1000). Built with JUCE so the tests can host
 // a real VST3 bundle on any platform.
 
 #include <JuceHeader.h>
@@ -14,6 +15,8 @@ public:
     {
         addParameter (gain = new juce::AudioParameterFloat (juce::ParameterID { "gain", 1 }, "Gain",
                                                             juce::NormalisableRange<float> (0.0f, 1.0f), 1.0f));
+        addParameter (hostTempo = new juce::AudioParameterFloat (juce::ParameterID { "hostTempo", 1 }, "Host tempo",
+                                                                 juce::NormalisableRange<float> (0.0f, 1000.0f), 0.0f));
     }
 
     const juce::String getName() const override { return "NoProd Test Gain VST3"; }
@@ -22,6 +25,10 @@ public:
 
     void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override
     {
+        if (auto* playHead = getPlayHead())
+            if (auto position = playHead->getPosition())
+                if (auto bpm = position->getBpm())
+                    *hostTempo = static_cast<float> (*bpm);
         buffer.applyGain (gain->get());
     }
 
@@ -55,6 +62,7 @@ public:
 
 private:
     juce::AudioParameterFloat* gain;
+    juce::AudioParameterFloat* hostTempo;
 };
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

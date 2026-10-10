@@ -16,8 +16,9 @@ target_compile_definitions(lpi_test_gain_bad_major PRIVATE LPI_TEST_BAD_MAJOR=1)
 target_compile_definitions(lpi_test_gain_no_export PRIVATE LPI_TEST_NO_EXPORT=1)
 
 # An LPI gain with an off-screen editor (lpi.gui.offscreen.v1), as is and in
-# two variants: without lpi.params.changes.v1, and with 64 samples of latency
-foreach(variant IN ITEMS gui gui_polling gui_latency)
+# three variants: without lpi.params.changes.v1, with 64 samples of latency,
+# and taking lpi.transport.v1
+foreach(variant IN ITEMS gui gui_polling gui_latency gui_transport)
     add_library(lpi_test_${variant} MODULE plugins/lpi_test_gui.cpp)
     target_include_directories(lpi_test_${variant} PRIVATE "${LPI_INCLUDE_DIR}")
     set_target_properties(lpi_test_${variant} PROPERTIES
@@ -27,6 +28,7 @@ foreach(variant IN ITEMS gui gui_polling gui_latency)
 endforeach()
 target_compile_definitions(lpi_test_gui_polling PRIVATE LPI_TEST_GUI_POLLING=1)
 target_compile_definitions(lpi_test_gui_latency PRIVATE LPI_TEST_GUI_LATENCY=64)
+target_compile_definitions(lpi_test_gui_transport PRIVATE LPI_TEST_GUI_TRANSPORT=1)
 
 juce_add_plugin(TestGainVst3
     PRODUCT_NAME "NoProd Test Gain"
@@ -58,6 +60,7 @@ target_compile_definitions(GhostDAWTests PRIVATE
     LPI_TEST_GUI_PATH="$<TARGET_FILE:lpi_test_gui>"
     LPI_TEST_GUI_POLLING_PATH="$<TARGET_FILE:lpi_test_gui_polling>"
     LPI_TEST_GUI_LATENCY_PATH="$<TARGET_FILE:lpi_test_gui_latency>"
+    LPI_TEST_GUI_TRANSPORT_PATH="$<TARGET_FILE:lpi_test_gui_transport>"
     TEST_VST3_PATH="$<GENEX_EVAL:$<TARGET_PROPERTY:TestGainVst3_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
 target_link_libraries(GhostDAWTests PRIVATE
     juce::juce_core
@@ -66,4 +69,4 @@ target_link_libraries(GhostDAWTests PRIVATE
     juce::juce_audio_formats
     juce::juce_audio_processors
     juce::juce_events)
-add_dependencies(GhostDAWTests lpi_test_gain_good lpi_test_gain_bad_major lpi_test_gain_no_export lpi_test_gui lpi_test_gui_polling lpi_test_gui_latency TestGainVst3_VST3)
+add_dependencies(GhostDAWTests lpi_test_gain_good lpi_test_gain_bad_major lpi_test_gain_no_export lpi_test_gui lpi_test_gui_polling lpi_test_gui_latency lpi_test_gui_transport TestGainVst3_VST3)

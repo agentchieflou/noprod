@@ -15,6 +15,8 @@
 //   LPI_TEST_GUI_POLLING     without lpi.params.changes.v1 (the host polls)
 //   LPI_TEST_GUI_LATENCY=n   delays its audio by n samples and reports it
 //                            through lpi.latency.v1
+//   LPI_TEST_GUI_TRANSPORT   takes lpi.transport.v1 and shows the last
+//                            transport it got in read-only parameters
 
 #include <lpi/lpi.h>
 
@@ -27,7 +29,11 @@
 
 namespace
 {
+#ifdef LPI_TEST_GUI_TRANSPORT
+enum { kGain = 0, kViolations = 1, kTransportTempo = 2, kTransportPpq = 3, kTransportFlags = 4, kTransportCalls = 5, kNumParams = 6 };
+#else
 enum { kGain = 0, kViolations = 1, kNumParams = 2 };
+#endif
 
 constexpr uint32_t kLogicalWidth = 200, kLogicalHeight = 150;
 #ifdef LPI_TEST_GUI_LATENCY
@@ -43,6 +49,10 @@ struct Instance
     std::atomic<float> gain { 1.0f };
     float appliedGain = 1.0f;
     std::atomic<int> violations { 0 };
+
+    // lpi.transport.v1 (audio thread), read back as read-only parameters
+    std::atomic<double> transportTempo { 0.0 }, transportPpq { 0.0 };
+    std::atomic<uint32_t> transportFlags { 0 }, transportCalls { 0 };
     std::atomic<std::thread::id> guiThread {};
 
     // Editor state (GUI thread only)
@@ -140,7 +150,7 @@ bool getParameterInfo (lpi_plugin*, uint32_t index, lpi_parameter_info* info)
         info->default_value = 1.0f;
         info->flags = 0;
     }
-    else
+    else if (index == kViolations)
     {
         info->id = "guiThreadViolations";
         info->name = "GUI thread violations";
@@ -148,6 +158,17 @@ bool getParameterInfo (lpi_plugin*, uint32_t index, lpi_parameter_info* info)
         info->max_value = 1.0e9f;
         info->default_value = 0.0f;
         info->flags = LPI_PARAM_READONLY | LPI_PARAM_STEPPED;
+    }
+    else
+    {
+        static const char* ids[] = { "transportTempo", "transportPpq", "transportFlags", "transportCalls" };
+        static const char* names[] = { "Transport tempo", "Transport position", "Transport flags", "Transport calls" };
+        info->id = ids[index - 2];
+        info->name = names[index - 2];
+        info->min_value = index == 3 ? -1.0e9f : 0.0f;
+        info->max_value = 1.0e9f;
+        info->default_value = 0.0f;
+        info->flags = LPI_PARAM_READONLY;
     }
     return true;
 }
@@ -158,6 +179,16 @@ float getParameterValue (lpi_plugin* p, uint32_t index)
         return self (p)->gain.load();
     if (index == kViolations)
         return static_cast<float> (self (p)->violations.load());
+#ifdef LPI_TEST_GUI_TRANSPORT
+    if (index == kTransportTempo)
+        return static_cast<float> (self (p)->transportTempo.load());
+    if (index == kTransportPpq)
+        return static_cast<float> (self (p)->transportPpq.load());
+    if (index == kTransportFlags)
+        return static_cast<float> (self (p)->transportFlags.load());
+    if (index == kTransportCalls)
+        return static_cast<float> (self (p)->transportCalls.load());
+#endif
     return 0.0f;
 }
 
@@ -321,6 +352,18 @@ uint32_t getLatency (lpi_plugin* p)
 
 const lpi_latency_v1 latency { getLatency };
 
+// lpi.transport.v1 (audio thread): just remember it
+void setTransport (lpi_plugin* p, const lpi_transport_info* info)
+{
+    auto* s = self (p);
+    s->transportTempo = info->tempo_bpm;
+    s->transportPpq = info->ppq_position;
+    s->transportFlags = info->flags;
+    ++s->transportCalls;
+}
+
+const lpi_transport_v1 transport { setTransport };
+
 void* getExtension (lpi_plugin*, const char* id)
 {
     if (id == nullptr)
@@ -333,6 +376,10 @@ void* getExtension (lpi_plugin*, const char* id)
    #endif
     if (kLatency > 0 && std::strcmp (id, LPI_EXT_LATENCY_V1) == 0)
         return const_cast<lpi_latency_v1*> (&latency);
+   #ifdef LPI_TEST_GUI_TRANSPORT
+    if (std::strcmp (id, LPI_EXT_TRANSPORT_V1) == 0)
+        return const_cast<lpi_transport_v1*> (&transport);
+   #endif
     return nullptr;
 }
 
@@ -346,6 +393,8 @@ const lpi_plugin_api api {
 const lpi_plugin_info info { "com.noprod.test.gui.polling", "NoProd Test GUI (polling)", "NoProd", 2, 2 };
 #elif defined(LPI_TEST_GUI_LATENCY)
 const lpi_plugin_info info { "com.noprod.test.gui.latency", "NoProd Test GUI (latency)", "NoProd", 2, 2 };
+#elif defined(LPI_TEST_GUI_TRANSPORT)
+const lpi_plugin_info info { "com.noprod.test.gui.transport", "NoProd Test GUI (transport)", "NoProd", 2, 2 };
 #else
 const lpi_plugin_info info { "com.noprod.test.gui", "NoProd Test GUI", "NoProd", 2, 2 };
 #endif

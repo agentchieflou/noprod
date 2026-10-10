@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <cstdint>
 #include <vector>
 
 // One parameter of a hosted plugin, in the plugin's own value range.
@@ -17,6 +18,26 @@ struct PluginParameterInfo
     bool stepped = false;
     bool boolean = false;
     bool readOnly = false;
+};
+
+// Where the music is when a block plays, for tempo-synced plugins. The flags
+// have the values of lpi.h's LPI_TRANSPORT_*.
+struct TransportInfo
+{
+    static constexpr uint32_t playing = 1, looping = 2, tempoValid = 4, ppqValid = 8;
+
+    double tempoBpm = 120.0;
+    double ppqPosition = 0.0; // of the block's first frame, in quarter notes
+    uint32_t flags = 0;
+
+    // The same transport `frames` later (the position moves only while playing)
+    TransportInfo advancedBy (int frames, double sampleRate) const noexcept
+    {
+        auto next = *this;
+        if ((flags & playing) != 0 && (flags & tempoValid) != 0 && (flags & ppqValid) != 0 && sampleRate > 0.0)
+            next.ppqPosition += frames / sampleRate * tempoBpm / 60.0;
+        return next;
+    }
 };
 
 // A plugin instance that can sit in an InsertChain, whatever its format.
@@ -45,6 +66,10 @@ public:
     // Output channels the plugin doesn't write must already hold the input
     // (the chain pre-fills outputs with the dry signal).
     virtual void process (const float* const* inputs, float* const* outputs, int numChannels, int numSamples) noexcept = 0;
+
+    // Audio thread, right before process(): where the coming block sits
+    // musically. Not called at all when the chain has no transport.
+    virtual void setTransport (const TransportInfo&) noexcept {}
 
     virtual std::vector<PluginParameterInfo> getParameters() = 0;
     virtual float getParameterValue (int index) = 0;
