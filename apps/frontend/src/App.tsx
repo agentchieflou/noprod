@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type DragE
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
   Layers, CheckSquare, Square as SquareIcon, Sliders, Wand2,
-  Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic
+  Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic, GraduationCap
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { triggerNote } from './audio/synth';
@@ -25,6 +25,7 @@ import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/captu
 import { initMidi } from './audio/inputs';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
 import KeyboardPanel from './components/KeyboardPanel';
+import { subscribeCoach, getCoachState, setCoachOpen } from './audio/coach';
 import AudioCorePanel from './components/AudioCorePanel';
 import PluginEditorWindow from './components/PluginEditorWindow';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
@@ -176,6 +177,7 @@ function App() {
   const [newDeviceIdx, setNewDeviceIdx] = useState('audio:0');
   const [showIO, setShowIO] = useState(false);
   const keyboardMidi = useSyncExternalStore(subscribeKeyboard, () => getKeyboardState().enabled);
+  const coachOpen = useSyncExternalStore(subscribeCoach, () => getCoachState().open);
   // Capture lights up when there is uncaptured playing for an armed MIDI track
   const capturable = useSyncExternalStore(onCaptureBufferChange, () => hasCapturable(useDAWStore.getState())) && tracks.length > 0;
 
@@ -765,6 +767,13 @@ function App() {
         <TempoControls position={localPlaybackPosition} />
         {countingIn && <span className="count-in-badge">COUNT-IN</span>}
 
+        {/* Keyboard Coach: opens the keyboard panel, computer keyboard on or off */}
+        <button className={`btn-metronome coach-toggle ${coachOpen ? 'active' : ''}`} onClick={() => setCoachOpen(!coachOpen)}
+          title="Keyboard Coach: lights up the keys to play next, from a MIDI keyboard, the computer keyboard or the mouse">
+          <GraduationCap size={14} style={{ marginRight: '5px' }} />
+          Coach
+        </button>
+
         <input
           type="file"
           ref={fileInputRef}
@@ -1231,7 +1240,7 @@ function App() {
         </div>
       </div>
 
-      {keyboardMidi && <KeyboardPanel />}
+      {(keyboardMidi || coachOpen) && <KeyboardPanel />}
       <PluginEditorWindow />
 
       {/* Bottom Detail panel */}

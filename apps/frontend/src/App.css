@@ -2194,6 +2194,123 @@ body {
 .kb-pad.lit { background: #10b981; color: #111; border-color: #34d399; }
 .kb-pad-name { font-size: 12px; font-weight: bold; }
 
+/* Keyboard Coach: its column beside the keys, and its marks on them */
+.kb-panel {
+  --coach-next: #60a5fa;
+  --coach-complement: #c084fc;
+  --coach-target: #fbbf24;
+  --coach-wrong: #ef4444;
+}
+.kb-panel.coached { height: 164px; }
+.kb-coach {
+  width: 290px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+}
+.kb-controls + .kb-coach { border-left: 1px solid var(--border-color); padding-left: 12px; }
+.coach-icon { color: var(--coach-next); }
+.coach-name { font-weight: 600; }
+.coach-key {
+  font-size: 10px;
+  color: var(--text-secondary);
+  background: #262626;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+.coach-octave { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.coach-kb-on { font-size: 13px; padding: 0 3px; }
+.coach-modes button.active { background: var(--coach-next); border-color: var(--coach-next); }
+.coach-select { flex: 1; max-width: none; font-size: 10px; padding: 1px 2px; }
+.coach-restart { font-size: 10px; padding: 1px 6px; gap: 3px; }
+.coach-readout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: #151515;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 5px 7px;
+  overflow: hidden;
+}
+.coach-readout.done { border-color: #10b981; }
+.coach-message { font-size: 12px; line-height: 1.3; color: var(--text-secondary); }
+.coach-message b { color: var(--text-primary); }
+.coach-arrow { color: var(--coach-next); }
+.coach-muted { font-size: 10px; color: #777; }
+.coach-about { font-size: 10px; line-height: 1.3; color: #777; }
+.coach-link { background: none; border: none; padding: 0; color: var(--coach-next); font-size: 10px; cursor: pointer; text-decoration: underline; }
+.coach-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; }
+.coach-chip {
+  position: relative;
+  font-size: 10px;
+  padding: 1px 6px 2px;
+  background: #222;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-primary);
+  cursor: default;
+  overflow: hidden;
+}
+.coach-chip:hover { border-color: var(--coach-next); }
+.coach-chip.complement:hover { border-color: var(--coach-complement); }
+/* How likely: a bar along the bottom, full for the likeliest */
+.coach-chip i { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--coach-next); }
+.coach-chip.complement i { background: var(--coach-complement); }
+.coach-progress { font-size: 11px; color: var(--text-secondary); display: flex; flex-wrap: wrap; align-items: center; gap: 0 5px; }
+.coach-progress b { color: var(--coach-target); }
+.coach-readout.done .coach-progress, .coach-readout.done .coach-progress b { color: #34d399; }
+.coach-progress-bar { flex-basis: 100%; height: 3px; margin-top: 3px; background: #2a2a2a; border-radius: 2px; overflow: hidden; }
+.coach-progress-bar div { height: 100%; background: var(--coach-target); transition: width 0.2s ease; }
+
+/* A mark fills the key in its role's color, by how likely it is (--glow) */
+.kb-mark {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: calc(0.15 + 0.85 * var(--glow, 1) * var(--glow, 1));
+  background: linear-gradient(to top, var(--mark), color-mix(in srgb, var(--mark) 45%, transparent) 55%, color-mix(in srgb, var(--mark) 12%, transparent));
+  box-shadow: inset 0 0 0 2px var(--mark);
+}
+.coach-next { --mark: var(--coach-next); }
+.coach-complement { --mark: var(--coach-complement); }
+.coach-target { --mark: var(--coach-target); }
+.coach-wrong { --mark: var(--coach-wrong); }
+/* Held and suggested too (a note the next chord keeps): a ring on the green */
+.lit > .kb-mark { background: none; box-shadow: inset 0 0 0 3px var(--mark); opacity: 1; }
+.coach-target > .kb-mark { animation: coach-pulse 1.1s ease-in-out infinite; }
+.coach-wrong > .kb-mark { background: var(--coach-wrong); opacity: 0.9; animation: coach-flash 0.16s ease-in-out 4; }
+@keyframes coach-pulse { 50% { opacity: 0.3; } }
+@keyframes coach-flash { 50% { opacity: 0.15; } }
+.kb-key-label, .kb-note-label, .kb-coach-label { position: relative; }
+.kb-coach-label {
+  font-size: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+  margin-bottom: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kb-white .kb-coach-label { color: #111; }
+.kb-black .kb-coach-label { color: #fff; }
+/* While the coach marks keys, their letters stand out and the rest step back */
+.kb-piano.coached .kb-key-label { opacity: 0.35; }
+.kb-piano.coached .marked .kb-key-label {
+  opacity: 1;
+  background: var(--mark);
+  color: #111;
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
 /* Plug-ins tab: browser scan (left) + Audio Core native host (right) */
 .plugin-tab-columns {
   display: grid;
