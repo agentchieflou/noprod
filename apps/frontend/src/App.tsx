@@ -19,6 +19,7 @@ import { startLibraryWarmup } from './audio/libraryWarmup';
 import { findAnySound, loadUserSounds } from './audio/userSounds';
 import { applyDictation, type DictationResult } from './audio/dictation';
 import SoundDesigner from './components/SoundDesigner';
+import DspMap from './components/DspMap';
 import type { SoundRecipe } from '@noprod/sound';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
 import { initMidi } from './audio/inputs';
@@ -168,7 +169,7 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggedOverTrack, setDraggedOverTrack] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'vst-paths' | 'dictation'>('devices');
+  const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'dspmap' | 'vst-paths' | 'dictation'>('devices');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [newVstPathInput, setNewVstPathInput] = useState('');
@@ -1234,11 +1235,12 @@ function App() {
       <PluginEditorWindow />
 
       {/* Bottom Detail panel */}
-      <div className={`bottom-detail-panel ${(activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi') || activeTab === 'sound' ? 'tall' : ''}`}>
+      <div className={`bottom-detail-panel ${(activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi') || activeTab === 'sound' || activeTab === 'dspmap' ? 'tall' : ''}`}>
         <div className="detail-tabs">
           <button className={`detail-tab ${activeTab === 'devices' ? 'active' : ''}`} onClick={() => setActiveTab('devices')}>Device Chain</button>
           <button className={`detail-tab ${activeTab === 'clip' ? 'active' : ''}`} onClick={() => setActiveTab('clip')}>Clip View</button>
           <button className={`detail-tab ${activeTab === 'sound' ? 'active' : ''}`} onClick={() => setActiveTab('sound')}>Sound Designer</button>
+          <button className={`detail-tab ${activeTab === 'dspmap' ? 'active' : ''}`} onClick={() => setActiveTab('dspmap')}>DSP Map</button>
           <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>
           <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>
         </div>
@@ -1376,6 +1378,8 @@ function App() {
           {activeTab === 'sound' && (
             <SoundDesigner track={selectedTrack?.type === 'midi' ? selectedTrack : null} />
           )}
+
+          {activeTab === 'dspmap' && <DspMap />}
 
           {activeTab === 'vst-paths' && (
             <div className="plugin-tab-columns">
