@@ -2,7 +2,7 @@
 // synthetic editor from apps/audio_core/tools/EditorStreamSpike.cpp, measures
 // ambient frames for a while, then drags a knob with synthetic pointer
 // events and measures input -> frame-on-screen. Query parameters:
-//   compression=none|deflate  fps=20  seconds=5  inputs=60  interval=33
+//   compression=none|deflate  fps=20  seconds=5  inputs=60  interval=33  window=(1|2|...)
 // The summary is shown and left on window.__spikeResult.
 
 import { useEffect, useRef, useState } from 'react';
@@ -14,6 +14,7 @@ const fps = Number(params.get('fps') || 20);
 const seconds = Number(params.get('seconds') || 5);
 const inputs = Number(params.get('inputs') || 60);
 const interval = Number(params.get('interval') || 33);
+const ackWindow = params.has('window') ? Number(params.get('window')) : undefined;
 
 const pct = (values: number[], p: number) => {
   if (!values.length) return null;
@@ -62,7 +63,7 @@ export default function EditorSpikePage() {
 
       const ids = ambient.map((f) => f.frameId);
       const summary = {
-        size: `${canvas.width}x${canvas.height}`, compression, fps,
+        size: `${canvas.width}x${canvas.height}`, compression, fps, window: ackWindow,
         ambientFps: +(ambient.length / ambientSecs).toFixed(1),
         dropped: ids.length > 1 ? ids[ids.length - 1] - ids[0] + 1 - ids.length : 0,
         kbPerFrame: pct(ambient.map((f) => f.bytes / 1024), 50),
@@ -87,6 +88,7 @@ export default function EditorSpikePage() {
         url="ws://localhost:8084"
         fps={fps}
         compression={compression}
+        inFlight={ackWindow}
         onFrame={(f) => {
           if (phase.current === 'ambient' || phase.current === 'input') frames.current.push(f);
           setSize((s) => s || `${(f.bytes / 1024).toFixed(0)} KB/frame`);
