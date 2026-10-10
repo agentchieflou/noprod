@@ -130,6 +130,17 @@ the General MIDI drum notes, with hat chokes). So far:
   - Leads (6), pads (6; the choir is a saw through parallel "ah" formants),
     strings (2), brass (2), winds (3).
   - FX (8): riser, downlifter, impact, noise sweep, zap, laser, wind, sub drop.
+- **Modeled** (`src/library/modeled.ts`): 16 physical models, tagged `modeled`,
+  in their usual categories.
+  - Bowed (bow, string, body): violin, viola, cello, double bass.
+  - Brass (lips, flared bore, bell): trumpet, trombone, French horn.
+  - Winds: flute and recorder (air jet, open bore, toneholes), clarinet
+    (reed, cylindrical bore: its odd harmonics).
+  - Plucked (pluck, string, body and air cavity): nylon and steel guitars,
+    harp, banjo, pizzicato violin.
+  - Struck: hammered dulcimer (courses of two strings, a few cents apart).
+  Bowed and blown ones sustain while the note is held and ring out when it
+  ends; plucked and struck ones ring down on their own.
 - **Kits**: Acoustic, 808, Electronic, Lo-Fi and Hard, each covering GM notes 35-81.
 
 ## Strudel names

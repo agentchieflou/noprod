@@ -58,7 +58,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // The names the sound library plays for Strudel patterns
 // (packages/sound/src/library/strudel.ts; a test there keeps these in step)
 const DRUM_NAMES = ['bd', 'sd', 'rim', 'cp', 'hh', 'oh', 'lt', 'mt', 'ht', 'cr', 'rd', 'cb', 'sh', 'tb', 'perc'];
-const SYNTH_NAMES = ['sawtooth', 'square', 'triangle', 'sine', 'supersaw', 'piano', 'epiano', 'organ', 'clav', 'harpsichord', 'bass', 'sub', 'acid', 'reese', 'strings', 'pizzicato', 'brass', 'trumpet', 'flute', 'clarinet', 'choir', 'pad', 'marimba', 'vibraphone', 'glockenspiel', 'kalimba', 'steeldrum', 'musicbox', 'bell', 'harp', 'koto', 'guitar', 'pluck', 'chip'];
+const SYNTH_NAMES = ['sawtooth', 'square', 'triangle', 'sine', 'supersaw', 'piano', 'epiano', 'organ', 'clav', 'harpsichord', 'bass', 'sub', 'acid', 'reese', 'strings', 'violin', 'viola', 'cello', 'contrabass', 'pizzicato', 'brass', 'trumpet', 'trombone', 'horn', 'flute', 'recorder', 'clarinet', 'choir', 'pad', 'marimba', 'vibraphone', 'glockenspiel', 'kalimba', 'steeldrum', 'musicbox', 'bell', 'harp', 'koto', 'guitar', 'banjo', 'dulcimer', 'pluck', 'chip'];
 
 const SYSTEM_PROMPT = `
 You are the dictation engine for the NoProd DAW. Your job is to translate user natural language requests into Strudel patterns.

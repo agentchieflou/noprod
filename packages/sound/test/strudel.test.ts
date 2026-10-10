@@ -13,6 +13,13 @@ test('every synth name dictation knows plays a library sound', () => {
   assert.equal(strudelSound('gm_epiano1', true).sound, 'piano-electric');
   assert.equal(strudelSound('gm_acoustic_grand_piano', true).sound, 'piano-grand');
   assert.equal(strudelSound('gm_string_ensemble_1', true).sound, 'strings-ensemble');
+  // General MIDI's acoustic instruments play the modeled ones
+  for (const [name, id] of [['gm_violin', 'violin'], ['gm_viola', 'viola'], ['gm_cello', 'cello'], ['gm_contrabass', 'double-bass'],
+    ['gm_trombone', 'trombone'], ['gm_french_horn', 'french-horn'], ['gm_recorder', 'recorder'], ['gm_banjo', 'banjo'],
+    ['gm_acoustic_guitar_steel', 'guitar-steel'], ['gm_steel_drums', 'steel-drum'], ['gm_acoustic_bass', 'bass-finger'],
+    ['gm_pizzicato_strings', 'pizzicato'], ['gm_harpsichord', 'harpsichord'], ['gm_orchestral_harp', 'harp']]) {
+    assert.equal(strudelSound(name, true).sound, id, name);
+  }
   assert.equal(strudelSound(undefined, true).sound, 'lead-triangle', "Strudel's default synth");
   assert.equal(strudelSound('who-knows', true).sound, 'lead-triangle');
 });

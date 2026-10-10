@@ -164,11 +164,16 @@ function excitation(exciter: Exciter, ctx: Context): Excitation {
       // One period of noise (Karplus–Strong), softened for a soft finger
       const hardness = exciter.hardness ?? 0.6;
       const burst = new Float64Array(Math.max(2, Math.round(sr / ctx.baseHz)));
-      const soften = new OnePole(0.92 - 0.9 * hardness);
+      const a = 0.92 - 0.9 * hardness;
+      const soften = new OnePole(a);
       for (let i = 0; i < burst.length; i++) burst[i] = soften.tick(random() * 2 - 1);
-      let mean = 0;
+      let mean = 0, power = 0;
       for (const x of burst) mean += x / burst.length;
-      const amount = 0.4 + 0.6 * velocity;
+      for (const x of burst) power += (x - mean) ** 2 / burst.length;
+      // at the level the softened noise has, however short the period (a
+      // short burst of dark noise is mostly its mean, taken out above)
+      const scale = power > 0 ? Math.sqrt((1 - a) / (3 * (1 + a)) / power) : 0;
+      const amount = (0.4 + 0.6 * velocity) * scale;
       let n = 0;
       return { closed: false, sign: 1, bore: 1, tick: () => (n < burst.length ? (burst[n++] - mean) * amount : 0) };
     }
@@ -442,6 +447,9 @@ export function renderModel(layer: ModelLayer, r: ModelRender, input: Float32Arr
   (layer.radiators ?? []).forEach((radiator, k) => {
     if (!r.off.has(`radiator:${k}`)) radiate(radiator, out, r.sampleRate, r.baseHz);
   });
+  // what radiates carries no DC (the lips' and reed's steady flow stays in the instrument)
+  const dc = new DcBlocker(r.sampleRate);
+  for (let i = 0; i < out.length; i++) out[i] = dc.tick(out[i]);
 }
 
 function run(layer: ModelLayer, r: ModelRender, input: Float32Array, bend: Float64Array | null, tune: number, out: Float32Array) {
