@@ -9,6 +9,7 @@ import {
   EnvelopeGenerator, StateVariableFilter, createRandom, decayCoefficient, hashString,
   midiToHz, readTable, releaseTime, sine, tableFor, waveTables
 } from './dsp.ts';
+import { loudness } from './analysis.ts';
 import type {
   Filter, FmLayer, Layer, NoiseLayer, PartialsLayer, RenderOptions, RenderedSound, SoundRecipe, WaveLayer
 } from './types.ts';
@@ -20,9 +21,8 @@ const BLOCK = 16;             // samples between filter cutoff updates
 const SILENT = 1e-6;          // an envelope this low has ended (-120 dB)
 const TRIM_FLOOR = 1e-5;      // trailing samples below -100 dB are cut off
 const END_FADE = 0.005;       // fade where the length cuts a sound short
-const PEAK_TARGET = Math.pow(10, -1 / 20);   // normalized peak: -1 dBFS
-const RMS_TARGET = Math.pow(10, -18 / 20);   // normalized loudness: -18 dBFS RMS over 300 ms
-const RMS_WINDOW = 0.3;
+const PEAK_TARGET = Math.pow(10, -1 / 20);   // normalized peak: at most -1 dBFS
+const LOUDNESS_TARGET = -12;                 // LUFS over the loudest 100 ms (analysis.ts loudness)
 
 interface Context {
   sampleRate: number;
@@ -49,8 +49,9 @@ export function render(recipe: SoundRecipe, options: RenderOptions = {}): Render
   return sound;
 }
 
-// How much `render` scales a recipe so every sound sits at the same loudness:
-// measured once, at the root note, full velocity. Cached per recipe object,
+// How much `render` scales a recipe so every sound sounds equally loud (the
+// loudest 100 ms, K-weighted, at -12 LUFS, peaks at most -1 dBFS): measured
+// once, at the root note, full velocity. Cached per recipe object,
 // so treat recipes as immutable (edit a copy).
 const loudnessCache = new WeakMap<SoundRecipe, Map<number, number>>();
 
@@ -63,25 +64,11 @@ export function loudnessGain(recipe: SoundRecipe, sampleRate = DEFAULT_RATE) {
   const { left, right } = renderRaw(recipe, {}, sampleRate);
   let peak = 0;
   for (let i = 0; i < left.length; i++) peak = Math.max(peak, Math.abs(left[i]), Math.abs(right[i]));
-  const rms = loudestRms(left, right, Math.round(RMS_WINDOW * sampleRate));
-  const gain = peak > 0 && rms > 0 ? Math.min(PEAK_TARGET / peak, RMS_TARGET / rms) : 1;
+  const gain = peak > 0
+    ? Math.min(PEAK_TARGET / peak, Math.pow(10, (LOUDNESS_TARGET - loudness(left, right, sampleRate)) / 20))
+    : 1;
   byRate.set(sampleRate, gain);
   return gain;
-}
-
-// The loudest RMS over any window (both channels together); a sound shorter
-// than the window is measured with silence after it
-function loudestRms(left: Float32Array, right: Float32Array, window: number) {
-  const n = Math.min(window, left.length);
-  if (n === 0 || window === 0) return 0;
-  let sum = 0;
-  for (let i = 0; i < n; i++) sum += left[i] * left[i] + right[i] * right[i];
-  let loudest = sum;
-  for (let i = n; i < left.length; i++) {
-    sum += left[i] * left[i] + right[i] * right[i] - left[i - n] * left[i - n] - right[i - n] * right[i - n];
-    loudest = Math.max(loudest, sum);
-  }
-  return Math.sqrt(Math.max(loudest, 0) / (2 * window));
 }
 
 // ---------------------------------------------------------------- the mix

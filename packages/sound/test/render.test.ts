@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { render, midiToHz } from '../src/index.ts';
 import type { Layer, SoundRecipe } from '../src/index.ts';
 import {
-  amplitudeAt, bandShare, estimatePitch, levelAt, peak, powerSpectrum, rms, spectralCentroid, toDb
+  amplitudeAt, bandShare, estimatePitch, levelAt, loudness, peak, powerSpectrum, rms, spectralCentroid, toDb
 } from '../src/analysis.ts';
 
 const SR = 44100;
@@ -214,7 +214,9 @@ test('drive adds harmonics without raising the peak', () => {
 
 test('sounds are normalized to the same loudness, and velocity and gain change it', () => {
   const sustained = render(recipe([sine]), { gate: 1 });
-  near(toDb(rms(sustained.left, 4410, Math.round(0.3 * SR))), -18, 0.3, 'a sustained sound reads');
+  near(loudness(sustained.left, sustained.right, SR), -12, 0.05, 'a sustained sound reads');
+  const bright = render(recipe([{ ...sine, ratio: 8 }]), { gate: 1 });
+  assert.ok(peak(bright.left) < peak(sustained.left), 'K-weighting should turn a 3.5 kHz tone down against 440 Hz');
 
   const click = recipe([{ type: 'noise', env: { decay: 0.02, sustain: 0 } }], { pitched: false });
   near(toDb(Math.max(peak(render(click).left), peak(render(click).right))), -1, 0.01, 'a click peaks at');

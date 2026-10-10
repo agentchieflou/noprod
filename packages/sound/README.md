@@ -49,10 +49,26 @@ const { left, right, sampleRate } = render(bell, { note: 76, velocity: 0.8, gate
 const wav = encodeWav([left, right], sampleRate, 24);
 ```
 
+## The library
+
+`LIBRARY` holds every built-in sound, `KITS` the drum kits (library sounds on
+the General MIDI drum notes, with hat chokes). So far:
+
+- **Drums** (`src/library/drums.ts`): 7 kicks, 6 snares, 3 claps, 5 hats, 6
+  cymbals, 4 toms. Drum heads ring at a circular membrane's modes; snare
+  wires, sizzle and beater clicks are noise bands; 808 hats and cymbals are
+  six clashing square waves.
+- **Percussion** (`src/library/percussion.ts`): 24 sounds: rim, cowbell,
+  clave, wood blocks, shakers, tambourine, triangles, congas, bongos,
+  timbales, agogos, guiro, vibraslap, whistle, cuica.
+- **Kits**: Acoustic, 808, Electronic, Lo-Fi and Hard, each covering GM notes 35-81.
+
 Rendering is deterministic: the same recipe, note, velocity and gate give the
 same samples (noise is seeded from the recipe's id and `seed`). Sounds are
-normalized to the same loudness (-18 dBFS RMS over 300 ms, peaks at most
--1 dBFS), measured at the root note; `gain` trims a recipe from there.
+normalized to sound equally loud: the loudest 100 ms, K-weighted as in
+BS.1770, at -12 LUFS, with peaks at most -1 dBFS (short hits stop at their
+peak, a little quieter, as they sound). It's measured at the root note;
+`gain` trims a recipe from there.
 
 ## Tests
 
@@ -63,4 +79,7 @@ npm run typecheck --workspace=packages/sound
 
 Nothing in CI can listen, so the tests measure (`src/analysis.ts`): the pitch
 of each note, harmonic levels, aliasing, envelope times, noise bands, FM
-sidebands, panning, loudness and determinism.
+sidebands, panning, loudness and determinism. Every library sound is checked
+too: clean samples, the library loudness, no DC, one-shots ending on their
+own, velocity, and its character (kicks low, hats bright, snares with wires,
+toms rising), and every kit covers the GM drum map.
