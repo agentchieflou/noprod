@@ -11,5 +11,8 @@ export { resynthesize, spectralDistance } from './resynth.ts';
 export type { ResynthOptions } from './resynth.ts';
 export type { ZipEntry } from './zip.ts';
 export * as analysis from './analysis.ts';
-export { LIBRARY, KITS, GM_DRUM_NAMES, CATEGORY_NAMES, findSound, findKit } from './library/index.ts';
-export type { DrumKit, KitPad } from './library/index.ts';
+export {
+  LIBRARY, KITS, GM_DRUM_NAMES, CATEGORY_NAMES, findSound, findKit,
+  STRUDEL_DRUMS, STRUDEL_SYNTHS, STRUDEL_DRUM_NAMES, strudelSound, strudelKit, strudelNoteToMidi, strudelParts
+} from './library/index.ts';
+export type { DrumKit, KitPad, StrudelHap, StrudelPart } from './library/index.ts';

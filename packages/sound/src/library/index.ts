@@ -8,6 +8,10 @@ import { TONAL } from './tonal.ts';
 
 export { KITS, GM_DRUM_NAMES } from './kits.ts';
 export type { DrumKit, KitPad } from './kits.ts';
+export {
+  STRUDEL_DRUMS, STRUDEL_SYNTHS, STRUDEL_DRUM_NAMES, strudelSound, strudelKit, strudelNoteToMidi, strudelParts
+} from './strudel.ts';
+export type { StrudelHap, StrudelPart } from './strudel.ts';
 
 export const LIBRARY: SoundRecipe[] = [...DRUMS, ...PERCUSSION, ...TONAL];
 

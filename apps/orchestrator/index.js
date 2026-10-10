@@ -55,12 +55,34 @@ const audioCoreConnected = () => !!audioCoreWs && audioCoreWs.readyState === Web
 // Requires GEMINI_API_KEY to be set in environment or .env
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// The names the sound library plays for Strudel patterns
+// (packages/sound/src/library/strudel.ts; a test there keeps these in step)
+const DRUM_NAMES = ['bd', 'sd', 'rim', 'cp', 'hh', 'oh', 'lt', 'mt', 'ht', 'cr', 'rd', 'cb', 'sh', 'tb', 'perc'];
+const SYNTH_NAMES = ['sawtooth', 'square', 'triangle', 'sine', 'supersaw', 'piano', 'epiano', 'organ', 'clav', 'harpsichord', 'bass', 'sub', 'acid', 'reese', 'strings', 'pizzicato', 'brass', 'trumpet', 'flute', 'clarinet', 'choir', 'pad', 'marimba', 'vibraphone', 'glockenspiel', 'kalimba', 'steeldrum', 'musicbox', 'bell', 'harp', 'koto', 'guitar', 'pluck', 'chip'];
+
 const SYSTEM_PROMPT = `
 You are the dictation engine for the NoProd DAW. Your job is to translate user natural language requests into Strudel patterns.
-You MUST output ONLY valid Strudel javascript code. 
+You MUST output ONLY valid Strudel javascript code.
 Do not include markdown blocks, explanations, or any other text.
-If the user asks for a techno beat, you might output: s("bd(3,8) sd(1,4)").cpm(120)
-If the user asks for a melody, you might output: note("c3 e3 g3 c4").s("sawtooth")
+
+One cycle is one bar. Set the tempo with setcpm(BPM/4), e.g. setcpm(120/4) for 120 BPM.
+Put several parts together with stack(...), one part per line.
+Drums: s("...") using only these names: ${DRUM_NAMES.join(', ')}.
+Choose a drum machine with .bank("RolandTR808") or .bank("RolandTR909").
+Melodies, chords and bass lines: note("c3 e3 g3") with .s(name), name being one of: ${SYNTH_NAMES.join(', ')}.
+Use .gain(0 to 1) for dynamics.
+
+If the user asks for a techno beat, you might output:
+setcpm(128/4)
+s("bd*4, ~ cp ~ cp, hh*8").bank("RolandTR909")
+
+If the user asks for a melody over a beat, you might output:
+setcpm(100/4)
+stack(
+  s("bd ~ sd ~, hh*8").bank("RolandTR808"),
+  note("c3 eb3 g3 bb3").s("epiano"),
+  note("c2 ~ ~ g1").s("bass")
+)
 `;
 
 // Connect to Sequencer
