@@ -19,7 +19,7 @@ import { initMidi } from './audio/inputs';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
 import KeyboardPanel from './components/KeyboardPanel';
 import AudioCorePanel from './components/AudioCorePanel';
-import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage } from './native/audioCore';
+import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage, findNativePlugin, nativeDeviceFor } from './native/audioCore';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
@@ -39,7 +39,7 @@ import './App.css';
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
   (window as any).__dawStore = useDAWStore;
-  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser };
+  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput };
 }
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 
@@ -1368,10 +1368,11 @@ function App() {
                             title={selectedTrack ? `Add to ${selectedTrack.name}'s device chain` : 'Select a track first'}
                             onClick={() => {
                               if (!selectedTrack) { alert('Select a track first (click a track header).'); return; }
-                              addDeviceToTrack(selectedTrack.id, {
-                                name: p.name, type: 'vst', pluginPath: p.path, format: p.format,
-                                parameters: { 'Dry/Wet': 100, 'Gain': 50 }
-                              });
+                              // The browser only knows the path inside the picked folder;
+                              // the Audio Core's scan has the full path it loads from
+                              const nativePlugin = findNativePlugin(p.name);
+                              if (!nativePlugin) { alert(`Scan this folder in the Audio Core (right) to host ${p.name}.`); return; }
+                              addDeviceToTrack(selectedTrack.id, nativeDeviceFor(nativePlugin));
                             }}
                           >
                             <Plus size={12} />

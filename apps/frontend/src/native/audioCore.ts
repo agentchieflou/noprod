@@ -54,6 +54,19 @@ export interface AudioCoreState {
   scanFolders: string[];
 }
 
+// The Audio Core's copy of a plug-in the browser found by name: the browser
+// only sees paths inside the folder it was given, the Audio Core has the
+// full path it needs to load it.
+export const findNativePlugin = (name: string): NativePlugin | null => {
+  const wanted = name.trim().toLowerCase().replace(/\.(vst3|component|dll|so|dylib|lpi)$/, '');
+  return snapshot.state?.availablePlugins.find((p) => p.name.toLowerCase() === wanted) ?? null;
+};
+
+// A track device that the Audio Core hosts through the native bridge
+export const nativeDeviceFor = (p: NativePlugin) => ({
+  name: p.name, type: 'vst', pluginPath: p.path, format: p.format, pluginId: p.pluginId, parameters: {}
+});
+
 export const busInserts = (state: AudioCoreState | null, bus: NativeBusId): NativeInsert[] =>
   state?.buses.find((b) => b.bus === bus)?.inserts ?? [];
 

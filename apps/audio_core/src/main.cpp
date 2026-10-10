@@ -1,10 +1,14 @@
 #include <iostream>
 #include <JuceHeader.h>
+#if JUCE_LINUX || JUCE_MAC || JUCE_BSD
+ #include <csignal>
+#endif
 
 #include "HapAudioEngine.h"
 #include "HapWebSocketServer.h"
 #include "Mixer.h"
 #include "PluginHost.h"
+#include "TrackStreams.h"
 
 // The Ghost DAW is a headless C++ application acting as the Audio Muscle.
 // It connects to the Orchestrator / Sequencer via WebSockets or UDP.
@@ -15,6 +19,7 @@
 using namespace juce;
 
 constexpr int audioCoreWebSocketPort = 8082;
+constexpr int trackStreamPort = 8083; // browser tracks' native plugins (TrackStreams.h)
 
 class GhostDAWApplication : public JUCEApplication
 {
@@ -28,6 +33,12 @@ public:
     void initialise (const String& commandLine) override
     {
         std::cout << "Ghost DAW (NoProd Audio Core) initializing..." << std::endl;
+
+       #if JUCE_LINUX || JUCE_MAC || JUCE_BSD
+        // A client closing its socket mid-write must fail that write, not
+        // kill the process
+        std::signal (SIGPIPE, SIG_IGN);
+       #endif
 
         // 1. Plugin host: format manager, cached plugin list, insert chains.
         //    --plugin-cache <file> overrides where the scanned list is kept.
@@ -78,12 +89,17 @@ public:
             [this] (const var& message) { handleMessage (message); });
         webSocketServer->startThread();
 
+        // 6. Browser tracks with native plugins stream their audio through here
+        streamServer = std::make_unique<HapWebSocketServer> (trackStreamPort, makeTrackStreamHandlers (*pluginHost));
+        streamServer->startThread();
+
         std::cout << "Running... Press Ctrl+C to exit." << std::endl;
     }
 
     void shutdown() override
     {
         std::cout << "Ghost DAW shutting down..." << std::endl;
+        streamServer.reset();
         webSocketServer.reset();
         deviceManager.removeAudioCallback (&mixer);
         deviceManager.closeAudioDevice();
@@ -143,6 +159,7 @@ private:
     Mixer mixer { audioEngine };
     std::unique_ptr<PluginHost> pluginHost;
     std::unique_ptr<HapWebSocketServer> webSocketServer;
+    std::unique_ptr<HapWebSocketServer> streamServer;
 };
 
 // This macro generates the main() routine that launches the app.

@@ -80,6 +80,7 @@ export interface AudioCoreStateEvent {
   buses: Array<{ bus: AudioCoreBus; inserts: NativeInsertSlot[] }>; // master first, then tracks with inserts
   availablePlugins: Array<{ name: string; vendor: string; format: PluginFormat; path: string; pluginId: string }>;
   scanFolders: string[];
+  streams?: Array<{ streamId: string; inserts: NativeInsertSlot[] }>; // browser-track plug-ins
 }
 
 export interface PluginParameterChangedEvent {
@@ -91,6 +92,23 @@ export interface AudioCoreErrorEvent { type: 'AUDIO_CORE_ERROR'; message: string
 
 // Sent by the Orchestrator when its Audio Core connection opens or drops
 export interface AudioCoreStatusEvent { type: 'AUDIO_CORE_STATUS'; connected: boolean }
+
+// ---- Browser-track streams (ws://localhost:8083, apps/audio_core/src/TrackStreams.h)
+// One connection per track device hosting a plug-in. Binary messages are
+// audio: uint32 block, uint32 frames, uint32 channels, uint32 flags (0), then
+// float32 planar samples; each comes back processed in place.
+export type TrackStreamCommand =
+  | { type: 'OPEN'; streamId: string; sampleRate: number; maxBlockSize: number }
+  | { type: 'LOAD'; path: string; format?: PluginFormat; pluginId?: string; parameters?: Record<string, number> }
+  | { type: 'UNLOAD' }
+  | { type: 'SET_PARAM'; parameterId?: string; parameterIndex?: number; value: number }
+  | { type: 'GET_STATE' };
+
+export type TrackStreamEvent =
+  | { type: 'STREAM_OPENED' }
+  | { type: 'STREAM_STATE'; streamId: string; sampleRate: number; maxBlockSize: number; insert: NativeInsertSlot | null }
+  | PluginParameterChangedEvent
+  | AudioCoreErrorEvent;
 
 export type AudioCoreCommand =
   | GetAudioCoreStateCommand | ScanPluginsCommand | LoadPluginCommand | RemovePluginCommand

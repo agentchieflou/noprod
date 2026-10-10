@@ -2,13 +2,16 @@
 // macro ranges and automation) plus a Web Audio DSP factory per device kind.
 // Device objects in the store look like:
 //   { id, name, type: 'audio-fx', kind: 'compressor', parameters: { Threshold: -18, ... } }
-// Third-party 'vst' entries have no kind and pass audio through untouched
-// (native hosting is audio_core's job, not the browser's).
+// Third-party 'vst' entries with a pluginPath are hosted by the Audio Core
+// through the native bridge (native/trackBridge.ts); without one they pass
+// audio through untouched.
 
 import dynamicsProcessorUrl from './worklets/dynamics-processor.js?url';
 import { MIDI_EFFECT_DEFS } from './midiEffects';
 import recorderProcessorUrl from './worklets/recorder-processor.js?url';
 import onsetProcessorUrl from './worklets/onset-processor.js?url';
+import nativeInsertProcessorUrl from './worklets/native-insert-processor.js?url';
+import { createNativeInsertDSP, isNativeDevice } from '../native/trackBridge';
 
 export type ParamValue = number | boolean | string;
 
@@ -40,6 +43,7 @@ export interface DeviceDSP {
   targets?(paramName: string): ParamTarget[];
   getReduction?(): number;                        // current gain reduction in dB (<= 0)
   getResponse?(freqs: Float32Array): Float32Array; // magnitude response in dB
+  latencySeconds?(): number;                       // delay the device adds (the engine compensates)
   dispose(): void;
 }
 
@@ -92,7 +96,8 @@ const createMix = (ctx: BaseAudioContext) => {
 export const loadDeviceWorklets = (ctx: BaseAudioContext) => Promise.all([
   ctx.audioWorklet.addModule(dynamicsProcessorUrl),
   ctx.audioWorklet.addModule(recorderProcessorUrl),
-  ctx.audioWorklet.addModule(onsetProcessorUrl)
+  ctx.audioWorklet.addModule(onsetProcessorUrl),
+  ctx.audioWorklet.addModule(nativeInsertProcessorUrl)
 ]);
 
 // Wrap the shared dynamics worklet: AudioParams are exposed by name for
@@ -520,6 +525,11 @@ const LEGACY_KINDS: Record<string, string> = {
 export const deviceKind = (device: any): string | null =>
   device?.kind || LEGACY_KINDS[device?.name] || null;
 
+// What kind of DSP a device gets in the engine: a stock kind, 'native' for a
+// plugin the Audio Core hosts, or null for pass-through.
+export const dspKind = (device: any): string | null =>
+  deviceKind(device) || (isNativeDevice(device) ? 'native' : null);
+
 export const getDeviceDef = (device: any): DeviceDef | null => {
   const k = deviceKind(device);
   return k ? DEVICE_DEFS[k] || null : null;
@@ -574,8 +584,16 @@ export const sliderToValue = (spec: ParamSpec, pos: number) => {
   return Math.round(v * 1000) / 1000;
 };
 
-// Instantiate a device's DSP (null for pass-through devices like unhosted VSTs).
+// Instantiate a device's DSP (null for pass-through devices like unlinked VSTs).
 export const createDeviceDSP = (ctx: BaseAudioContext, device: any): DeviceDSP | null => {
+  if (isNativeDevice(device)) {
+    try {
+      return createNativeInsertDSP(ctx, device);
+    } catch (err) {
+      console.warn(`Could not create a native insert for ${device.name}`, err);
+      return null;
+    }
+  }
   const def = getDeviceDef(device);
   if (!def) return null;
   try {

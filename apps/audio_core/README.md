@@ -8,6 +8,13 @@ track with `.orbit(n)` (orbit 1 is Strudel's default). GhostDAW listens on
 `ws://localhost:8082` for the Orchestrator, which relays the frontend's plugin
 commands and sends the replies back.
 
+It also hosts plugins for the **browser's own tracks**: a track device with a
+plugin path streams the track's audio to `ws://localhost:8083` in 256-frame
+blocks, GhostDAW runs it through that device's plugin and sends it straight
+back, and the browser plays it a fixed ~40 ms later (delaying the other
+tracks, the metronome and recordings to match). See `src/TrackStreams.h` and
+`apps/frontend/src/native/trackBridge.ts`.
+
 Plugin commands load code from disk, so the WebSocket servers (GhostDAW,
 Orchestrator, Sequencer) refuse browser connections from other sites: only
 clients without an `Origin` header and pages served from `localhost`,
@@ -53,6 +60,7 @@ swaps while an audio thread runs.
 | `src/HapAudioEngine.h` | Renders haps into per-track buffers; haps reach the audio thread through a lock-free FIFO |
 | `src/Mixer.h` | Device callback: each track through its inserts, summed, then the master inserts |
 | `src/PluginHost.h` | Scanning, the persisted plugin list, and the JSON commands |
+| `src/TrackStreams.h` | The stream server's protocol: one plugin per browser track device, audio processed in place on the connection's thread |
 | `third_party/lpi` | Vendored `lpi.h` (see its README) |
 
 Commands (types in `packages/shared/index.d.ts`): `GET_AUDIO_CORE_STATE`,
@@ -63,5 +71,5 @@ Each command except the parameter ones gets an `AUDIO_CORE_STATE` reply (or
 `AUDIO_CORE_ERROR`). The frontend's **VST Folders Scan** tab drives them.
 
 Not yet: plugin editors (LPI's off-screen GUI extension and the frame
-streaming in #44 B6), plugin delay compensation, and native inserts on the
-browser's own tracks (those mix in Web Audio).
+streaming in #44 B6), and delay compensation inside the Audio Core's own
+buses (the browser compensates its tracks).

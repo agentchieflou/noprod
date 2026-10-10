@@ -2223,3 +2223,8 @@ body {
 .btn-icon.native-on { color: var(--accent-green); }
 .native-params { display: flex; flex-direction: column; gap: 2px; max-height: 120px; overflow-y: auto; }
 .native-error { font-size: 11px; color: var(--accent-red); }
+
+/* Native plug-in devices hosted by the Audio Core */
+.native-device-status { font-style: normal; color: var(--accent-green); }
+.native-device-status.warn { color: #eab308; }
+.native-device-status.error { color: var(--accent-red); }
