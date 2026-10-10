@@ -10,8 +10,9 @@ import {
   midiToHz, readTable, releaseTime, sine, tableFor, waveTables
 } from './dsp.ts';
 import { loudness } from './analysis.ts';
+import { closedLoop, modelTail, renderModel } from './model.ts';
 import type {
-  Filter, FmLayer, Layer, NoiseLayer, PartialsLayer, RenderOptions, RenderedSound, SoundRecipe, WaveLayer
+  Filter, FmLayer, ModelLayer, Layer, NoiseLayer, PartialsLayer, RenderOptions, RenderedSound, SoundRecipe, WaveLayer
 } from './types.ts';
 
 const DEFAULT_RATE = 44100;
@@ -21,6 +22,7 @@ const BLOCK = 16;             // samples between filter cutoff updates
 const SILENT = 1e-6;          // an envelope this low has ended (-120 dB)
 const TRIM_FLOOR = 1e-5;      // trailing samples below -100 dB are cut off
 const END_FADE = 0.005;       // fade where the length cuts a sound short
+const GATE = { attack: 0.001, sustain: 1, release: 0.005 }; // a bypassed envelope: on while held
 const PEAK_TARGET = Math.pow(10, -1 / 20);   // normalized peak: at most -1 dBFS
 const LOUDNESS_TARGET = -12;                 // LUFS over the loudest 100 ms (analysis.ts loudness)
 
@@ -113,7 +115,8 @@ function renderRaw(recipe: SoundRecipe, options: RenderOptions, sampleRate: numb
 
 const longestRelease = (layer: Layer) => layer.mute ? 0 : Math.max(
   releaseTime(layer.env),
-  ...filtersOf(layer).map((f) => (f.env ? releaseTime(f.env) : 0))
+  ...filtersOf(layer).map((f) => (f.env ? releaseTime(f.env) : 0)),
+  layer.type === 'model' ? Math.min(modelTail(layer), MAX_TAIL) : 0
 );
 
 const filtersOf = (layer: Layer): Filter[] =>
@@ -156,49 +159,69 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
   const offset = Math.round((layer.start ?? 0) * sr);
   if (offset >= ctx.frames) return;
   const gate = ctx.gate - offset;
+  const off = new Set(layer.bypass ?? []);
+  if (off.has('source')) return;
 
-  // The amplitude envelope first: nothing after it falls silent needs making
-  const envelope = new EnvelopeGenerator(layer.env, sr, gate);
+  // The amplitude envelope first: nothing after it falls silent needs making.
+  // (Bypassed, the layer just sounds while the note is held.)
+  const envelope = new EnvelopeGenerator(off.has('env') ? GATE : layer.env, sr, gate);
   const amp = new Float32Array(ctx.frames - offset);
   let frames = 0;
   for (; frames < amp.length; frames++) {
     amp[frames] = envelope.next();
     if (envelope.finished(SILENT)) break;
   }
+  // A physical model rings on after the player stops
+  const playing = frames;
+  if (layer.type === 'model') frames = Math.min(amp.length, frames + Math.round(modelTail(layer) * sr));
   if (frames === 0) return;
 
   const baseHz = (layer.hz ?? ctx.rootHz * (layer.ratio ?? 1)) * ctx.pitchScale;
-  const bend = pitchCurve(layer, frames, sr);
+  const bend = pitchCurve(layer, frames, sr, off);
   const random = createRandom(ctx.seed + index * 7919);
   const srcL = new Float32Array(frames);
   let srcR: Float32Array | null = null;
+  // The envelope shapes the sound, except where it's the player's input to a
+  // closed-loop exciter (bow speed, breath): the model shapes itself then
+  const shaped = !(layer.type === 'model' && closedLoop(layer.exciter));
 
   switch (layer.type) {
     case 'partials': srcR = partialsSource(layer, ctx, baseHz, bend, random, srcL); break;
     case 'wave': srcR = waveSource(layer, ctx, baseHz, bend, random, srcL); break;
     case 'fm': fmSource(layer, ctx, gate, baseHz, bend, srcL); break;
     case 'noise': srcR = noiseSource(layer, random, srcL); break;
+    case 'model':
+      renderModel(layer, { sampleRate: sr, baseHz, velocity: ctx.velocity, seed: ctx.seed + index * 7919, off }, amp, bend, srcL);
+      break;
   }
 
-  for (const filter of filtersOf(layer)) {
+  filtersOf(layer).forEach((filter, k) => {
+    if (off.has(`filter:${k}`)) return;
     applyFilter(filter, ctx, gate, srcL);
     if (srcR) applyFilter(filter, ctx, gate, srcR);
-  }
+  });
 
-  if (layer.tremolo) {
+  // (a closed-loop model fades out over its ring-out once the player stops)
+  const gain = shaped ? amp : new Float32Array(frames).fill(1);
+  if (!shaped) {
+    const fall = decayCoefficient(modelTail(layer as ModelLayer), sr);
+    for (let i = playing, g = 1; i < frames; i++) gain[i] = (g *= fall);
+  }
+  if (layer.tremolo && !off.has('tremolo')) {
     const { rate, depth, delay = 0 } = layer.tremolo;
     for (let i = 0; i < frames; i++) {
       const t = i / sr - delay;
-      if (t > 0) amp[i] *= 1 - depth * (0.5 - 0.5 * sine(rate * t + 0.25));
+      if (t > 0) gain[i] *= 1 - depth * (0.5 - 0.5 * sine(rate * t + 0.25));
     }
   }
 
   const level = (layer.level ?? 1) * (1 - (layer.velocity ?? 1) * (1 - ctx.velocity * ctx.velocity));
+
   // The envelope, then drive; saturating an uneven wave shifts it off
   // centre, so a DC blocker follows, as AC coupling would in a circuit
   for (const x of srcR ? [srcL, srcR] : [srcL]) {
-    for (let i = 0; i < frames; i++) x[i] *= amp[i];
-    if (layer.drive) drive(x, layer.drive, sr);
+    for (let i = 0; i < frames; i++) x[i] *= gain[i];
+    if (layer.drive && !off.has('drive')) drive(x, layer.drive, sr);
   }
 
   if (srcR) {
@@ -235,8 +258,9 @@ function drive(x: Float32Array, amount: number, sr: number) {
 }
 
 // The layer's frequency multiplier over time: pitch envelope and vibrato
-function pitchCurve(layer: Layer, frames: number, sr: number): Float64Array | null {
-  const { pitch, vibrato } = layer;
+function pitchCurve(layer: Layer, frames: number, sr: number, off: Set<string>): Float64Array | null {
+  const pitch = off.has('pitch') ? undefined : layer.pitch;
+  const vibrato = off.has('vibrato') ? undefined : layer.vibrato;
   if (!pitch && !vibrato) return null;
   const out = new Float64Array(frames);
   let semitones = pitch?.amount ?? 0;

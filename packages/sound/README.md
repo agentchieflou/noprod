@@ -25,6 +25,35 @@ A recipe is a list of layers:
 | `fm` | a carrier and a modulator: sidebands at carrier ± k·modulator | electric pianos, metallic sounds |
 | `noise` | white, pink or brown | hats, snares, breath, FX |
 
+| `model` | a physical model: an exciter in a resonator, heard through radiators (below) | strings, brass, winds |
+
+### Physical models
+
+A `model` layer is the three-stage acoustic pipeline as digital waveguides
+(`src/model.ts`):
+
+1. **Exciter.** `pluck` or `strike` (open loop: set going once), or `bow`
+   (stick-slip friction), `lips` (a mass-spring valve with Bernoulli flow),
+   `jet` (an air jet's cubic split at an edge), `reed` (closed loop: each
+   sample they read the wave coming back and add their own, for as long as
+   the player keeps going).
+2. **Resonator.** `string` (two delay lines either side of the exciter,
+   rigid at the nut, damped at the bridge; `decay` is the fundamental's T60,
+   `stiffness` stretches the partials as B ≈ 0.0012·stiffness) or `bore`
+   (one line, its far end `open`, `stopped` or `flared`).
+3. **Radiators,** in series: `body` (a bank of wooden modes beside the
+   direct sound), `helmholtz` (the air cavity), `bell` (a high-pass),
+   `tonehole`, `damping` (H(z) = (1 − a)/(1 − a·z⁻¹)).
+
+The layer's envelope is the player's input: bow speed or breath pressure for
+the closed-loop exciters, a damper for plucks and strikes. Loop lengths are
+corrected for the phase delay of the filters in them, and closed-loop models
+(whose lips, jets and reeds settle a little off the loop's pitch) are tuned
+by a short probe note, measured and corrected, cached per configuration.
+
+Any block of any layer can be switched off without losing its settings:
+`bypass: ['radiator:0', 'filter:1', 'drive', …]`.
+
 Every layer can have an amplitude envelope, a pitch envelope, vibrato,
 tremolo, filters (with their own envelopes, key tracking and velocity), drive
 (with a DC blocker after it), a start offset, a level and a pan. Decays are
