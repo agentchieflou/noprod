@@ -152,3 +152,51 @@ export function estimatePitch(
   const shift = a + c - 2 * b !== 0 ? (a - c) / (2 * (a + c - 2 * b)) : 0;
   return sampleRate / (best + shift);
 }
+
+// ---------------------------------------------------------------- loudness
+
+// One RBJ biquad over a signal
+function biquad(x: Float32Array, b: [number, number, number], a: [number, number, number]) {
+  const y = new Float32Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = (b[0] * x[i] + b[1] * x1 + b[2] * x2 - a[1] * y1 - a[2] * y2) / a[0];
+    x2 = x1; x1 = x[i]; y2 = y1; y1 = v;
+    y[i] = v;
+  }
+  return y;
+}
+
+// ITU-R BS.1770 K-weighting: a +4 dB shelf above ~1.5 kHz (the head) and a
+// highpass at 38 Hz, designed for any sample rate
+export function kWeight(x: Float32Array, sampleRate: number) {
+  let w = (2 * Math.PI * 1500) / sampleRate;
+  const A = Math.pow(10, 4 / 40);
+  let alpha = Math.sin(w) / (2 * Math.SQRT1_2);
+  let cos = Math.cos(w);
+  const root = 2 * Math.sqrt(A) * alpha;
+  const shelved = biquad(x,
+    [A * ((A + 1) + (A - 1) * cos + root), -2 * A * ((A - 1) + (A + 1) * cos), A * ((A + 1) + (A - 1) * cos - root)],
+    [(A + 1) - (A - 1) * cos + root, 2 * ((A - 1) - (A + 1) * cos), (A + 1) - (A - 1) * cos - root]);
+  w = (2 * Math.PI * 38) / sampleRate;
+  alpha = Math.sin(w) / (2 * 0.5);
+  cos = Math.cos(w);
+  return biquad(shelved, [(1 + cos) / 2, -(1 + cos), (1 + cos) / 2], [1 + alpha, -2 * cos, 1 - alpha]);
+}
+
+// The loudest moment, in LUFS: K-weighted power over the loudest `window`
+// seconds (BS.1770, both channels summed). A sound shorter than the window
+// is measured with silence after it, so a short click reads quieter than
+// a held note of the same level, as it sounds.
+export function loudness(left: Float32Array, right: Float32Array, sampleRate: number, window = 0.1) {
+  const n = Math.max(1, Math.round(window * sampleRate));
+  const l = kWeight(left, sampleRate);
+  const r = kWeight(right, sampleRate);
+  let sum = 0, loudest = 0;
+  for (let i = 0; i < l.length; i++) {
+    sum += l[i] * l[i] + r[i] * r[i];
+    if (i >= n) sum -= l[i - n] * l[i - n] + r[i - n] * r[i - n];
+    loudest = Math.max(loudest, sum);
+  }
+  return -0.691 + 10 * Math.log10(Math.max(loudest, 1e-20) / n);
+}
