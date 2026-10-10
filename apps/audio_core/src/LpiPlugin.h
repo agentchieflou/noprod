@@ -122,7 +122,8 @@ struct PluginParameterChange
 // control thread here, like everything else but process(). More extensions
 // are used when present: lpi.latency.v1 (the latency the browser compensates
 // for), lpi.params.changes.v1 (what the editor changed) and lpi.transport.v1
-// (tempo and position, on the audio thread before each process()).
+// (tempo and position, on the audio thread before each process()), and
+// lpi.gui.keyboard.v1 (keys for the editor while it has focus).
 class LpiInsert : public InsertProcessor
 {
 public:
@@ -394,6 +395,7 @@ public:
     {
         if (! editorOpen)
             return;
+        editorFocus (false); // lpi.gui.keyboard.v1: always before close
         editorOpen = false;
         getGui()->close (instance);
     }
@@ -412,6 +414,26 @@ public:
             gui->mouse_event (instance, type, x, y);
     }
 
+    // lpi.gui.keyboard.v1: the editor takes keys while it has keyboard focus
+    bool hasKeyboard() const { return getKeyboard() != nullptr; }
+
+    // type is LPI_KEY_*, key an LPI_VK_* code (or a code point for CHAR),
+    // modifiers LPI_MOD_*
+    void editorKey (int type, uint32_t key, uint32_t modifiers)
+    {
+        if (auto* keyboard = editorOpen && keyboardFocused ? getKeyboard() : nullptr)
+            keyboard->key_event (instance, type, key, modifiers);
+    }
+
+    void editorFocus (bool focused)
+    {
+        auto* keyboard = editorOpen ? getKeyboard() : nullptr;
+        if (keyboard == nullptr || focused == keyboardFocused)
+            return;
+        keyboardFocused = focused;
+        keyboard->focus (instance, focused);
+    }
+
     // Called (on the control thread) when the instance goes away while its
     // editor is open: re-prepared for a new sample rate, or destroyed
     std::function<void()> onEditorClosed;
@@ -424,6 +446,12 @@ private:
         if (instance == nullptr || api.get_extension == nullptr)
             return nullptr;
         return static_cast<const Extension*> (api.get_extension (instance, id));
+    }
+
+    const lpi_gui_keyboard_v1* getKeyboard() const
+    {
+        auto* keyboard = getExtension<lpi_gui_keyboard_v1> (LPI_EXT_GUI_KEYBOARD_V1);
+        return keyboard != nullptr && keyboard->key_event != nullptr && keyboard->focus != nullptr ? keyboard : nullptr;
     }
 
     const lpi_gui_offscreen_v1* getGui() const
@@ -466,4 +494,5 @@ private:
     int latency = 0;
     const lpi_transport_v1* transport = nullptr;
     bool editorOpen = false;
+    bool keyboardFocused = false;
 };

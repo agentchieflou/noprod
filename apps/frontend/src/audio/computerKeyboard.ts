@@ -178,9 +178,11 @@ export const setVelocity = (velocity: number) => set({ velocity: Math.max(0.05, 
 export const setKeyboardMode = (mode: KeyboardMode) => { releaseAll(); set({ mode }); };
 export const setScale = (patch: Partial<Pick<KeyboardState, 'root' | 'scale' | 'chords'>>) => { releaseAll(); set(patch); };
 
+// Typing in a field, or a plugin editor that has the keyboard
 const typing = (e: KeyboardEvent) => {
   const t = e.target as HTMLElement;
-  return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable;
+  return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable
+    || !!t.closest?.('[data-keyboard-capture]');
 };
 
 export function initComputerKeyboard(store: { getState: () => any; subscribe: (fn: (s: any) => void) => unknown }) {

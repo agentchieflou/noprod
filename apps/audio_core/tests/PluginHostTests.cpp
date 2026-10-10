@@ -1062,6 +1062,111 @@ static void testEditors()
     cache.deleteFile();
 }
 
+// The test plugin's editor takes keys (lpi.gui.keyboard.v1): with focus it
+// draws a yellow border; digits and '.' then Enter set the gain. Its
+// read-only parameters 2 and 3 are "keyboard focused" and "keyboard contract
+// violations" (keys without focus, or a close while focused).
+static void testEditorKeyboard()
+{
+    section ("Editors: keyboard focus and keys (lpi.gui.keyboard.v1)");
+    constexpr uint32_t focusBorder = 0xffd400;
+    auto cache = juce::File::createTempFile (".xml");
+    HapAudioEngine engine;
+    Mixer mixer (engine);
+    {
+        PluginHost host (mixer, cache);
+        juce::Array<juce::var> broadcasts;
+        host.broadcast = [&] (const juce::var& m) { broadcasts.add (m); };
+
+        auto state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "path", LPI_TEST_GUI_PATH } }));
+        auto slotId = masterInserts (state)[0]["slotId"];
+        auto opened = host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", slotId } }));
+        CHECK (static_cast<bool> (opened["keyboard"]));
+        auto* plugin = dynamic_cast<LpiInsert*> (mixer.getMasterChain().getSlots()[0].processor.get());
+        auto focused = [&] { return plugin->getParameterValue (2) == 1.0f; };
+        auto contractBroken = [&] { return plugin->getParameterValue (3) != 0.0f; };
+
+        auto source = host.makeEditorSource (opened["editorId"].toString());
+        std::vector<uint8_t> frame (200 * 150 * 4);
+        auto typeKeys = [&] (const char* text)
+        {
+            for (auto* c = text; *c != 0; ++c)
+            {
+                source->key ("down", static_cast<uint32_t> (*c == '.' ? LPI_VK_PERIOD : *c), 0);
+                source->key ("char", static_cast<uint32_t> (*c), 0);
+                source->key ("up", static_cast<uint32_t> (*c == '.' ? LPI_VK_PERIOD : *c), 0);
+            }
+        };
+
+        // Without focus, keys go nowhere
+        offMessageThread ([&]
+        {
+            typeKeys ("1.5");
+            source->key ("down", LPI_VK_ENTER, 0);
+            source->render (frame.data());
+        });
+        CHECK (! focused() && ! contractBroken() && broadcasts.isEmpty());
+        CHECK (pixelAt (frame, 200, 0, 0) != focusBorder);
+
+        // With focus: typed digits then Enter set the gain, as one gesture
+        offMessageThread ([&]
+        {
+            source->focus (true);
+            typeKeys ("0.75");
+            source->key ("down", LPI_VK_ENTER, 0);
+            source->render (frame.data());
+        });
+        CHECK (focused() && pixelAt (frame, 200, 0, 0) == focusBorder && pixelAt (frame, 200, 199, 75) == focusBorder);
+        CHECK (broadcasts.size() == 1);
+        CHECK_NEAR (static_cast<float> (broadcasts[0]["value"]), 0.75f, 1e-6f);
+        CHECK (static_cast<bool> (broadcasts[0]["gestureBegin"]) && static_cast<bool> (broadcasts[0]["gestureEnd"]));
+        CHECK_NEAR (plugin->getParameterValue (0), 0.75f, 1e-6f);
+
+        // Escape drops what was typed; so does losing focus
+        offMessageThread ([&]
+        {
+            typeKeys ("1");
+            source->key ("down", LPI_VK_ESCAPE, 0);
+            source->key ("down", LPI_VK_ENTER, 0);
+            typeKeys ("1");
+            source->focus (false);
+            source->focus (true);
+            source->key ("down", LPI_VK_ENTER, 0);
+            source->render (frame.data());
+        });
+        CHECK (broadcasts.size() == 1 && ! contractBroken());
+        CHECK_NEAR (plugin->getParameterValue (0), 0.75f, 1e-6f);
+
+        // Closing the editor while it has focus releases the keyboard first
+        auto closed = host.handleCommand (command ({ { "type", "CLOSE_EDITOR" } }));
+        CHECK (closed["type"].toString() == "EDITOR_CLOSED" && ! focused() && ! contractBroken());
+        source.reset();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+        // A stream that drops while focused releases it too
+        opened = host.handleCommand (command ({ { "type", "OPEN_EDITOR" }, { "slotId", slotId } }));
+        source = host.makeEditorSource (opened["editorId"].toString());
+        offMessageThread ([&] { source->focus (true); source->render (frame.data()); });
+        CHECK (focused());
+        source.reset();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        CHECK (! focused() && ! contractBroken());
+
+        // ...and re-preparing the plugin (its editor closes) with focus held
+        source = host.makeEditorSource (opened["editorId"].toString());
+        offMessageThread ([&] { source->focus (true); source->render (frame.data()); });
+        CHECK (focused());
+        host.setAudioFormat (96000.0, 512);
+        plugin = dynamic_cast<LpiInsert*> (mixer.getMasterChain().getSlots()[0].processor.get());
+        CHECK (source->isClosed() && ! focused() && ! contractBroken());
+        source.reset();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        CHECK (plugin->getParameterValue (1) == 0.0f); // and every call came from the GUI thread
+        host.clearAllInserts();
+    }
+    cache.deleteFile();
+}
+
 // A stream audio message carrying a transport block (TrackStreams.h)
 static std::vector<uint8_t> streamFrameWithTransport (uint32_t seq, const juce::AudioBuffer<float>& audio,
                                                       double tempo, double ppq, uint32_t transportFlags)
@@ -1180,6 +1285,7 @@ int main()
     testMixerConcurrency();
     testTrackStreams();
     testEditors();
+    testEditorKeyboard();
     testTransport();
 
     std::cout << (failures == 0 ? "PASS" : "FAIL") << ": " << (checks - failures) << "/" << checks << " checks" << std::endl;

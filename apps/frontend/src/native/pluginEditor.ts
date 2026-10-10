@@ -11,6 +11,7 @@ export interface OpenPluginEditor {
   width: number;   // frame size in pixels
   height: number;
   scale: number;   // frame pixels per CSS pixel
+  keyboard: boolean; // the editor takes keys while focused (lpi.gui.keyboard.v1)
   close: () => void; // asks the Audio Core to close it
 }
 
@@ -27,6 +28,7 @@ export function showPluginEditor(msg: any, close: () => void) {
     editorId: msg.editorId, slotId: msg.slotId, name: msg.name,
     url: `ws://localhost:${msg.port}`,
     width: msg.width, height: msg.height, scale: msg.scale || 1,
+    keyboard: !!msg.keyboard,
     close
   };
   emit();

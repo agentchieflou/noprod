@@ -27,7 +27,9 @@
 //                          answers, or 0 for an ambient frame
 //   (padding to 64 bytes), then the pixels.
 // Text messages from the browser: START { fps?, compression?: 'none'|'deflate', level?, acks?, window?, editorId? },
-// INPUT { kind: 'down'|'move'|'up', x, y, buttons, t }, ACK { frameId }, STOP.
+// INPUT { kind: 'down'|'move'|'up', x, y, buttons, t },
+// KEY { kind: 'down'|'up'|'char', key, modifiers, t }, FOCUS { focused },
+// ACK { frameId }, STOP.
 // To the browser: CLOSED once the editor is gone (or START named none), after
 // which no more frames come.
 //
@@ -51,6 +53,10 @@ public:
     virtual bool render (uint8_t* rgba) = 0;
     // Connection thread: input in frame pixels. Must be safe against render().
     virtual void mouse (const juce::String& kind, float x, float y, int buttons) = 0;
+    // Connection thread: a key ('down' | 'up' | 'char'; key and modifiers as
+    // lpi.gui.keyboard.v1), and keyboard focus. Sources without keys ignore them.
+    virtual void key (const juce::String& /*kind*/, uint32_t /*key*/, uint32_t /*modifiers*/) {}
+    virtual void focus (bool /*focused*/) {}
     // Any thread: the editor has gone away for good
     virtual bool isClosed() const { return false; }
 };
@@ -113,6 +119,22 @@ public:
         source->mouse (message["kind"].toString(), static_cast<float> (message["x"]), static_cast<float> (message["y"]),
                        static_cast<int> (message["buttons"]));
         pendingInputTime.store (static_cast<double> (message["t"]));
+        notify();
+    }
+
+    // Connection thread: keys and focus, answered by a frame right away
+    void handleKey (const juce::var& message)
+    {
+        source->key (message["kind"].toString(), static_cast<uint32_t> (static_cast<double> (message["key"])),
+                     static_cast<uint32_t> (static_cast<double> (message["modifiers"])));
+        pendingInputTime.store (static_cast<double> (message["t"]));
+        notify();
+    }
+
+    void handleFocus (bool focused)
+    {
+        source->focus (focused);
+        pendingInputTime.store (wallClockMs());
         notify();
     }
 
@@ -265,6 +287,16 @@ inline HapWebSocketServer::Handlers makeEditorStreamHandlers (std::function<std:
         {
             if (auto streamer = std::static_pointer_cast<EditorStreamer> (connection->context))
                 streamer->handleInput (message);
+        }
+        else if (type == "KEY" || type == "FOCUS")
+        {
+            if (auto streamer = std::static_pointer_cast<EditorStreamer> (connection->context))
+            {
+                if (type == "KEY")
+                    streamer->handleKey (message);
+                else
+                    streamer->handleFocus (static_cast<bool> (message["focused"]));
+            }
         }
         else if (type == "ACK")
         {

@@ -60,6 +60,10 @@ ctx.onmessage = (e: MessageEvent) => {
     ws.onclose = () => ctx.postMessage({ type: 'closed' });
   } else if (m.type === 'input' && ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'INPUT', ...m.input }));
+  } else if (m.type === 'key' && ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'KEY', ...m.key }));
+  } else if (m.type === 'focus' && ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'FOCUS', focused: m.focused }));
   } else if (m.type === 'close') {
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'STOP' }));
     ws?.close();
