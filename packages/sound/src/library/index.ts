@@ -4,11 +4,12 @@ import type { Category, SoundRecipe } from '../types.ts';
 import { DRUMS } from './drums.ts';
 import { PERCUSSION } from './percussion.ts';
 import { KITS } from './kits.ts';
+import { TONAL } from './tonal.ts';
 
 export { KITS, GM_DRUM_NAMES } from './kits.ts';
 export type { DrumKit, KitPad } from './kits.ts';
 
-export const LIBRARY: SoundRecipe[] = [...DRUMS, ...PERCUSSION];
+export const LIBRARY: SoundRecipe[] = [...DRUMS, ...PERCUSSION, ...TONAL];
 
 export const CATEGORY_NAMES: Record<Category, string> = {
   drums: 'Drums', percussion: 'Percussion', bass: 'Bass', keys: 'Keys', mallets: 'Mallets',

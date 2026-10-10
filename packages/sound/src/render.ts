@@ -180,10 +180,21 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
     if (srcR) applyFilter(filter, ctx, gate, srcR);
   }
 
+  if (layer.tremolo) {
+    const { rate, depth, delay = 0 } = layer.tremolo;
+    for (let i = 0; i < frames; i++) {
+      const t = i / sr - delay;
+      if (t > 0) amp[i] *= 1 - depth * (0.5 - 0.5 * sine(rate * t + 0.25));
+    }
+  }
+
   const level = (layer.level ?? 1) * (1 - (layer.velocity ?? 1) * (1 - ctx.velocity * ctx.velocity));
-  const k = 1 + (layer.drive ?? 0);
-  const driveNorm = layer.drive ? 1 / Math.tanh(k) : 1;
-  const shape = (x: number) => (layer.drive ? Math.tanh(k * x) * driveNorm : x);
+  // The envelope, then drive; saturating an uneven wave shifts it off
+  // centre, so a DC blocker follows, as AC coupling would in a circuit
+  for (const x of srcR ? [srcL, srcR] : [srcL]) {
+    for (let i = 0; i < frames; i++) x[i] *= amp[i];
+    if (layer.drive) drive(x, layer.drive, sr);
+  }
 
   if (srcR) {
     // A stereo layer: pan balances it
@@ -191,16 +202,30 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
     const gl = level * Math.min(1, 1 - pan);
     const gr = level * Math.min(1, 1 + pan);
     for (let i = 0; i < frames; i++) {
-      left[offset + i] += shape(srcL[i] * amp[i]) * gl;
-      right[offset + i] += shape(srcR[i] * amp[i]) * gr;
+      left[offset + i] += srcL[i] * gl;
+      right[offset + i] += srcR[i] * gr;
     }
   } else {
     const [pl, pr] = panGains(layer.pan ?? 0);
     for (let i = 0; i < frames; i++) {
-      const x = shape(srcL[i] * amp[i]) * level;
+      const x = srcL[i] * level;
       left[offset + i] += x * pl;
       right[offset + i] += x * pr;
     }
+  }
+}
+
+// tanh saturation (a full-scale input stays at full scale), then a 3 Hz DC blocker
+function drive(x: Float32Array, amount: number, sr: number) {
+  const k = 1 + amount;
+  const norm = 1 / Math.tanh(k);
+  const r = 1 - (2 * Math.PI * 3) / sr;
+  let previousIn = 0, previousOut = 0;
+  for (let i = 0; i < x.length; i++) {
+    const shaped = Math.tanh(k * x[i]) * norm;
+    previousOut = shaped - previousIn + r * previousOut;
+    previousIn = shaped;
+    x[i] = previousOut;
   }
 }
 

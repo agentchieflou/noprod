@@ -38,6 +38,7 @@ export interface LayerBase {
   env?: Envelope;      // amplitude; default: on while the note is held
   pitch?: PitchEnvelope;
   vibrato?: Vibrato;
+  tremolo?: Tremolo;
   filter?: Filter | Filter[]; // in series
   drive?: number;      // tanh saturation after the envelope, 0 = clean
   velocity?: number;   // how much velocity changes the level, 0..1 (default 1)
@@ -64,6 +65,13 @@ export interface Vibrato {
   depth: number;   // cents
   delay?: number;  // before it starts
   fade?: number;   // time to reach full depth
+}
+
+// The level wobbling: a vibraphone's motor, a Leslie, a tremolo pedal
+export interface Tremolo {
+  rate: number;    // Hz
+  depth: number;   // 0..1: how far the level dips
+  delay?: number;
 }
 
 export type FilterType = 'lowpass' | 'highpass' | 'bandpass' | 'notch';
