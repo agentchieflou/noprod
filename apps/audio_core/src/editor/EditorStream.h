@@ -16,8 +16,10 @@
 // editor); B6c plugs a real editor in through FrameSource.
 //
 // Per connection, a dedicated (non-realtime) thread renders a frame at a
-// fixed ambient rate, and immediately when input arrives, then encodes it
-// (RGBA, raw or zlib-deflated) and sends one binary message:
+// fixed ambient rate, and immediately when input arrives. A frame identical
+// to the last one sent is dropped there, so an editor nobody is touching
+// costs nothing to encode, send or decode. Any other frame is encoded (RGBA,
+// raw or zlib-deflated) and sent as one binary message:
 //   uint32 magic 'NPF1', frameId, width, height, format (0 raw, 1 deflate), reserved
 //   float64 sendWallMs     wall-clock ms when sent (same machine as the browser)
 //   float64 renderMs, encodeMs
@@ -184,6 +186,9 @@ private:
             return;
         auto t1 = juce::Time::getMillisecondCounterHiRes();
 
+        if (rgba == lastSent)
+            return;
+
         message.resize (headerBytes);
         if (settings.compression == Compression::deflate)
         {
@@ -210,12 +215,13 @@ private:
 
         connection->sendBinary (message.data(), message.size());
         lastSendTime = juce::Time::getMillisecondCounterHiRes();
+        std::swap (rgba, lastSent); // the next render overwrites all of rgba
     }
 
     HapWebSocketServer::ConnectionPtr connection;
     std::unique_ptr<FrameSource> source;
     Settings settings;
-    std::vector<uint8_t> rgba, message;
+    std::vector<uint8_t> rgba, lastSent, message;
     uint32_t frameId = 0;
     double lastSendTime = 0.0;
     bool closedSent = false;

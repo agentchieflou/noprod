@@ -101,7 +101,9 @@ VST3/AU editors need a native window.
 2. **Stream.** The browser connects to `ws://localhost:8085` and sends
    `START { editorId }`.
    - Frames come back as deflated RGBA at 20 fps, plus one right after each
-     input. Frame format and backpressure: `src/editor/EditorStream.h`.
+     input. A frame identical to the last one sent is skipped, so an idle
+     editor costs nothing. Frame format and backpressure:
+     `src/editor/EditorStream.h`.
    - Mouse input goes the other way.
    - The browser shows it in a floating window (`PluginEditorWindow`).
 3. **Parameter changes.** Changes made in the editor are announced as
