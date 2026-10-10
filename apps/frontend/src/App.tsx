@@ -18,6 +18,8 @@ import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/captu
 import { initMidi } from './audio/inputs';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
 import KeyboardPanel from './components/KeyboardPanel';
+import AudioCorePanel from './components/AudioCorePanel';
+import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage } from './native/audioCore';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
@@ -166,12 +168,14 @@ function App() {
   useEffect(() => {
     const ws = new WebSocket(ORCHESTRATOR_WS_URL);
     orchestratorWsRef.current = ws;
+    attachOrchestrator(ws);
 
     ws.onopen = () => setOrchestratorConnected(true);
-    ws.onclose = () => setOrchestratorConnected(false);
+    ws.onclose = () => { setOrchestratorConnected(false); detachOrchestrator(ws); };
     ws.onerror = () => setOrchestratorConnected(false);
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
+      if (handleOrchestratorMessage(msg)) return; // native plug-in host (Audio Core)
       if (msg.type === 'GENERATED') {
         setDictationCode(msg.code);
         setDictationStatus('done');
@@ -181,7 +185,7 @@ function App() {
       }
     };
 
-    return () => ws.close();
+    return () => { detachOrchestrator(ws); ws.close(); };
   }, []);
 
   const handleSendDictation = () => {
@@ -1307,10 +1311,11 @@ function App() {
           )}
           
           {activeTab === 'vst-paths' && (
+            <div className="plugin-tab-columns">
             <div className="vst-paths-view">
               <h5>Local VST3 Plugin Scan Locations</h5>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
-                Wire your Antares, FabFilter, and Ableton local VST paths here. NoProd scans these directories to link native plugins.
+                Add the full paths of your plug-in folders. The Audio Core scans them for VST3 and LPI plug-ins; the button below lists a folder's plug-in files from the browser.
               </p>
               
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
@@ -1383,11 +1388,13 @@ function App() {
                     ))}
                   </div>
                   <p style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px' }}>
-                    Scanned plugins persist across sessions and can be added to device chains.
-                    Native audio processing through Audio Core (JUCE) is not wired up yet.
+                    Found by the browser, which only sees the picked folder's contents. To host plug-ins natively,
+                    add the folder's full path above and scan it in the Audio Core (right).
                   </p>
                 </div>
               )}
+            </div>
+            <AudioCorePanel scanPaths={vstScanPaths} />
             </div>
           )}
 

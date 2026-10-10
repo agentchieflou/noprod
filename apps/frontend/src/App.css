@@ -2193,3 +2193,33 @@ body {
 .kb-pad.drums { height: 74px; }
 .kb-pad.lit { background: #10b981; color: #111; border-color: #34d399; }
 .kb-pad-name { font-size: 12px; font-weight: bold; }
+
+/* Plug-ins tab: browser scan (left) + Audio Core native host (right) */
+.plugin-tab-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 1rem;
+  height: 100%;
+  min-height: 0;
+}
+.plugin-tab-columns > * { min-height: 0; overflow-y: auto; }
+.native-host { display: flex; flex-direction: column; gap: 6px; padding-left: 1rem; border-left: 1px solid var(--border-color); }
+.native-host-header { display: flex; align-items: center; gap: 8px; }
+.native-host-header h5 { margin: 0; }
+.native-status { font-size: 10px; color: var(--accent-red); }
+.native-status.online { color: var(--accent-green); }
+.native-hint { font-size: 11px; color: var(--text-secondary); }
+.native-hint code { font-size: 10px; }
+.native-row { display: flex; align-items: center; gap: 8px; }
+.native-available { max-height: 96px; }
+.native-plugin-name { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-format { color: var(--accent-green); margin-left: 6px; font-size: 9px; }
+.native-vendor { color: var(--text-secondary); margin-left: 6px; font-size: 9px; }
+.native-inserts { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+.native-insert { flex: 0 0 210px; background-color: var(--bg-device); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 6px; }
+.native-insert.bypassed { opacity: 0.55; }
+.native-insert-header { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+.native-insert-name { flex: 1; min-width: 0; font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-icon.native-on { color: var(--accent-green); }
+.native-params { display: flex; flex-direction: column; gap: 2px; max-height: 120px; overflow-y: auto; }
+.native-error { font-size: 11px; color: var(--accent-red); }
