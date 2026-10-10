@@ -5,6 +5,7 @@
 #include <JuceHeader.h>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <thread>
 
@@ -14,6 +15,7 @@
 #include "LpiPlugin.h"
 #include "Mixer.h"
 #include "PluginHost.h"
+#include "TrackStreams.h"
 
 static int checks = 0, failures = 0;
 
@@ -655,6 +657,105 @@ static void testMixerConcurrency()
     CHECK (CanaryInsert::live.load() == 0);
 }
 
+// One stream audio message: header + planar samples (see TrackStreams.h)
+static std::vector<uint8_t> streamFrame (uint32_t seq, const juce::AudioBuffer<float>& audio)
+{
+    auto frames = static_cast<uint32_t> (audio.getNumSamples()), channels = static_cast<uint32_t> (audio.getNumChannels());
+    std::vector<uint8_t> data (TrackStream::headerBytes + frames * channels * sizeof (float));
+    uint32_t header[4] { seq, frames, channels, 0 };
+    std::memcpy (data.data(), header, sizeof (header));
+    for (uint32_t ch = 0; ch < channels; ++ch)
+        std::memcpy (data.data() + TrackStream::headerBytes + ch * frames * sizeof (float), audio.getReadPointer (static_cast<int> (ch)), frames * sizeof (float));
+    return data;
+}
+
+static juce::AudioBuffer<float> streamAudio (const std::vector<uint8_t>& data, int channels, int frames)
+{
+    juce::AudioBuffer<float> audio (channels, frames);
+    for (int ch = 0; ch < channels; ++ch)
+        std::memcpy (audio.getWritePointer (ch), data.data() + TrackStream::headerBytes + static_cast<size_t> (ch * frames) * sizeof (float), static_cast<size_t> (frames) * sizeof (float));
+    return audio;
+}
+
+static void testTrackStreams()
+{
+    section ("Track streams: a browser track's audio runs through its stream's plugin");
+    auto cache = juce::File::createTempFile (".xml");
+    HapAudioEngine engine;
+    Mixer mixer (engine);
+    PluginHost host (mixer, cache);
+
+    auto stream = std::make_shared<TrackStream>();
+    stream->id = "device-1";
+    stream->sampleRate = 44100.0;
+    stream->maxBlockSize = 256;
+    juce::StringArray errors;
+    stream->chain.prepare (stream->sampleRate, stream->maxBlockSize, errors);
+    stream->chain.audioStarted (stream->sampleRate);
+    host.registerStream (stream);
+
+    auto signal = makeSignal (256);
+    auto frame = streamFrame (7, signal);
+    CHECK (stream->processFrame (frame.data(), frame.size()));   // no plugin yet: unchanged
+    CHECK (errorAgainst (streamAudio (frame, 2, 256), signal, 1.0f) < 1e-6f);
+
+    // LOAD with saved parameter values (by parameter id)
+    juce::DynamicObject::Ptr values = new juce::DynamicObject();
+    values->setProperty ("gain", 0.5);
+    auto state = host.handleStreamCommand (*stream, command ({ { "type", "LOAD" }, { "path", LPI_TEST_GAIN_PATH }, { "parameters", juce::var (values.get()) } }));
+    CHECK (state["type"].toString() == "STREAM_STATE");
+    CHECK (state["insert"]["name"].toString() == "NoProd Test Gain");
+    CHECK_NEAR (static_cast<float> (state["insert"]["parameters"][0]["value"]), 0.5f, 1e-6f);
+
+    frame = streamFrame (8, signal);
+    CHECK (stream->processFrame (frame.data(), frame.size()));
+    CHECK (errorAgainst (streamAudio (frame, 2, 256), signal, 0.5f) < 1e-6f);
+    uint32_t seq = 0;
+    std::memcpy (&seq, frame.data(), 4);
+    CHECK (seq == 8); // the header goes back as it came
+
+    auto changed = host.handleStreamCommand (*stream, command ({ { "type", "SET_PARAM" }, { "parameterId", "mute" }, { "value", 1 } }));
+    CHECK (changed["type"].toString() == "PLUGIN_PARAMETER_CHANGED");
+    frame = streamFrame (9, signal);
+    stream->processFrame (frame.data(), frame.size());
+    CHECK (errorAgainst (streamAudio (frame, 2, 256), signal, 0.0f) < 1e-6f);
+
+    // Blocks bigger than the stream's block size are processed in chunks
+    auto big = makeSignal (1000);
+    host.handleStreamCommand (*stream, command ({ { "type", "SET_PARAM" }, { "parameterId", "mute" }, { "value", 0 } }));
+    frame = streamFrame (10, big);
+    CHECK (stream->processFrame (frame.data(), frame.size()));
+    CHECK (errorAgainst (streamAudio (frame, 2, 1000), big, 0.5f) < 1e-6f);
+
+    section ("Track streams: malformed audio is refused untouched");
+    frame = streamFrame (11, signal);
+    auto truncated = frame;
+    truncated.resize (frame.size() - 4);
+    CHECK (! stream->processFrame (truncated.data(), truncated.size()));
+    CHECK (! stream->processFrame (frame.data(), 10));
+    auto tooManyChannels = frame;
+    uint32_t badChannels = 99;
+    std::memcpy (tooManyChannels.data() + 8, &badChannels, 4);
+    CHECK (! stream->processFrame (tooManyChannels.data(), tooManyChannels.size()));
+    CHECK (errorAgainst (streamAudio (frame, 2, 256), signal, 1.0f) < 1e-6f);
+
+    section ("Track streams: state, errors, unload and close");
+    auto all = host.getState();
+    CHECK (all["streams"].size() == 1 && all["streams"][0]["streamId"].toString() == "device-1");
+    auto error = host.handleStreamCommand (*stream, command ({ { "type", "LOAD" }, { "path", "/nope.so" } }));
+    CHECK (error["type"].toString() == "AUDIO_CORE_ERROR" && error["request"].toString() == "STREAM_LOAD");
+    CHECK (host.getState()["streams"][0]["inserts"].size() == 1); // a failed LOAD keeps the current plugin
+    state = host.handleStreamCommand (*stream, command ({ { "type", "UNLOAD" } }));
+    CHECK (state["insert"].isVoid());
+    error = host.handleStreamCommand (*stream, command ({ { "type", "SET_PARAM" }, { "parameterIndex", 0 }, { "value", 1 } }));
+    CHECK (error["type"].toString() == "AUDIO_CORE_ERROR");
+
+    stream->chain.audioStopped();
+    host.closeStream (stream);
+    CHECK (host.getState()["streams"].size() == 0);
+    cache.deleteFile();
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juce; // this thread is the message thread
@@ -667,6 +768,7 @@ int main()
     testEngineTracks();
     testTrackBuses();
     testMixerConcurrency();
+    testTrackStreams();
 
     std::cout << (failures == 0 ? "PASS" : "FAIL") << ": " << (checks - failures) << "/" << checks << " checks" << std::endl;
     return failures == 0 ? 0 : 1;

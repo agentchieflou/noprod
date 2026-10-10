@@ -1,11 +1,17 @@
 // The browser audio engine: one mixer strip per track / return / master, each
-//   input -> [device chain DSP] -> panner -> fader -> mute -> output target
+//   input -> [device chain DSP] -> latency compensation -> panner -> fader -> mute -> output target
 // with post-fader sends from each track into every return strip. The graph is
 // kept in sync with the store by syncEngine(), which only touches nodes whose
 // backing state actually changed.
+//
+// Latency compensation: devices that delay audio (native plugins hosted by
+// the Audio Core, see native/trackBridge.ts) report their latency, and every
+// other track is delayed to match the slowest path to the master, so the mix
+// stays in time. The metronome and recording are offset by the same amount.
 
 import { getAudioInputNode, isMonitoring, onInputsChange } from './inputs';
-import { createDeviceDSP, deviceKind, resolvedParameters, loadDeviceWorklets, type DeviceDSP, type ParamTarget } from './devices';
+import { createDeviceDSP, dspKind, resolvedParameters, loadDeviceWorklets, type DeviceDSP, type ParamTarget } from './devices';
+import { onNativeLatencyChange } from '../native/trackBridge';
 
 export const audioContext: AudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
 
@@ -25,9 +31,12 @@ masterAnalyser.connect(audioContext.destination);
 
 export const MASTER_ID = 'master';
 
+const MAX_COMPENSATION = 2; // seconds of latency compensation a strip can apply
+
 interface Strip {
   id: string;
   input: GainNode;
+  compensation: DelayNode;      // latency compensation, after the devices
   panner: StereoPannerNode;
   fader: GainNode;              // volume (automatable)
   mute: GainNode;               // 0/1 for mute & solo, kept apart from volume automation
@@ -44,13 +53,15 @@ const lastDeviceState = new Map<string, any>(); // deviceId -> device object las
 
 const createStrip = (id: string): Strip => {
   const input = audioContext.createGain();
+  const compensation = audioContext.createDelay(MAX_COMPENSATION);
   const panner = audioContext.createStereoPanner();
   const fader = audioContext.createGain();
   const mute = audioContext.createGain();
+  compensation.connect(panner);
   panner.connect(fader);
   fader.connect(mute);
-  // chainSig starts unmatched so the first wireChain always patches input -> panner
-  const strip = { id, input, panner, fader, mute, sends: new Map(), chainSig: '<unwired>', chainOutputs: [], outputTarget: null, monitorSource: null };
+  // chainSig starts unmatched so the first wireChain always patches input -> compensation
+  const strip = { id, input, compensation, panner, fader, mute, sends: new Map(), chainSig: '<unwired>', chainOutputs: [], outputTarget: null, monitorSource: null };
   strips.set(id, strip);
   return strip;
 };
@@ -59,6 +70,7 @@ const destroyStrip = (strip: Strip) => {
   if (strip.monitorSource) strip.monitorSource.disconnect(strip.input);
   strip.input.disconnect();
   strip.chainOutputs.forEach((n) => n.disconnect());
+  strip.compensation.disconnect();
   strip.panner.disconnect();
   strip.fader.disconnect();
   strip.mute.disconnect();
@@ -78,11 +90,11 @@ const setParam = (p: AudioParam, v: number) => {
 // `skipUpdates`: devices whose params are being driven by automation right now
 const wireChain = (strip: Strip, plugins: any[], skipUpdates?: Set<string>) => {
   const devices = flattenDevices(plugins);
-  const sig = devices.map((d) => `${d.id}:${deviceKind(d) || 'thru'}`).join('|');
+  const sig = devices.map((d) => `${d.id}:${dspKind(d) || 'thru'}`).join('|');
 
   devices.forEach((d) => {
     let dsp = dsps.get(d.id);
-    if (!dsp && deviceKind(d)) {
+    if (!dsp && dspKind(d)) {
       const created = createDeviceDSP(audioContext, d);
       if (created) { dsps.set(d.id, created); dsp = created; lastDeviceState.set(d.id, d); }
     } else if (dsp && lastDeviceState.get(d.id) !== d && !skipUpdates?.has(d.id)) {
@@ -99,12 +111,12 @@ const wireChain = (strip: Strip, plugins: any[], skipUpdates?: Set<string>) => {
   let prev: AudioNode = strip.input;
   devices.forEach((d) => {
     const dsp = dsps.get(d.id);
-    if (!dsp) return; // pass-through device (unhosted VST)
+    if (!dsp) return; // pass-through device (unlinked VST)
     prev.connect(dsp.input);
     prev = dsp.output;
     strip.chainOutputs.push(dsp.output);
   });
-  prev.connect(strip.panner);
+  prev.connect(strip.compensation);
 };
 
 // Patch a strip's output into its target plus all of its sends.
@@ -221,6 +233,7 @@ export function syncEngine(state: any) {
     return false;
   };
   tracks.forEach((t) => routeStrip(strips.get(t.id)!, feedsBack(t) ? MASTER_ID : outputOf(t)));
+  compensateLatency(tracks, (t) => (feedsBack(t) ? MASTER_ID : outputOf(t)), state.masterPlugins || []);
 
   // Input monitoring: an audio track's input feeds its strip while monitored
   tracks.forEach((t) => {
@@ -243,6 +256,56 @@ export function syncEngine(state: any) {
   dsps.forEach((dsp, id) => {
     if (!liveDevices.has(id)) { dsp.dispose(); dsps.delete(id); lastDeviceState.delete(id); }
   });
+}
+
+// ------------------------------------------------------ latency compensation
+
+const deviceLatency = (plugins: any[]) =>
+  flattenDevices(plugins).reduce((sum, d) => sum + (dsps.get(d.id)?.latencySeconds?.() ?? 0), 0);
+
+let compensationSeconds = 0;
+const compensationListeners = new Set<() => void>();
+
+// How late the mix reaches the speakers because of latent devices (the
+// slowest track path plus the master's own devices). The metronome is
+// delayed and recordings are shifted by this much.
+export const getCompensationSeconds = () => compensationSeconds;
+export const onCompensationChange = (fn: () => void) => { compensationListeners.add(fn); return () => { compensationListeners.delete(fn); }; };
+
+// Delay each track that nothing else feeds (clips play there) so every path
+// to the master is as late as the slowest one. A track's path latency is its
+// own devices plus those of the groups / tracks it is routed through. Tracks
+// that receive other tracks (groups) aren't delayed themselves: their inputs
+// already are.
+function compensateLatency(tracks: any[], routedTo: (t: any) => string, masterPlugins: any[]) {
+  const byId = new Map(tracks.map((t) => [t.id, t]));
+  const own = new Map(tracks.map((t) => [t.id, deviceLatency(t.plugins || [])]));
+  const fed = new Set(tracks.map(routedTo).filter((id) => id !== MASTER_ID));
+
+  const pathLatency = (t: any) => {
+    let total = own.get(t.id) || 0;
+    const seen = new Set([t.id]);
+    for (let id = routedTo(t); id !== MASTER_ID && byId.has(id) && !seen.has(id); id = routedTo(byId.get(id))) {
+      seen.add(id);
+      total += own.get(id) || 0;
+    }
+    return total;
+  };
+
+  const sources = tracks.filter((t) => !fed.has(t.id));
+  const paths = new Map(sources.map((t) => [t.id, pathLatency(t)]));
+  const slowest = Math.min(MAX_COMPENSATION, Math.max(0, ...paths.values()));
+
+  tracks.forEach((t) => {
+    const strip = strips.get(t.id);
+    if (strip) setParam(strip.compensation.delayTime, fed.has(t.id) ? 0 : Math.max(0, slowest - (paths.get(t.id) || 0)));
+  });
+
+  const total = slowest + deviceLatency(masterPlugins);
+  if (Math.abs(total - compensationSeconds) > 1e-6) {
+    compensationSeconds = total;
+    compensationListeners.forEach((fn) => fn());
+  }
 }
 
 // ---------------------------------------------------------------- automation
@@ -296,6 +359,14 @@ export async function initEngine(store: { getState: () => any; subscribe: (fn: (
   store.subscribe(syncEngine);
   // an input finishing opening (async permission) may complete a monitor connection
   onInputsChange(() => { lastState = null; syncEngine(store.getState()); });
+  // a native plugin loading (or going away) changes how much to compensate;
+  // resync once, after whatever (possibly a sync in progress) reported it
+  let resyncQueued = false;
+  onNativeLatencyChange(() => {
+    if (resyncQueued) return;
+    resyncQueued = true;
+    queueMicrotask(() => { resyncQueued = false; lastState = null; syncEngine(store.getState()); });
+  });
 }
 
 export const resumeAudio = () => {

@@ -4,7 +4,7 @@
 // recording stops, each pass through the timeline (one per loop pass) becomes
 // a take: the store puts it on a new take lane and comps it into the track.
 
-import { audioContext } from './engine';
+import { audioContext, getCompensationSeconds } from './engine';
 import { getAudioInputNode, openAudioInput, onMidiEvent, midiEventTargets, type MidiEvent } from './inputs';
 import { getSegments, onSegmentScheduled, getCountInEnd, type SegmentInfo } from './transport';
 
@@ -134,8 +134,10 @@ async function stopRecording() {
   r.cleanup.forEach((fn) => fn());
   const st = getState();
   const sr = audioContext.sampleRate;
-  // What was heard happened earlier than it reached the recorder
-  const latency = (audioContext.outputLatency || 0) + (audioContext.baseLatency || 0);
+  // What was heard happened earlier than it reached the recorder, and
+  // latency compensation made what was heard later still
+  const compensation = getCompensationSeconds();
+  const latency = (audioContext.outputLatency || 0) + (audioContext.baseLatency || 0) + compensation;
   let total = 0;
 
   for (const [trackId, cap] of r.captures) {
@@ -175,7 +177,8 @@ async function stopRecording() {
       passes(r, stopCtx).forEach(({ tA, tB, posA }) => {
         const notes: any[] = [];
         const open = new Map<string, MidiEvent>();
-        cap.events.forEach((e) => {
+        // Notes played along with compensated playback came in that much late
+        cap.events.map((e) => ({ ...e, time: e.time - compensation })).forEach((e) => {
           const key = `${e.source}:${e.pitch}`;
           if (e.type === 'on') { if (e.time >= tA && e.time < tB) open.set(key, e); return; }
           const on = open.get(key);

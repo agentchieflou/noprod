@@ -9,7 +9,7 @@
 // so loops wrap sample-accurately. Metronome clicks are scheduled with a short
 // lookahead from a timer since a segment without a loop has no end.
 
-import { audioContext, getStripInput, getAutomationTargets, setAutomationPlaying } from './engine';
+import { audioContext, getStripInput, getAutomationTargets, setAutomationPlaying, getCompensationSeconds, onCompensationChange } from './engine';
 import { scheduleClip, clipTimelineLength } from './clipPlayback';
 import { beatsBetween, barAt, barSeconds } from './timeline';
 
@@ -126,7 +126,11 @@ const loopRange = (st: any): [number, number] | null => {
 // Goes straight to the output so master devices and the limiter don't color it.
 export const clickGain = audioContext.createGain();
 clickGain.gain.value = 0.35;
-clickGain.connect(audioContext.destination);
+// The click is delayed as much as latency compensation delays the mix
+const clickDelay = audioContext.createDelay(2);
+clickGain.connect(clickDelay);
+clickDelay.connect(audioContext.destination);
+onCompensationChange(() => { clickDelay.delayTime.value = getCompensationSeconds(); });
 
 function playClick(when: number, accent: boolean, sources: Stoppable[]) {
   const osc = audioContext.createOscillator();

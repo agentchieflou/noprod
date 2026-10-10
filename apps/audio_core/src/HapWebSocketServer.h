@@ -19,17 +19,60 @@
 // is never blocked by a long-lived client (the real Orchestrator connection
 // is expected to stay open indefinitely).
 //
-// Receives unfragmented text frames (the Orchestrator's `ws` library sends
-// each message as a single frame) and answers pings. Sends text and binary
-// frames to every connected client (B6b); each client has its own write
-// lock, so any thread may send.
+// Receives unfragmented text (JSON) and binary frames (the `ws` library and
+// browsers send each message as a single frame) and answers pings. Sends
+// text and binary frames to one connection or to all of them (B6b); each
+// connection has its own write lock, so any thread may send.
+//
+// GhostDAW runs two: the control server for the Orchestrator (8082) and the
+// stream server browser tracks send audio to (8083, see TrackStreams.h).
 class HapWebSocketServer : public juce::Thread
 {
 public:
+    // One accepted client. Handlers are called on its own thread.
+    class Connection
+    {
+    public:
+        bool sendText (const juce::String& text)
+        {
+            auto utf8 = text.toUTF8();
+            return sendFrame (*this, 0x1, utf8.getAddress(), utf8.sizeInBytes() - 1);
+        }
+
+        bool sendBinary (const void* data, size_t size) { return sendFrame (*this, 0x2, data, size); }
+
+        std::shared_ptr<void> context; // per-connection state, owned by the handlers
+
+    private:
+        friend class HapWebSocketServer;
+        std::shared_ptr<juce::StreamingSocket> socket;
+        std::mutex writeLock;
+        std::vector<uint8_t> payload; // reused for every frame read
+    };
+
+    using ConnectionPtr = std::shared_ptr<Connection>;
     using MessageCallback = std::function<void (const juce::var&)>;
 
+    struct Handlers
+    {
+        std::function<void (const ConnectionPtr&, const juce::var&)> onText;
+        // The data is only valid during the call, and may be modified in place
+        std::function<void (const ConnectionPtr&, uint8_t* data, size_t size)> onBinary;
+        std::function<void (const ConnectionPtr&)> onClose;
+    };
+
     HapWebSocketServer (int portToListenOn, MessageCallback callbackToInvoke)
-        : juce::Thread ("HapWebSocketServer"), port (portToListenOn), onMessage (std::move (callbackToInvoke))
+        : juce::Thread ("HapWebSocketServer"), port (portToListenOn)
+    {
+        handlers.onText = [callback = std::move (callbackToInvoke)] (const ConnectionPtr&, const juce::var& message)
+        {
+            if (callback)
+                callback (message);
+        };
+    }
+
+    HapWebSocketServer (int portToListenOn, Handlers connectionHandlers)
+        : juce::Thread ("HapWebSocketServer"), port (portToListenOn), handlers (std::move (connectionHandlers))
     {
     }
 
@@ -84,14 +127,24 @@ public:
 
             std::cout << "HapWebSocketServer: client connected" << std::endl;
 
-            auto client = std::make_shared<Client>();
+            auto client = std::make_shared<Connection>();
             client->socket = socket;
             ++activeClients;
 
             std::thread ([this, client]
             {
                 handleClient (client);
+                // Close now: replies still queued elsewhere may hold the
+                // connection, and the client waits for the TCP close. Under
+                // the write lock, so a reply being written finishes first and
+                // later ones see a closed socket.
+                {
+                    std::lock_guard<std::mutex> lock (client->writeLock);
+                    client->socket->close();
+                }
                 removeClient (client);
+                if (handlers.onClose)
+                    handlers.onClose (client);
                 std::cout << "HapWebSocketServer: client disconnected" << std::endl;
                 --activeClients;
             }).detach();
@@ -99,22 +152,16 @@ public:
     }
 
 private:
-    struct Client
-    {
-        std::shared_ptr<juce::StreamingSocket> socket;
-        std::mutex writeLock;
-    };
-
     int port;
-    MessageCallback onMessage;
+    Handlers handlers;
     juce::StreamingSocket listener;
     std::mutex clientsLock;
-    std::vector<std::shared_ptr<Client>> clients;
+    std::vector<ConnectionPtr> clients;
     std::atomic<int> activeClients { 0 };
 
     static constexpr const char* websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-    void handleClient (const std::shared_ptr<Client>& client)
+    void handleClient (const ConnectionPtr& client)
     {
         if (! performHandshake (*client->socket))
             return;
@@ -127,15 +174,15 @@ private:
         while (! threadShouldExit())
         {
             juce::var message;
-            if (! readTextFrame (*client, message))
+            if (! readTextFrame (client, message))
                 return;
 
-            if (onMessage)
-                onMessage (message);
+            if (handlers.onText)
+                handlers.onText (client, message);
         }
     }
 
-    void removeClient (const std::shared_ptr<Client>& client)
+    void removeClient (const ConnectionPtr& client)
     {
         std::lock_guard<std::mutex> lock (clientsLock);
         clients.erase (std::remove (clients.begin(), clients.end(), client), clients.end());
@@ -143,7 +190,7 @@ private:
 
     void broadcast (uint8_t opcode, const void* data, size_t size)
     {
-        std::vector<std::shared_ptr<Client>> targets;
+        std::vector<ConnectionPtr> targets;
         {
             std::lock_guard<std::mutex> lock (clientsLock);
             targets = clients;
@@ -154,7 +201,7 @@ private:
     }
 
     // Server-to-client frames are never masked (RFC 6455 5.1).
-    static bool sendFrame (Client& client, uint8_t opcode, const void* data, size_t size)
+    static bool sendFrame (Connection& client, uint8_t opcode, const void* data, size_t size)
     {
         uint8_t header[10];
         int headerSize = 2;
@@ -276,12 +323,13 @@ private:
         return socket.read (dest, numBytes, true) == numBytes;
     }
 
-    // Reads WebSocket frames until a text message arrives, answering pings
-    // and skipping binary/pong/continuation frames along the way. Returns
-    // false if the client disconnected, sent a close frame, or the
-    // connection errored.
-    bool readTextFrame (Client& client, juce::var& outMessage)
+    // Reads WebSocket frames until a text message arrives, answering pings,
+    // handing binary frames to onBinary and skipping pong/continuation
+    // frames along the way. Returns false if the client disconnected, sent a
+    // close frame, or the connection errored.
+    bool readTextFrame (const ConnectionPtr& connection, juce::var& outMessage)
     {
+        auto& client = *connection;
         auto& socket = *client.socket;
 
         for (;;)
@@ -316,7 +364,8 @@ private:
             if (payloadLength > 16 * 1024 * 1024) // sanity guard, well above any real HAP_STREAM payload
                 return false;
 
-            std::vector<uint8_t> payload (static_cast<size_t> (payloadLength));
+            auto& payload = client.payload;
+            payload.resize (static_cast<size_t> (payloadLength)); // keeps its capacity: no allocation per frame
             if (payloadLength > 0 && ! readExact (socket, payload.data(), (int) payloadLength))
                 return false;
 
@@ -343,7 +392,13 @@ private:
                 return true;
             }
 
-            // Unhandled opcode (binary, pong, continuation) -- skip and read the next frame.
+            if (opcode == 0x2 && handlers.onBinary) // binary frame
+            {
+                handlers.onBinary (connection, payload.data(), payload.size());
+                continue;
+            }
+
+            // Unhandled opcode (pong, continuation, binary without a handler) -- skip and read the next frame.
         }
     }
 };

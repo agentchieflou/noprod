@@ -9,6 +9,7 @@ import {
   previewFile, stopPreview, decodeLibraryFile, type LibraryFolder, type LibraryFile
 } from '../browser/library';
 import { SOUND_PRESETS, DRUM_KIT_PRESETS, isDrumSample } from '../browser/presets';
+import { subscribeAudioCore, getAudioCore, findNativePlugin, nativeDeviceFor } from '../native/audioCore';
 
 export const SAMPLE_DRAG_TYPE = 'application/x-noprod-sample';
 
@@ -30,6 +31,7 @@ interface Item {
 export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan: () => void }) {
   const st = useDAWStore();
   const places = useSyncExternalStore(subscribeLibrary, getPlaces);
+  const audioCore = useSyncExternalStore(subscribeAudioCore, getAudioCore);
   const [open, setOpen] = useState<Record<string, boolean>>({ sounds: true });
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState<string | null>(null);
@@ -113,11 +115,19 @@ export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan:
       empty: null
     },
     {
+      // Plug-ins the Audio Core found (hostable on any track), then ones only
+      // the browser's folder scan saw, which need scanning in the Audio Core
       id: 'plugins', label: 'Plug-ins', icon: <Plug size={13} />,
-      items: st.scannedPlugins.map((p: any) => ({
-        key: p.path, label: p.name, hint: `${p.format} · ${p.path}`,
-        onLoad: () => loadAudioDevice({ name: p.name, type: 'vst', pluginPath: p.path, format: p.format, parameters: { 'Dry/Wet': 100, Gain: 50 } })
-      })),
+      items: [
+        ...(audioCore.state?.availablePlugins ?? []).map((p) => ({
+          key: `native:${p.path}:${p.pluginId}`, label: p.name, hint: `${p.format}${p.vendor ? ` · ${p.vendor}` : ''} · hosted by the Audio Core`,
+          onLoad: () => loadAudioDevice(nativeDeviceFor(p))
+        })),
+        ...st.scannedPlugins.filter((p: any) => !findNativePlugin(p.name)).map((p: any) => ({
+          key: p.path, label: p.name, hint: `${p.format} · ${p.path} · scan its folder in the Audio Core to host it`,
+          onLoad: () => { flash('Scan this folder in the Audio Core first (VST Folders Scan tab)'); onShowPluginScan(); }
+        }))
+      ],
       empty: <button className="browser-link" onClick={onShowPluginScan}>Scan plug-in folders…</button>
     },
     {

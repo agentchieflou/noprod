@@ -8,6 +8,7 @@
 #include "JucePluginInsert.h"
 #include "LpiPlugin.h"
 #include "Mixer.h"
+#include "TrackStreams.h"
 
 // Plugin scanning, loading and control for the Mixer's insert chains: the
 // master bus and one bus per track (B5b-d, and the native-hosting half of
@@ -218,6 +219,20 @@ public:
                 buses.add (describeBus (t, mixer.getTrackChain (t)));
         state->setProperty ("buses", buses);
 
+        // Plugins the browser's tracks run through stream connections
+        juce::Array<juce::var> streamList;
+        for (auto& stream : streams)
+        {
+            juce::DynamicObject::Ptr o = new juce::DynamicObject();
+            o->setProperty ("streamId", stream->id);
+            juce::Array<juce::var> inserts;
+            for (auto& slot : stream->chain.getSlots())
+                inserts.add (describeSlot (slot));
+            o->setProperty ("inserts", inserts);
+            streamList.add (juce::var (o.get()));
+        }
+        state->setProperty ("streams", streamList);
+
         juce::Array<juce::var> available;
         for (auto& desc : knownPlugins.getTypes())
         {
@@ -258,6 +273,89 @@ public:
             chain->setSlots ({});
             chain->collectGarbage();
         }
+        for (auto& stream : streams)
+        {
+            stream->chain.audioStopped();
+            stream->chain.setSlots ({});
+            stream->chain.collectGarbage();
+        }
+        streams.clear();
+    }
+
+    // ---------------------------------------------------------- track streams
+    // (see TrackStreams.h; all called on the message thread)
+
+    void registerStream (std::shared_ptr<TrackStream> stream)
+    {
+        streams.push_back (std::move (stream));
+    }
+
+    void closeStream (const std::shared_ptr<TrackStream>& stream)
+    {
+        stream->chain.setSlots ({});
+        stream->chain.collectGarbage();
+        streams.erase (std::remove (streams.begin(), streams.end(), stream), streams.end());
+    }
+
+    // A stream hosts one plugin. Commands:
+    //   LOAD       { path, format?, pluginId?, parameters?: { [parameterId]: value } } -> STREAM_STATE
+    //   UNLOAD                                                                          -> STREAM_STATE
+    //   SET_PARAM  { parameterId | parameterIndex, value }                              -> PLUGIN_PARAMETER_CHANGED
+    //   GET_STATE                                                                       -> STREAM_STATE
+    juce::var handleStreamCommand (TrackStream& stream, const juce::var& message)
+    {
+        auto type = message["type"].toString();
+
+        if (type == "LOAD")
+        {
+            juce::String error;
+            auto processor = createProcessor (message["path"].toString(), message["format"].toString(),
+                                              message["pluginId"].toString(), error);
+            if (processor == nullptr || ! processor->prepare (stream.sampleRate, stream.maxBlockSize, error))
+                return makeError (error, "STREAM_" + type);
+
+            if (auto* values = message["parameters"].getDynamicObject())
+                for (auto& p : processor->getParameters())
+                    if (p.id.isNotEmpty() && values->hasProperty (p.id) && ! p.readOnly)
+                        processor->setParameterValue (p.index, juce::jlimit (p.minValue, p.maxValue,
+                                                                              static_cast<float> (values->getProperty (p.id))));
+
+            InsertChain::Slot slot;
+            slot.id = "insert-" + juce::String (nextSlotNumber++);
+            slot.processor = std::move (processor);
+            stream.chain.setSlots ({ slot });
+            return describeStream (stream);
+        }
+
+        if (type == "UNLOAD")
+        {
+            stream.chain.setSlots ({});
+            return describeStream (stream);
+        }
+
+        if (type == "SET_PARAM")
+        {
+            if (stream.chain.getSlots().empty())
+                return makeError ("No plugin loaded", "STREAM_" + type);
+            return setParameter (stream.chain.getSlots().front(), message, "STREAM_" + type);
+        }
+
+        if (type == "GET_STATE")
+            return describeStream (stream);
+
+        return makeError ("Unknown stream command '" + type + "'", "STREAM_" + type);
+    }
+
+    juce::var describeStream (TrackStream& stream)
+    {
+        juce::DynamicObject::Ptr state = new juce::DynamicObject();
+        state->setProperty ("type", "STREAM_STATE");
+        state->setProperty ("streamId", stream.id);
+        state->setProperty ("sampleRate", stream.sampleRate);
+        state->setProperty ("maxBlockSize", stream.maxBlockSize);
+        auto& slots = stream.chain.getSlots();
+        state->setProperty ("insert", slots.empty() ? juce::var() : describeSlot (slots.front()));
+        return juce::var (state.get());
     }
 
     static constexpr double defaultSampleRate = 48000.0;
@@ -274,6 +372,8 @@ private:
     {
         for (auto* chain : allChains())
             chain->collectGarbage();
+        for (auto& stream : streams)
+            stream->chain.collectGarbage();
     }
 
     std::vector<InsertChain*> allChains()
@@ -545,4 +645,5 @@ private:
     juce::Array<LpiEntry> lpiPlugins;
     juce::StringArray scanFolders;
     int nextSlotNumber = 1;
+    std::vector<std::shared_ptr<TrackStream>> streams;
 };
