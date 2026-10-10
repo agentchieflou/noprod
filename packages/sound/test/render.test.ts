@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { render, midiToHz } from '../src/index.ts';
 import type { Layer, SoundRecipe } from '../src/index.ts';
 import {
-  amplitudeAt, bandShare, estimatePitch, levelAt, loudness, peak, powerSpectrum, rms, spectralCentroid, toDb
+  amplitudeAt, bandShare, estimatePitch, levelAt, loudness, mean, peak, powerSpectrum, rms, spectralCentroid, toDb
 } from '../src/analysis.ts';
 
 const SR = 44100;
@@ -145,6 +145,15 @@ test('vibrato wobbles around the note', () => {
   near(Math.min(...cents), -50, 8, 'the bottom:');
 });
 
+test('tremolo dips the level at its rate', () => {
+  const { left } = render(recipe([{ ...sine, tremolo: { rate: 4, depth: 0.5 } }]), { ...raw, gate: 1 });
+  const levels = [];
+  for (let t = 0.05; t < 0.95; t += 0.01) levels.push(levelAt(left, SR, t, 0.005));
+  near(Math.min(...levels) / Math.max(...levels), 0.5, 0.05, 'the dip:');
+  // four dips a second: the quietest moments are 0.25 s apart
+  near(levelAt(left, SR, 0.125, 0.005) / levelAt(left, SR, 0.375, 0.005), 1, 0.05, 'a quarter second later:');
+});
+
 // ---------------------------------------------------------------- filters
 
 test('a lowpass darkens the sound and its envelope opens and closes it', () => {
@@ -206,9 +215,13 @@ test('pan places a layer; unison spreads its voices', () => {
   assert.deepEqual(narrow.left, narrow.right);
 });
 
-test('drive adds harmonics without raising the peak', () => {
+test('drive adds harmonics, keeps the peak near full scale, and leaves no DC', () => {
   const { left } = render(recipe([{ ...sine, drive: 4 }]), { ...raw, gate: 0.3 });
-  assert.ok(peak(left) <= 1 + 1e-6);
+  assert.ok(peak(left) <= 1.02, `peak ${peak(left)}`);
+  // an uneven wave saturated drifts off centre without the DC blocker
+  const uneven = render(recipe([{ type: 'wave', shape: 'saw', filter: { type: 'lowpass', cutoff: 300, q: 7 }, drive: 6 }], { root: 45 }), { ...raw, gate: 1 }).left;
+  const held = uneven.subarray(SR * 0.5, SR * 0.95);
+  assert.ok(Math.abs(mean(held)) < 0.01, `DC ${mean(held)}`);
   assert.ok(toDb(amplitudeAt(left, SR, 1320, 2048, 8192) / amplitudeAt(left, SR, 440, 2048, 8192)) > -20);
 });
 

@@ -7,10 +7,12 @@ import assert from 'node:assert/strict';
 import { render } from '../src/index.ts';
 import type { SoundRecipe } from '../src/index.ts';
 import { CATEGORY_NAMES, GM_DRUM_NAMES, KITS, LIBRARY, findSound } from '../src/library/index.ts';
-import { bandShare, loudness, mean, peak, spectralCentroid, toDb } from '../src/analysis.ts';
+import { bandShare, loudness, mean, peak, periodicity, spectralCentroid, toDb } from '../src/analysis.ts';
+import { midiToHz } from '../src/dsp.ts';
 
 const SR = 44100;
-const rendered = new Map(LIBRARY.map((r) => [r.id, render(r, { sampleRate: SR, gate: r.pitched ? 1 : undefined })]));
+// Each as normalization measures it: the root note, held for the recipe's length
+const rendered = new Map(LIBRARY.map((r) => [r.id, render(r, { sampleRate: SR })]));
 const tagged = (tag: string) => LIBRARY.filter((r) => r.tags?.includes(tag));
 
 test('every sound has a unique id, a name and a known category', () => {
@@ -50,9 +52,40 @@ test('one-shots end on their own before their length cuts them off', () => {
 
 test('softer hits are quieter', () => {
   for (const r of LIBRARY) {
-    const soft = render(r, { sampleRate: SR, velocity: 0.4, gate: r.pitched ? 1 : undefined });
+    const soft = render(r, { sampleRate: SR, velocity: 0.4 });
     const full = rendered.get(r.id)!;
     assert.ok(peak(soft.left) < peak(full.left) * 0.5, `${r.id} barely changes with velocity`);
+  }
+});
+
+// A pitched sound plays the note asked for: it repeats once per period of
+// the note, and not twice per period (which would be an octave up). Bells
+// and other inharmonic sounds don't repeat, and are left out.
+test('pitched sounds play the note asked for, an octave either side of their root', () => {
+  for (const r of LIBRARY.filter((s) => s.pitched && !s.tags?.includes('inharmonic'))) {
+    const root = r.root ?? 60;
+    for (const note of [root - 12, root, root + 12]) {
+      const { left } = render(r, { sampleRate: SR, note, gate: 0.6 });
+      const at = Math.round(0.3 * SR);
+      const hz = midiToHz(note);
+      const once = periodicity(left, SR, hz, at, 4096);
+      const twice = periodicity(left, SR, hz * 2, at, 4096);
+      assert.ok(once < 0.15, `${r.id} at ${note} doesn't repeat at ${hz.toFixed(1)} Hz (${once.toFixed(3)})`);
+      // (a resonance on the 2nd harmonic brings this down, but never near 0)
+      assert.ok(twice > 0.08, `${r.id} at ${note} sounds an octave up (${twice.toFixed(3)})`);
+    }
+  }
+});
+
+test('pitched sounds stay clean across the keyboard', () => {
+  for (const r of LIBRARY.filter((s) => s.pitched)) {
+    const root = r.root ?? 60;
+    for (const note of [Math.max(21, root - 24), Math.min(108, root + 24)]) {
+      const { left, right } = render(r, { sampleRate: SR, note, gate: 0.5 });
+      const top = Math.max(peak(left), peak(right));
+      assert.ok(top < 1, `${r.id} clips at note ${note} (${toDb(top).toFixed(1)} dBFS)`);
+      for (let i = 0; i < left.length; i++) assert.ok(Number.isFinite(left[i]), `${r.id} at ${note}: sample ${i}`);
+    }
   }
 });
 

@@ -26,8 +26,9 @@ A recipe is a list of layers:
 | `noise` | white, pink or brown | hats, snares, breath, FX |
 
 Every layer can have an amplitude envelope, a pitch envelope, vibrato,
-filters (with their own envelopes, key tracking and velocity), drive, a start
-offset, a level and a pan. Decays are T60s: the time to fall 60 dB.
+tremolo, filters (with their own envelopes, key tracking and velocity), drive
+(with a DC blocker after it), a start offset, a level and a pan. Decays are
+T60s: the time to fall 60 dB.
 
 ```ts
 import { render, encodeWav, type SoundRecipe } from '@noprod/sound';
@@ -61,6 +62,17 @@ the General MIDI drum notes, with hat chokes). So far:
 - **Percussion** (`src/library/percussion.ts`): 24 sounds: rim, cowbell,
   clave, wood blocks, shakers, tambourine, triangles, congas, bongos,
   timbales, agogos, guiro, vibraslap, whistle, cuica.
+- **Tonal** (`src/library/tonal.ts`): 57 sounds.
+  - Bass (8): sub, 808, reese, pluck, FM, acid, square, finger.
+  - Keys (8): grand piano (stretched, damped strings), FM electric piano,
+    Wurli, clav, drawbar, rock and church organs, harpsichord.
+  - Mallets (8): marimba, vibraphone, glockenspiel, kalimba, steel drum,
+    music box, tubular and church bells (bars' and bells' own modes).
+  - Plucks (6): synth and bell plucks, harp, koto, nylon guitar, pizzicato.
+    Plucked strings weight their harmonics by where they're plucked.
+  - Leads (6), pads (6; the choir is a saw through parallel "ah" formants),
+    strings (2), brass (2), winds (3).
+  - FX (8): riser, downlifter, impact, noise sweep, zap, laser, wind, sub drop.
 - **Kits**: Acoustic, 808, Electronic, Lo-Fi and Hard, each covering GM notes 35-81.
 
 Rendering is deterministic: the same recipe, note, velocity and gate give the
@@ -82,4 +94,6 @@ of each note, harmonic levels, aliasing, envelope times, noise bands, FM
 sidebands, panning, loudness and determinism. Every library sound is checked
 too: clean samples, the library loudness, no DC, one-shots ending on their
 own, velocity, and its character (kicks low, hats bright, snares with wires,
-toms rising), and every kit covers the GM drum map.
+toms rising); pitched sounds repeat at the period of the note played (and not
+at half of it) an octave either side of their root and stay unclipped two
+octaves either side; and every kit covers the GM drum map.

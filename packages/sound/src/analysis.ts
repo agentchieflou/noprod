@@ -106,6 +106,23 @@ export function spectralCentroid(x: Float32Array, sampleRate: number, start = 0,
   return total > 0 ? weighted / total : 0;
 }
 
+// How far a stretch of sound is from repeating every 1/hz seconds: 0 when it
+// repeats exactly, about 1 when unrelated (squared difference against the
+// signal one period later, over their energy)
+export function periodicity(x: Float32Array, sampleRate: number, hz: number, start = 0, length = 4096) {
+  const lag = sampleRate / hz;
+  const whole = Math.floor(lag);
+  const frac = lag - whole;
+  const end = Math.min(start + length, x.length - whole - 1);
+  let diff = 0, energy = 0;
+  for (let j = start; j < end; j++) {
+    const later = x[j + whole] + (x[j + whole + 1] - x[j + whole]) * frac;
+    diff += (x[j] - later) * (x[j] - later);
+    energy += x[j] * x[j] + later * later;
+  }
+  return energy > 0 ? diff / energy : 1;
+}
+
 // Fundamental frequency (YIN), or 0 if nothing periodic is found
 export function estimatePitch(
   x: Float32Array, sampleRate: number, start = 0, length = 4096, minHz = 30, maxHz = 5000

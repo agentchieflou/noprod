@@ -76,6 +76,16 @@ function bufferFor(r: Render, sampleRate: number): AudioBuffer {
   }
 
   const { left, right } = render(r.recipe, { note: r.note, velocity: r.velocity, gate: r.gate, transpose: r.transpose, sampleRate });
+  return store(r, sampleRate, left, right);
+}
+
+// Cache a rendered note (here or by the worker), evicting the least recently used
+function store(r: Render, sampleRate: number, left: Float32Array<ArrayBuffer>, right: Float32Array<ArrayBuffer>): AudioBuffer {
+  let map = buffers.get(r.recipe);
+  if (!map) buffers.set(r.recipe, (map = new Map()));
+  const key = bufferKey(r, sampleRate);
+  const existing = map.get(key);
+  if (existing) return existing;
   const buffer = new AudioBuffer({ numberOfChannels: 2, length: left.length, sampleRate });
   buffer.copyToChannel(left, 0);
   buffer.copyToChannel(right, 1);
@@ -242,26 +252,70 @@ export function soundAsBuffer(recipe: SoundRecipe): AudioBuffer {
 // ---------------------------------------------------------------- prewarm
 
 type Note = { pitch: number; velocity: number; duration: number };
-let queue: { params: any; note: Note }[] = [];
-let working = false;
+type Job = { params: any; note: Note };
+let queue: Job[] = [];
+let nextId = 0;
+const inFlight = new Map<number, { render: Render; sampleRate: number; worker: Worker }>();
+const pending = new WeakMap<SoundRecipe, Set<string>>(); // cache keys the workers are rendering
 
-// Render, a little at a time, every listed note that isn't cached yet
-// (replacing what an earlier call still had queued)
+// A few workers, one note each at a time; none if workers can't start
+let workers: Worker[] | null = null;
+function startWorkers(): Worker[] {
+  if (workers) return workers;
+  workers = [];
+  const count = Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 2) - 1));
+  try {
+    for (let i = 0; i < count; i++) {
+      const w = new Worker(new URL('./libraryWorker.ts', import.meta.url), { type: 'module' });
+      w.onmessage = (e: MessageEvent<{ id: number; left: Float32Array<ArrayBuffer>; right: Float32Array<ArrayBuffer> }>) => {
+        const job = inFlight.get(e.data.id);
+        inFlight.delete(e.data.id);
+        if (job) {
+          pending.get(job.render.recipe)?.delete(bufferKey(job.render, job.sampleRate));
+          store(job.render, job.sampleRate, e.data.left, e.data.right);
+        }
+        step();
+      };
+      workers.push(w);
+    }
+  } catch {
+    workers = []; // render on this thread instead
+  }
+  return workers;
+}
+
+// Notes still to render in the background
+export const prewarmPending = () => queue.length + inFlight.size;
+
+// Render every listed note that isn't cached yet, in the background
+// (replacing whatever an earlier call still had queued)
 export function prewarmLibrary(tracks: { params: any; notes: Note[] }[]) {
   queue = tracks.flatMap((t) => t.notes.map((note) => ({ params: t.params, note })));
-  if (!working) step();
+  step();
 }
 
 function step() {
   const sampleRate = audioContext.sampleRate;
-  while (queue.length) {
+  const pool = startWorkers();
+  while (queue.length && (pool.length === 0 || inFlight.size < pool.length)) {
     const { params, note } = queue.shift()!;
     const r = resolve(params, note.pitch, note.velocity, note.duration);
     if (!r || isCached(r, sampleRate)) continue;
-    working = true;
-    bufferFor(r, sampleRate);
-    setTimeout(step, 0); // one render per task keeps the page responsive
-    return;
+    const key = bufferKey(r, sampleRate);
+    let rendering = pending.get(r.recipe);
+    if (!rendering) pending.set(r.recipe, (rendering = new Set()));
+    if (rendering.has(key)) continue;
+    if (pool.length === 0) {
+      bufferFor(r, sampleRate);
+      setTimeout(step, 0); // one render per task keeps the page responsive
+      return;
+    }
+    const busy = new Set([...inFlight.values()].map((j) => j.worker));
+    const w = pool.find((candidate) => !busy.has(candidate))!;
+    const id = nextId++;
+    const render: Render = { recipe: r.recipe, note: r.note, velocity: r.velocity, gate: r.gate, transpose: r.transpose };
+    inFlight.set(id, { render, sampleRate, worker: w });
+    rendering.add(key);
+    w.postMessage({ id, recipe: r.recipe, options: { note: r.note, velocity: r.velocity, gate: r.gate, transpose: r.transpose, sampleRate } });
   }
-  working = false;
 }
