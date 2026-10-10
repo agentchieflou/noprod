@@ -11,7 +11,7 @@ const INSTRUMENTS = [
 // A MIDI track's instrument: swap between the synth and the drum kit, edit
 // its parameters, and audition notes (keyboard for the synth, pads for drums).
 // Library sounds and kits (from the Browser) show here too.
-export default function InstrumentCard({ track, onAudition }: { track: any; onAudition: (pitch: number) => void }) {
+export default function InstrumentCard({ track, onAudition, onEditSound }: { track: any; onAudition: (pitch: number) => void; onEditSound?: () => void }) {
   const { updateInstrumentParameter, setTrackInstrument } = useDAWStore();
   const inst = track.instrument;
   const p = inst.parameters;
@@ -66,6 +66,7 @@ export default function InstrumentCard({ track, onAudition }: { track: any; onAu
           <>
             {slider('Tune', -24, 24, 1, (v) => `${v > 0 ? '+' : ''}${v} st`)}
             {slider('Gain', 0, 1, 0.01)}
+            {onEditSound && <button className="designer-link" onClick={onEditSound}>Edit in Sound Designer</button>}
           </>
         ) : isDrums ? (
           <>

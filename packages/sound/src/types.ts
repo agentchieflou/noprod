@@ -30,6 +30,7 @@ export type Layer = PartialsLayer | WaveLayer | FmLayer | NoiseLayer;
 
 // Applies to every kind of layer
 export interface LayerBase {
+  mute?: boolean;      // left out of the sound (while designing)
   level?: number;      // linear gain (default 1)
   pan?: number;        // -1 left .. 1 right
   start?: number;      // seconds after the note starts

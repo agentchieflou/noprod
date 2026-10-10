@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Music, Drum, Piano, Sliders, Zap, Plug, FolderOpen, FolderPlus, Folder, Plus, Search, X, RefreshCw, AudioWaveform } from 'lucide-react';
-import { LIBRARY, KITS, CATEGORY_NAMES } from '@noprod/sound';
+import { ChevronDown, ChevronRight, Music, Drum, Piano, Sliders, Zap, Plug, FolderOpen, FolderPlus, Folder, Plus, Search, X, RefreshCw, AudioWaveform, Pencil, Download, Trash2 } from 'lucide-react';
+import { LIBRARY, KITS, CATEGORY_NAMES, type SoundRecipe } from '@noprod/sound';
 import { useDAWStore, createDefaultInstrument, createDrumKit } from '../store/useDAWStore';
 import { DEVICE_DEFS, createDevice } from '../audio/devices';
 import { MIDI_EFFECT_DEFS, createMidiEffect } from '../audio/midiEffects';
@@ -12,8 +12,9 @@ import {
 import { SOUND_PRESETS, DRUM_KIT_PRESETS, isDrumSample } from '../browser/presets';
 import { subscribeAudioCore, getAudioCore, findNativePlugin, nativeDeviceFor } from '../native/audioCore';
 import {
-  createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview
+  createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview, exportZip
 } from '../audio/library';
+import { subscribeUserSounds, getUserSounds, deleteUserSound } from '../audio/userSounds';
 
 export const SAMPLE_DRAG_TYPE = 'application/x-noprod-sample';
 export const SOUND_DRAG_TYPE = 'application/x-noprod-sound'; // a library sound's id
@@ -29,6 +30,9 @@ interface Item {
   dragFile?: LibraryFile;      // samples can be dragged onto tracks and slots
   dragSound?: string;          // so can library sounds (by id)
   group?: string;              // a sub-folder within its category
+  recipe?: SoundRecipe;        // a library sound: its group can export as WAVs
+  onEdit?: () => void;         // opens in the Sound Designer
+  onDelete?: () => void;       // one of My Sounds
 }
 
 // Ableton-style Browser: categories backed by real data (the sound library,
@@ -36,9 +40,10 @@ interface Item {
 // racks, and audio files in user folders). Double-click or + loads an item
 // onto the selected track (or a new one); click previews a sound, kit or
 // sample; sounds and samples drag onto tracks/slots.
-export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan: () => void }) {
+export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onShowPluginScan: () => void; onEditSound: (recipe: SoundRecipe) => void }) {
   const st = useDAWStore();
   const places = useSyncExternalStore(subscribeLibrary, getPlaces);
+  const mySounds = useSyncExternalStore(subscribeUserSounds, getUserSounds);
   const audioCore = useSyncExternalStore(subscribeAudioCore, getAudioCore);
   const [open, setOpen] = useState<Record<string, boolean>>({ library: true });
   const [query, setQuery] = useState('');
@@ -95,10 +100,18 @@ export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan:
           key: k.id, label: k.name, group: 'Drum Kits', hint: `Drum kit · ${Object.keys(k.pads).length} pads`,
           onClick: () => previewKit(k, kitSounds(k)), onLoad: () => loadInstrument(createLibraryKit(k), k.name)
         })),
+        ...mySounds.map((r) => ({
+          key: r.id, label: r.name, group: 'My Sounds', dragSound: r.id, recipe: r,
+          hint: `My sound · ${CATEGORY_NAMES[r.category]}`,
+          onClick: () => previewSound(r), onLoad: () => loadInstrument(createLibraryInstrument(r), r.name),
+          onEdit: () => onEditSound(r),
+          onDelete: () => { if (confirm(`Delete “${r.name}” from My Sounds?`)) deleteUserSound(r.id); }
+        })),
         ...LIBRARY.map((r) => ({
-          key: r.id, label: r.name, group: CATEGORY_NAMES[r.category], dragSound: r.id,
+          key: r.id, label: r.name, group: CATEGORY_NAMES[r.category], dragSound: r.id, recipe: r,
           hint: `${CATEGORY_NAMES[r.category]}${r.tags?.length ? ` · ${r.tags.join(', ')}` : ''}`,
-          onClick: () => previewSound(r), onLoad: () => loadInstrument(createLibraryInstrument(r), r.name)
+          onClick: () => previewSound(r), onLoad: () => loadInstrument(createLibraryInstrument(r), r.name),
+          onEdit: () => onEditSound(r)
         }))
       ],
       empty: null
@@ -180,6 +193,8 @@ export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan:
       onDoubleClick={it.onLoad}
     >
       <span className="browser-item-label">{it.label}</span>
+      {it.onDelete && <button className="btn-icon browser-load" title="Delete" onClick={(e) => { e.stopPropagation(); it.onDelete!(); }}><Trash2 size={11} /></button>}
+      {it.onEdit && <button className="btn-icon browser-load" title="Edit in the Sound Designer" onClick={(e) => { e.stopPropagation(); it.onEdit!(); }}><Pencil size={11} /></button>}
       <button className="btn-icon browser-load" title="Load" onClick={(e) => { e.stopPropagation(); it.onLoad(); }}><Plus size={11} /></button>
     </div>
   );
@@ -197,6 +212,16 @@ export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan:
           <div className="browser-folder" style={{ paddingLeft: 20 }} onClick={() => toggle(key)}>
             {groupOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<Folder size={12} /> {group}
             <span className="browser-count">{inGroup.length}</span>
+            {inGroup.some((it) => it.recipe) && (
+              <button className="btn-icon browser-load" title={`Download ${group} as WAVs (zip)`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  flash(`Rendering ${group}…`);
+                  exportZip(group, inGroup.flatMap((it) => (it.recipe ? [it.recipe] : []))).then(() => flash(`${group}.zip downloaded`));
+                }}>
+                <Download size={11} />
+              </button>
+            )}
           </div>
           {groupOpen && inGroup.map((it) => renderItem(it, 2))}
         </div>

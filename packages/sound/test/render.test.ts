@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { render, midiToHz } from '../src/index.ts';
+import { render, midiToHz, withId } from '../src/index.ts';
 import type { Layer, SoundRecipe } from '../src/index.ts';
 import {
   amplitudeAt, bandShare, estimatePitch, levelAt, loudness, mean, peak, powerSpectrum, rms, spectralCentroid, toDb
@@ -120,6 +120,13 @@ test('a one-shot ends once it falls silent, and one its length cuts off fades ou
   const cut = render(recipe([{ ...sine, hz: 440 }], { pitched: false, length: 0.2 }), raw);
   assert.equal(cut.left.length, Math.ceil(0.2 * SR));
   assert.ok(Math.abs(cut.left[cut.left.length - 1]) < 1e-3, 'the end clicks');
+});
+
+test('a muted layer is left out', () => {
+  const both = render(recipe([sine, { ...sine, ratio: 2 }]), { ...raw, gate: 0.3 }).left;
+  const muted = render(recipe([sine, { ...sine, ratio: 2, mute: true }]), { ...raw, gate: 0.3 }).left;
+  assert.ok(amplitudeAt(both, SR, 880, 2048, 4096) > 0.9);
+  assert.ok(amplitudeAt(muted, SR, 880, 2048, 4096) < 0.001);
 });
 
 test('a layer can start late', () => {
@@ -244,6 +251,13 @@ test('the same recipe always renders the same samples; the seed changes the nois
     { seed, length: 0.2 });
   assert.deepEqual(render(noisy()), render(noisy()));
   assert.notDeepEqual(render(noisy(1)).left, render(noisy(2)).left);
+});
+
+test('a sound saved under another id renders the same samples', () => {
+  const noisy = recipe([{ type: 'noise', stereo: true }, { type: 'wave', unison: { voices: 3, detune: 15, spread: 1 } }], { id: 'kick-808', seed: 7, length: 0.2 });
+  const copy = withId(noisy, 'my-1234');
+  assert.equal(copy.id, 'my-1234');
+  assert.deepEqual(render(copy), render(noisy));
 });
 
 test('every kind of layer renders finite samples at any note and velocity', () => {
