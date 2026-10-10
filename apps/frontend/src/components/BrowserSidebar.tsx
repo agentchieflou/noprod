@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Music, Drum, Piano, Sliders, Zap, Plug, FolderOpen, FolderPlus, Folder, Plus, Search, X, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Music, Drum, Piano, Sliders, Zap, Plug, FolderOpen, FolderPlus, Folder, Plus, Search, X, RefreshCw, AudioWaveform } from 'lucide-react';
+import { LIBRARY, KITS, CATEGORY_NAMES } from '@noprod/sound';
 import { useDAWStore, createDefaultInstrument, createDrumKit } from '../store/useDAWStore';
 import { DEVICE_DEFS, createDevice } from '../audio/devices';
 import { MIDI_EFFECT_DEFS, createMidiEffect } from '../audio/midiEffects';
@@ -10,8 +11,12 @@ import {
 } from '../browser/library';
 import { SOUND_PRESETS, DRUM_KIT_PRESETS, isDrumSample } from '../browser/presets';
 import { subscribeAudioCore, getAudioCore, findNativePlugin, nativeDeviceFor } from '../native/audioCore';
+import {
+  createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview
+} from '../audio/library';
 
 export const SAMPLE_DRAG_TYPE = 'application/x-noprod-sample';
+export const SOUND_DRAG_TYPE = 'application/x-noprod-sound'; // a library sound's id
 
 let placesLoaded = false;
 
@@ -22,23 +27,26 @@ interface Item {
   onLoad: () => void;          // double-click / +
   onClick?: () => void;        // single click (preview)
   dragFile?: LibraryFile;      // samples can be dragged onto tracks and slots
+  dragSound?: string;          // so can library sounds (by id)
+  group?: string;              // a sub-folder within its category
 }
 
-// Ableton-style Browser: categories backed by real data (stock devices, MIDI
-// effects, instrument presets, scanned plug-ins, saved racks, and audio files
-// in user folders). Double-click or + loads an item onto the selected track
-// (or a new one); click previews a sample; samples drag onto tracks/slots.
+// Ableton-style Browser: categories backed by real data (the sound library,
+// stock devices, MIDI effects, instrument presets, scanned plug-ins, saved
+// racks, and audio files in user folders). Double-click or + loads an item
+// onto the selected track (or a new one); click previews a sound, kit or
+// sample; sounds and samples drag onto tracks/slots.
 export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan: () => void }) {
   const st = useDAWStore();
   const places = useSyncExternalStore(subscribeLibrary, getPlaces);
   const audioCore = useSyncExternalStore(subscribeAudioCore, getAudioCore);
-  const [open, setOpen] = useState<Record<string, boolean>>({ sounds: true });
+  const [open, setOpen] = useState<Record<string, boolean>>({ library: true });
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!placesLoaded) { placesLoaded = true; loadPlaces(); }
-    return () => stopPreview();
+    return () => { stopPreview(); stopSoundPreview(); };
   }, []);
 
   const flash = (m: string) => { setMessage(m); setTimeout(() => setMessage(null), 2500); };
@@ -79,6 +87,22 @@ export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan:
   // ---- categories
   const files = allFiles();
   const categories: { id: string; label: string; icon: ReactNode; items: Item[]; empty: ReactNode }[] = [
+    {
+      // Sounds built from scratch (packages/sound), in folders by kind
+      id: 'library', label: 'Library', icon: <AudioWaveform size={13} />,
+      items: [
+        ...KITS.map((k) => ({
+          key: k.id, label: k.name, group: 'Drum Kits', hint: `Drum kit · ${Object.keys(k.pads).length} pads`,
+          onClick: () => previewKit(k, kitSounds(k)), onLoad: () => loadInstrument(createLibraryKit(k), k.name)
+        })),
+        ...LIBRARY.map((r) => ({
+          key: r.id, label: r.name, group: CATEGORY_NAMES[r.category], dragSound: r.id,
+          hint: `${CATEGORY_NAMES[r.category]}${r.tags?.length ? ` · ${r.tags.join(', ')}` : ''}`,
+          onClick: () => previewSound(r), onLoad: () => loadInstrument(createLibraryInstrument(r), r.name)
+        }))
+      ],
+      empty: null
+    },
     {
       id: 'sounds', label: 'Sounds', icon: <Music size={13} />,
       items: SOUND_PRESETS.map((p) => ({ key: p.name, label: p.name, hint: 'NoProd Synth preset', onLoad: () => loadInstrument(p.make(), p.name) })),
@@ -146,9 +170,12 @@ export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan:
       key={it.key}
       className="browser-item"
       style={{ paddingLeft: 8 + depth * 12 }}
-      title={`${it.hint ? `${it.hint}\n` : ''}Double-click to load${it.dragFile ? ', click to preview, drag onto a track' : ''}`}
-      draggable={!!it.dragFile}
-      onDragStart={(e) => { if (it.dragFile) e.dataTransfer.setData(SAMPLE_DRAG_TYPE, JSON.stringify(it.dragFile)); }}
+      title={`${it.hint ? `${it.hint}\n` : ''}Double-click to load${it.onClick ? ', click to preview' : ''}${it.dragFile || it.dragSound ? ', drag onto a track' : ''}`}
+      draggable={!!(it.dragFile || it.dragSound)}
+      onDragStart={(e) => {
+        if (it.dragFile) e.dataTransfer.setData(SAMPLE_DRAG_TYPE, JSON.stringify(it.dragFile));
+        if (it.dragSound) e.dataTransfer.setData(SOUND_DRAG_TYPE, it.dragSound);
+      }}
       onClick={it.onClick}
       onDoubleClick={it.onLoad}
     >
@@ -156,6 +183,26 @@ export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan:
       <button className="btn-icon browser-load" title="Load" onClick={(e) => { e.stopPropagation(); it.onLoad(); }}><Plus size={11} /></button>
     </div>
   );
+
+  // A category's items, in collapsible groups when they have them
+  const renderItems = (categoryId: string, items: Item[]) => {
+    if (!items.some((it) => it.group)) return items.map((it) => renderItem(it));
+    const groups = [...new Set(items.map((it) => it.group || ''))];
+    return groups.map((group) => {
+      const key = `${categoryId}/${group}`;
+      const inGroup = items.filter((it) => (it.group || '') === group);
+      const groupOpen = open[key] || !!q;
+      return (
+        <div key={key}>
+          <div className="browser-folder" style={{ paddingLeft: 20 }} onClick={() => toggle(key)}>
+            {groupOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<Folder size={12} /> {group}
+            <span className="browser-count">{inGroup.length}</span>
+          </div>
+          {groupOpen && inGroup.map((it) => renderItem(it, 2))}
+        </div>
+      );
+    });
+  };
 
   const renderFolder = (folder: LibraryFolder, depth: number, key: string): ReactNode => {
     const isOpen = open[key];
@@ -194,7 +241,7 @@ export default function BrowserSidebar({ onShowPluginScan }: { onShowPluginScan:
                 {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}{c.icon} {c.label}
                 <span className="browser-count">{c.items.length}</span>
               </div>
-              {isOpen && (items.length ? items.map((it) => renderItem(it)) : <div className="browser-empty">{c.empty || 'Nothing here yet'}</div>)}
+              {isOpen && (items.length ? renderItems(c.id, items) : <div className="browser-empty">{c.empty || 'Nothing here yet'}</div>)}
             </div>
           );
         })}

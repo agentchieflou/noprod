@@ -12,8 +12,11 @@ import SessionView from './components/SessionView';
 import TrackIO from './components/TrackIO';
 import InstrumentCard from './components/InstrumentCard';
 import TakeLane from './components/TakeLane';
-import BrowserSidebar, { SAMPLE_DRAG_TYPE } from './components/BrowserSidebar';
+import BrowserSidebar, { SAMPLE_DRAG_TYPE, SOUND_DRAG_TYPE } from './components/BrowserSidebar';
 import { getFile } from './browser/library';
+import { findSound } from '@noprod/sound';
+import { createLibraryInstrument, soundAsBuffer } from './audio/library';
+import { startLibraryWarmup } from './audio/libraryWarmup';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
 import { initMidi } from './audio/inputs';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
@@ -53,6 +56,9 @@ onNativeEditorParameter((deviceId, parameterId, value, gesture) =>
 const nativeTransportChanged = connectNativeTransport(getTransportSnapshot);
 onTransportChange(nativeTransportChanged);
 onSegmentScheduled(nativeTransportChanged);
+
+// Library sounds render ahead of playback, as the project changes
+startLibraryWarmup(useDAWStore);
 
 // Ableton-style Color Palette Presets
 const PRESET_COLORS = [
@@ -261,6 +267,24 @@ function App() {
     const currentTarget = e.currentTarget;
     const clientX = e.clientX;
     const rect = currentTarget ? (currentTarget as HTMLElement).getBoundingClientRect() : null;
+
+    // A library sound: a MIDI track plays it as its instrument, anything
+    // else gets it as a rendered audio clip
+    const sound = findSound(e.dataTransfer.getData(SOUND_DRAG_TYPE));
+    if (sound) {
+      if (tracks.find((t: any) => t.id === trackId)?.type === 'midi') {
+        setTrackInstrument(trackId, createLibraryInstrument(sound));
+        return;
+      }
+      const audioBuffer = soundAsBuffer(sound);
+      if (slotIndex !== undefined) {
+        setSessionClip(trackId, slotIndex, { name: sound.name, audioBuffer, duration: audioBuffer.duration });
+      } else {
+        const dropTime = Math.max(0, (rect ? clientX - rect.left : 0) / PIXELS_PER_SECOND);
+        addRegion({ trackId, file: sound.name, audioBuffer, startTime: dropTime, duration: audioBuffer.duration });
+      }
+      return;
+    }
 
     // Samples dragged from the Browser carry a library reference, not a File
     const fromBrowser = e.dataTransfer.getData(SAMPLE_DRAG_TYPE);

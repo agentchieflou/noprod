@@ -14,6 +14,7 @@
 
 import { audioContext } from './engine';
 import { publishMidi } from './inputs';
+import { isLibraryKit } from './library';
 
 export type KeyboardMode = 'auto' | 'piano' | 'scale' | 'drums';
 
@@ -106,7 +107,8 @@ export function keyboardTarget(st: any): { ids: string[] | undefined; track: any
 // The mode actually in use: Auto means Drums on a drum kit, Piano otherwise
 export function effectiveMode(st: any): Exclude<KeyboardMode, 'auto'> {
   if (state.mode !== 'auto') return state.mode;
-  return keyboardTarget(st).track?.instrument?.parameters?.Kit === 'drums' ? 'drums' : 'piano';
+  const params = keyboardTarget(st).track?.instrument?.parameters;
+  return params?.Kit === 'drums' || isLibraryKit(params) ? 'drums' : 'piano';
 }
 
 const scaleDegreePitch = (degree: number) => {
