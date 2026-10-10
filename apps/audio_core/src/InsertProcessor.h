@@ -76,6 +76,10 @@ public:
     virtual juce::String getParameterText (int index) = 0;
     virtual bool setParameterValue (int index, float value) = 0;
 
+    // Control thread, after a parameter change: re-reads the latency if the
+    // plugin may change it. True if it changed.
+    virtual bool refreshLatency() { return false; }
+
     // True if the plugin has an editor GhostDAW can stream to the browser
     // (an LPI plugin with lpi.gui.offscreen.v1, see editor/LpiEditor.h)
     virtual bool hasEditor() { return false; }
