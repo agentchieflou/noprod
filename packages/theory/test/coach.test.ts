@@ -150,7 +150,9 @@ test('the auto key starts in C major and follows what is played', () => {
 test('the auto key hears a progression from its first chord', () => {
   // C, G/B, Am fit C major, E minor and G major about equally: it started on C
   const coach = new Coach({ mode: 'chords' });
-  [[60, 64, 67], [59, 62, 67], [57, 60, 64]].forEach((chord, i) => play(coach, chord, i));
+  play(coach, [60, 64, 67], 0, 0.5);
+  play(coach, [59, 62, 67], 1, 0.5);
+  for (const p of [57, 60, 64]) coach.noteOn(p, 2, 127);   // Am, held while the coach is read
   const { readout } = coach.suggest();
   assert.equal(readout.keyName, 'C major');
   assert.equal(readout.roman, 'vi');
