@@ -134,6 +134,14 @@ public:
             std::thread ([this, client]
             {
                 handleClient (client);
+                // Close now: replies still queued elsewhere may hold the
+                // connection, and the client waits for the TCP close. Under
+                // the write lock, so a reply being written finishes first and
+                // later ones see a closed socket.
+                {
+                    std::lock_guard<std::mutex> lock (client->writeLock);
+                    client->socket->close();
+                }
                 removeClient (client);
                 if (handlers.onClose)
                     handlers.onClose (client);
