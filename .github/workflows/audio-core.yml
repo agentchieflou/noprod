@@ -1,0 +1,31 @@
+name: Audio core
+
+# GhostDAW builds JUCE, so it only runs when the audio core changes
+on:
+  pull_request:
+    paths: ['apps/audio_core/**', '.github/workflows/audio-core.yml']
+  push:
+    branches: [main]
+    paths: ['apps/audio_core/**', '.github/workflows/audio-core.yml']
+
+concurrency:
+  group: audio-core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: JUCE's Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libfreetype-dev libfontconfig1-dev libcurl4-openssl-dev libgl-dev
+      - run: cmake -S apps/audio_core -B build/audio_core -G Ninja -DCMAKE_BUILD_TYPE=Release -DGHOSTDAW_BUILD_TESTS=ON
+      - run: cmake --build build/audio_core
+      - run: build/audio_core/tests/GhostDAWTests_artefacts/Release/GhostDAWTests

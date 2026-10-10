@@ -1,0 +1,26 @@
+name: Labels
+
+# The repo's labels, kept here: the work tiers (#90) and who built a PR
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/labels.yml']
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: |
+          gh label create "tier:haiku"      --force --color 7dd3fc --description "Follows an existing pattern; fully specified, checked by tests"
+          gh label create "tier:sonnet"     --force --color a78bfa --description "A feature from known parts: several files, new UI and its browser suite"
+          gh label create "tier:opus"       --force --color f59e0b --description "New DSP, real-time code, architecture or open design"
+          gh label create "built-by:haiku"  --force --color e0f2fe --description "A PR built by Haiku 5.5"
+          gh label create "built-by:sonnet" --force --color ede9fe --description "A PR built by Sonnet 5.5"
+          gh label create "built-by:opus"   --force --color fef3c7 --description "A PR built by Opus 5.5"

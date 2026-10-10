@@ -5,3 +5,6 @@ build/
 .env
 .env.local
 .DS_Store
+
+# browser test screenshots
+apps/frontend/e2e/.shots/

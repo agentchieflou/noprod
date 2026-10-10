@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "e2e": "node e2e/run.mjs"
   },
   "dependencies": {
     "@noprod/sound": "*",
