@@ -10,16 +10,18 @@ import { getStripInput } from '../audio/engine';
 import { midiNoteName } from '../audio/synth';
 import { Param, Choice, EnvelopeParams, FilterParams } from './designerControls';
 import { filtersOf, asFilter } from './designerUtils';
-import { ExciterParams, ResonatorParams, RadiatorParams } from './ModelParams';
+import { ExciterParams, ResonatorParams, RadiatorParams, StringSetParams } from './ModelParams';
 import { savedColumns, saveColumns, savedNote, saveNote, scratchColumn, type MapColumn } from './dspMapState';
 
 // The DSP Map (#80): instruments side by side, each drawn as the stages its
 // sound passes through (player input → excitation → resonator → radiator →
 // output). What two or more share is listed by stage, and switches off or
 // on in all of them at once; any block switches on its own, opens in the
-// inspector, or comes out; "+" adds a branch. A track's column edits the
-// track's instrument (undoable, saved with the project); a library sound's
-// column edits a scratch copy.
+// inspector, or comes out; "+" adds a block, or a branch beside the chain
+// (strings at a string's bridge, a radiator in parallel), drawn side by
+// side in its stage. A track's column edits the track's instrument
+// (undoable, saved with the project); a library sound's column edits a
+// scratch copy.
 
 interface Column {
   key: string;
@@ -73,6 +75,22 @@ function BlockParams({ layer, id, onChange, onRemove }: { layer: Layer; id: stri
       if (layer.type !== 'model' || !layer.radiators?.[k]) return null;
       const radiators = layer.radiators;
       return <RadiatorParams radiator={radiators[k]} onChange={(r) => set({ radiators: radiators.map((x, j) => (j === k ? r : x)) })} />;
+    }
+    case 'parallel': {
+      if (layer.type !== 'model' || !layer.parallel?.[k]) return null;
+      const parallel = layer.parallel;
+      return <RadiatorParams radiator={parallel[k]} onChange={(r) => set({ parallel: parallel.map((x, j) => (j === k ? r : x)) })} />;
+    }
+    case 'strings': {
+      if (layer.type !== 'model' || layer.resonator.kind !== 'string' || !layer.strings?.[k]) return null;
+      const { strings, resonator } = layer;
+      return (
+        <>
+          <StringSetParams set={strings[k]} onChange={(next) => set({ strings: strings.map((x, j) => (j === k ? next : x)) })} />
+          <div className="designer-hint">The bridge they share, and how much it gives:</div>
+          <Param label="Bridge" value={resonator.coupling} def={0.3} min={0} max={1} onChange={(coupling) => set({ resonator: { ...resonator, coupling } })} />
+        </>
+      );
     }
     case 'filter': {
       const filters = filtersOf(layer);
@@ -215,17 +233,48 @@ export default function DspMap() {
   const selLayer = selCol?.recipe.layers[selection!.layer];
   const selBlock = selCol?.chain.layers[selection!.layer]?.blocks.find((b) => b.id === selection!.id);
 
+  // A stage's blocks in a layer: in a row, or, with branches beside the
+  // chain, the chain and each branch side by side (strings at a bridge are
+  // joined by it), then what follows them (filters, after the paths mix)
+  const lane = (c: Column, blocks: Block[]) => {
+    if (!blocks.some((b) => b.branch > 0)) return blocks.map((b) => blockChip(c, b));
+    const paths = blocks.filter((b) => b.branch > 0 || b.family !== 'filter');
+    const after = blocks.filter((b) => b.branch === 0 && b.family === 'filter');
+    const branches = [...new Set(paths.map((b) => b.branch))].sort((x, y) => x - y);
+    const bridged = paths.some((b) => b.kind === 'unison' || b.kind === 'sympathetic');
+    return (
+      <>
+        <div className={`dsp-branches ${bridged ? 'bridged' : ''}`}
+          title={bridged ? 'Strings at one bridge: each passes its vibration to the others through it' : 'Paths side by side, mixed where they end'}>
+          {branches.map((n) => (
+            <div key={n} className="dsp-branch" data-branch={n}>
+              {paths.filter((b) => b.branch === n).map((b) => blockChip(c, b))}
+            </div>
+          ))}
+          {bridged && <span className="dsp-bridge">bridge</span>}
+        </div>
+        {after.map((b) => blockChip(c, b))}
+      </>
+    );
+  };
+
   const cell = (c: Column, stage: Stage, first: boolean) => {
     const lanes = c.chain.layers.map((lc) => ({ lc, blocks: lc.blocks.filter((b) => b.stage === stage) })).filter((l) => l.blocks.length);
-    // What can be added here: per layer (a source adds a layer beside them, so it's offered once)
-    const branches = c.recipe.layers.flatMap((_, i) => branchesFor(c.recipe, i, stage)
-      .filter((kind) => i === 0 || BLOCKS[kind].family !== 'source')
-      .map((kind) => ({ layer: i, kind })));
+    // What can be added here: per layer (a source adds a layer beside them,
+    // so it's offered once), and the radiators that can go in parallel
+    const branches = c.recipe.layers.flatMap((_, i) => [
+      ...branchesFor(c.recipe, i, stage)
+        .filter((kind) => i === 0 || BLOCKS[kind].family !== 'source')
+        .map((kind) => ({ layer: i, kind, parallel: false })),
+      ...branchesFor(c.recipe, i, stage, { parallel: true }).map((kind) => ({ layer: i, kind, parallel: true }))
+    ]);
     const loop = stage === 'resonator' && c.chain.layers.some((l) => l.closed);
     const many = c.recipe.layers.length > 1;
-    const swaps = (layer: number, kind: BlockKind) => {
+    const swaps = (layer: number, kind: BlockKind, parallel: boolean) => {
+      if (parallel) return ' (in parallel)';
       const family = BLOCKS[kind].family;
-      const now = c.chain.layers[layer].blocks.find((b) => b.family === family && (family === 'exciter' || family === 'resonator'));
+      if (kind === 'unison' || kind === 'sympathetic') return ' (beside it, at its bridge)';
+      const now = c.chain.layers[layer].blocks.find((b) => b.family === family && b.branch === 0 && (family === 'exciter' || family === 'resonator'));
       return now ? ` (replaces ${now.label})` : BLOCKS[kind].family === 'source' ? ' (a layer beside it)' : '';
     };
     return (
@@ -234,24 +283,24 @@ export default function DspMap() {
         {lanes.map(({ lc, blocks }) => (
           <div key={lc.index} className={`dsp-lane ${lc.muted ? 'muted' : ''}`}>
             {many && <span className="dsp-lane-label" title={`Layer ${lc.index + 1}: ${lc.label}`}>{lc.index + 1}</span>}
-            {blocks.map((b) => blockChip(c, b))}
+            {lane(c, blocks)}
           </div>
         ))}
         {branches.length > 0 && (
           <select className="dsp-add" value="" title="Add a block here" aria-label={`Add to ${c.name}'s ${stage}`}
             onChange={(e) => {
-              const [layer, kind] = e.target.value.split('|');
+              const [layer, kind, parallel] = e.target.value.split('|');
               if (!kind) return;
-              const next = addBlock(c.recipe, Number(layer), kind as BlockKind);
+              const next = addBlock(c.recipe, Number(layer), kind as BlockKind, { parallel: parallel === 'parallel' });
               edit(c, next);
               // and open what was added
-              const added = chainOf(next).layers.flatMap((lc) => lc.blocks).filter((b) => b.kind === kind).at(-1);
+              const added = chainOf(next).layers.flatMap((lc) => lc.blocks).filter((b) => b.kind === kind && (parallel !== 'parallel' || b.branch > 0)).at(-1);
               if (added) setSelection({ col: c.key, layer: added.layer, id: added.id });
             }}>
             <option value="">+</option>
-            {branches.map(({ layer, kind }) => (
-              <option key={`${layer}|${kind}`} value={`${layer}|${kind}`}>
-                {many && BLOCKS[kind].family !== 'source' ? `${layer + 1} · ` : ''}{BLOCKS[kind].label}{swaps(layer, kind)}
+            {branches.map(({ layer, kind, parallel }) => (
+              <option key={`${layer}|${kind}|${parallel}`} value={`${layer}|${kind}${parallel ? '|parallel' : ''}`}>
+                {many && BLOCKS[kind].family !== 'source' ? `${layer + 1} · ` : ''}{BLOCKS[kind].label}{swaps(layer, kind, parallel)}
               </option>
             ))}
           </select>

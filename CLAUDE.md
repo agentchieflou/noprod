@@ -58,6 +58,10 @@ envelopes, determinism (`packages/sound/src/analysis.ts`).
   - in tune an octave either side of its root;
   - unclipped two octaves either side;
   - quieter at lower velocity.
+- `packages/sound/test/renders.test.ts` checks that every library sound
+  renders bit for bit as fingerprinted in `test/renders.json`. An engine
+  change mustn't move them. If you change a sound on purpose, run
+  `node test/renders.ts --write` in `packages/sound` and say why in the PR.
 - Browser suites live in `apps/frontend/e2e/suites/<name>.cjs`. Each one is
   `module.exports = async (page, ctx) => {}` and prints one `PASS …` or
   `FAIL …` line per check.

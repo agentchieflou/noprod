@@ -13,7 +13,7 @@
 
 import { estimatePitch } from './analysis.ts';
 import { StateVariableFilter, createRandom } from './dsp.ts';
-import type { Exciter, ModelLayer, Radiator, Resonator } from './types.ts';
+import type { Exciter, ModelLayer, Radiator, StringResonator, StringSet } from './types.ts';
 
 // --------------------------------------------------------------- pieces
 
@@ -332,51 +332,217 @@ function excitation(exciter: Exciter, ctx: Context): Excitation {
 
 interface Resonance_ {
   // the wave arriving where the exciter is, then what the exciter adds; the
-  // second returns the sample heard (at the bridge, or the bell)
-  incoming(hz: number): number;
+  // second returns the sample heard (at the bridge, or the bell). `damp`
+  // takes from the played strings' energy each time round (their damper)
+  incoming(hz: number, damp?: number): number;
   inject(e: number): number;
   tail: number;  // seconds it rings after the excitation stops
 }
 
-function resonator(resonator: Resonator, excite: Excitation, position: number, sr: number, lowestHz: number): Resonance_ {
-  if (resonator.kind === 'string') {
-    // Two lines either side of the exciter; rigid at the nut, lossy at the bridge
-    const decay = resonator.decay ?? 3;
-    const brightness = resonator.brightness ?? 0.5;
-    const loss = new OnePole(0.05 + 0.75 * (1 - brightness));
-    const stiffness = resonator.stiffness ?? 0;
+// A string: two lines either side of the exciter; rigid at the nut, and
+// at the bridge whatever the bridge sends back
+class StringLoop {
+  private readonly neck: Delay;
+  private readonly bridge: Delay;
+  private readonly loss: OnePole;
+  private readonly allpasses: Allpass[];
+  private readonly beta: number;
+  private readonly decay: number;
+  private readonly buzz: number;
+  private readonly sr: number;
+  private toNeck = 0;
+  private toBridge = 0;
+  private tuned = 0;
+  private dBridge = 0;
+  private dNeck = 0;
+  private period = 0;
+  private settle = 0;
+  private swing = 0;
+  heard = 0;
+
+  constructor(string: { decay?: number; brightness?: number; stiffness?: number; buzz?: number }, position: number, sr: number, lowestHz: number) {
+    this.decay = string.decay ?? 3;
+    this.loss = new OnePole(0.05 + 0.75 * (1 - (string.brightness ?? 0.5)));
+    const stiffness = string.stiffness ?? 0;
     const c = stiffness > 0 ? stiffnessCoefficient(lowestHz, stiffness * 0.0012, sr) : 0;
-    const allpasses = c ? Array.from({ length: STIFF_SECTIONS }, () => new Allpass(c)) : [];
+    this.allpasses = c ? Array.from({ length: STIFF_SECTIONS }, () => new Allpass(c)) : [];
     const longest = sr / Math.max(10, lowestHz) + 8;
-    const neck = new Delay(longest);
-    const bridge = new Delay(longest);
-    const beta = Math.min(0.5, Math.max(0.02, position));
-    let toNeck = 0, toBridge = 0, heard = 0, tuned = 0, dBridge = 0, dNeck = 0;
+    this.neck = new Delay(longest);
+    this.bridge = new Delay(longest);
+    this.beta = Math.min(0.5, Math.max(0.02, position));
+    this.buzz = string.buzz ?? 0;
+    this.sr = sr;
+  }
+
+  // The wave arriving at the bridge, past the string's losses
+  arrive(hz: number) {
+    const sr = this.sr;
+    if (Math.abs(hz - this.tuned) > 1e-3) {
+      const w = (2 * Math.PI * hz) / sr;
+      const period = sr / hz;
+      // the fundamental falls 60 dB in `decay` seconds, whatever the filter does to it
+      this.loss.g = 1;
+      this.loss.g = Math.min(0.99999, Math.pow(10, -3 / (this.decay * hz)) / this.loss.magnitude(w));
+      const delay = Math.max(2, period - this.loss.phaseDelay(w) - this.allpasses.reduce((s, a) => s + a.phaseDelay(w), 0));
+      this.dBridge = delay * this.beta;
+      this.dNeck = delay - this.dBridge;
+      this.period = period;
+      this.settle = Math.exp(-1 / (2 * period));
+      this.tuned = hz;
+    }
+    // A curved bridge (a sitar's jawari): on one side of each swing the
+    // string lies along it, and is shorter while it does, the more so the
+    // wider it swings. Its wave folds there once a period: it buzzes, and
+    // fills in the harmonics where it was plucked left gaps
+    let onto = 0;
+    if (this.buzz > 0) {
+      this.swing = Math.max(Math.abs(this.heard), this.swing * this.settle);
+      if (this.heard > 0) onto = this.buzz * 0.03 * this.period * Math.min(1, 4 * this.swing) * (this.heard / this.swing);
+    }
+    this.heard = this.bridge.read(this.dBridge - onto);
+    let back = this.loss.tick(this.heard);
+    for (const a of this.allpasses) back = a.tick(back);
+    this.toBridge = -this.neck.read(this.dNeck);   // reflected at the nut
+    return back;
+  }
+
+  // Sends `wave` back from the bridge; returns the string's velocity under the exciter
+  leave(wave: number) {
+    this.toNeck = wave;
+    return this.toNeck + this.toBridge;
+  }
+
+  inject(e: number) {
+    this.neck.write(softClip(this.toNeck + e));
+    this.bridge.write(softClip(this.toBridge + e));
+  }
+}
+
+// The strings a layer has at its bridge besides its own (none if its
+// resonator isn't a string, or is switched off)
+export const stringSets = (layer: ModelLayer, off: Set<string>): StringSet[] =>
+  layer.resonator.kind !== 'string' || off.has('resonator') ? []
+    : (layer.strings ?? []).filter((set, k) => !off.has(`strings:${k}`) && (set.notes ?? set.cents ?? [0]).length > 0);
+
+// A string nothing plays: one loop, from the bridge to the nut and back
+class FreeString {
+  private readonly line: Delay;
+  private readonly loss: OnePole;
+  private readonly decay: number;
+  private readonly sr: number;
+  private tuned = 0;
+  private delay = 0;
+  heard = 0;
+
+  constructor(decay: number, brightness: number, sr: number, hz: number) {
+    this.decay = decay;
+    this.loss = new OnePole(0.05 + 0.75 * (1 - brightness));
+    this.line = new Delay(sr / Math.max(10, hz) + 8);
+    this.sr = sr;
+  }
+
+  arrive(hz: number) {
+    if (Math.abs(hz - this.tuned) > 1e-3) {
+      const w = (2 * Math.PI * hz) / this.sr;
+      this.loss.g = 1;
+      this.loss.g = Math.min(0.99999, Math.pow(10, -3 / (this.decay * hz)) / this.loss.magnitude(w));
+      this.delay = Math.max(2, this.sr / hz - this.loss.phaseDelay(w));
+      this.tuned = hz;
+    }
+    this.heard = -this.line.read(this.delay);   // reflected at the nut
+    return this.loss.tick(this.heard);
+  }
+
+  leave(wave: number) {
+    this.line.write(softClip(wave));
+  }
+}
+
+// Strings at one bridge. Each string's wave arrives there, and the bridge,
+// pushed by all of them, moves: it sends every string's wave back inverted
+// (as a rigid bridge would) plus its own motion, which carries each string's
+// vibration into the others. For N strings of impedance R on a bridge of
+// impedance R_b, the bridge moves at J = α·Σ u (u: the arriving waves) with
+// α = 2R/(N·R + R_b), and string i gets J − u_i back: the scattering matrix
+// S = α·11ᵀ − I. S is symmetric, with eigenvalues −1 (the strings moving
+// against each other, which leave the bridge still) and α·N − 1 (all of them
+// together, which move it). So |S| ≤ 1, and no energy is made, as long as
+// 0 ≤ α·N ≤ 2; and α·N = 2Nρ/(1 + Nρ) < 2 for any ρ = R/R_b ≥ 0. The bridge
+// gives more to low frequencies than high: α is a one-pole low-pass,
+// α(ω)·N, whose values lie on a circle from α·N at DC to less above it,
+// inside the disc |z − 1| ≤ 1 whenever α·N ≤ 2. The strings moving together
+// lose to the bridge what they give it: the in-phase motion dies first, then
+// what's left of the strings' differences rings on (a piano's two-stage decay).
+const BRIDGE_CUTOFF = 2500;
+
+function bridged(resonator: StringResonator, sets: StringSet[], position: number, sr: number, lowestHz: number): Resonance_ {
+  const main = new StringLoop(resonator, position, sr, lowestHz);
+  const decay = resonator.decay ?? 3;
+  // a unison course is played with the string; sympathetic strings aren't touched
+  const course: { string: StringLoop; ratio: number; hz: number }[] = [];
+  const free: { string: FreeString; ratio: number; hz: number; level: number }[] = [];
+  for (const set of sets) {
+    const tunings = set.notes ? set.notes.map((n) => ({ ratio: 0, hz: 440 * Math.pow(2, (n - 69) / 12) }))
+      : (set.cents ?? [0]).map((c) => ({ ratio: Math.pow(2, c / 1200), hz: 0 }));
+    for (const { ratio, hz } of tunings) {
+      const lowest = ratio ? lowestHz * ratio : hz;
+      if (set.kind === 'unison') {
+        course.push({ string: new StringLoop({ ...resonator, decay: set.decay ?? decay, brightness: set.brightness ?? resonator.brightness, buzz: 0 }, position, sr, lowest), ratio, hz });
+      } else {
+        free.push({ string: new FreeString(set.decay ?? decay, set.brightness ?? resonator.brightness ?? 0.5, sr, lowest), ratio, hz, level: set.level ?? 1 });
+      }
+    }
+  }
+  const n = 1 + course.length + free.length;
+  const rho = 0.004 * Math.min(1, Math.max(0, resonator.coupling ?? 0.3));
+  const alpha = (2 * rho) / (1 + n * rho);
+  const motion = new OnePole(Math.exp((-2 * Math.PI * BRIDGE_CUTOFF) / sr));
+  const fromCourse = new Float64Array(course.length);
+  const fromFree = new Float64Array(free.length);
+  return {
+    tail: Math.max(decay, ...sets.map((set) => set.decay ?? decay)),
+    incoming(hz, damp = 1) {
+      const u = main.arrive(hz);
+      let sum = u;
+      for (let k = 0; k < course.length; k++) sum += (fromCourse[k] = course[k].string.arrive(course[k].ratio ? hz * course[k].ratio : course[k].hz));
+      for (let k = 0; k < free.length; k++) sum += (fromFree[k] = free[k].string.arrive(free[k].ratio ? hz * free[k].ratio : free[k].hz));
+      const bridge = alpha * motion.tick(sum);
+      // the played strings are damped together; the sympathetic ones ring on
+      for (let k = 0; k < course.length; k++) course[k].string.leave((bridge - fromCourse[k]) * damp);
+      for (let k = 0; k < free.length; k++) free[k].string.leave(bridge - fromFree[k]);
+      return main.leave((bridge - u) * damp);
+    },
+    inject(e) {
+      main.inject(e);
+      let played = main.heard;
+      for (const c of course) {
+        c.string.inject(e);
+        played += c.string.heard;
+      }
+      let sympathetic = 0;
+      for (const f of free) sympathetic += f.level * f.string.heard;
+      // what the bridge passes to the body: the course (as loud together as
+      // one string) and the sympathetic strings with it
+      return played / (1 + course.length) + sympathetic;
+    }
+  };
+}
+
+function resonator(layer: ModelLayer, excite: Excitation, position: number, sr: number, lowestHz: number, off: Set<string>): Resonance_ {
+  const resonator = layer.resonator;
+  if (resonator.kind === 'string') {
+    const sets = stringSets(layer, off);
+    if (sets.length) return bridged(resonator, sets, position, sr, lowestHz);
+    const string = new StringLoop(resonator, position, sr, lowestHz);
     return {
-      tail: decay,
+      tail: resonator.decay ?? 3,
       incoming(hz) {
-        if (Math.abs(hz - tuned) > 1e-3) {
-          const w = (2 * Math.PI * hz) / sr;
-          const period = sr / hz;
-          // the fundamental falls 60 dB in `decay` seconds, whatever the filter does to it
-          loss.g = 1;
-          loss.g = Math.min(0.99999, Math.pow(10, -3 / (decay * hz)) / loss.magnitude(w));
-          const delay = Math.max(2, period - loss.phaseDelay(w) - allpasses.reduce((s, a) => s + a.phaseDelay(w), 0));
-          dBridge = delay * beta;
-          dNeck = delay - dBridge;
-          tuned = hz;
-        }
-        heard = bridge.read(dBridge);
-        let back = loss.tick(heard);
-        for (const a of allpasses) back = a.tick(back);
-        toNeck = -back;                 // reflected at the bridge
-        toBridge = -neck.read(dNeck);   // reflected at the nut
-        return toNeck + toBridge;       // the string's velocity under the bow
+        const back = string.arrive(hz);
+        return string.leave(-back);     // reflected at the bridge
       },
       inject(e) {
-        neck.write(softClip(toNeck + e));
-        bridge.write(softClip(toBridge + e));
-        return heard;
+        string.inject(e);
+        return string.heard;
       }
     };
   }
@@ -480,8 +646,12 @@ export interface ModelRender {
   off: Set<string>;  // bypassed blocks
 }
 
-// How long the resonator rings once nothing excites it
-export const modelTail = (layer: ModelLayer) => (layer.resonator.kind === 'string' ? Math.min(10, layer.resonator.decay ?? 3) : 0.25);
+// How long the resonator rings once nothing excites it (its longest string)
+export const modelTail = (layer: ModelLayer) => {
+  if (layer.resonator.kind !== 'string') return 0.25;
+  const decay = layer.resonator.decay ?? 3;
+  return Math.min(10, Math.max(decay, ...stringSets(layer, new Set(layer.bypass)).map((set) => set.decay ?? decay)));
+};
 
 // Closed-loop models settle a little off the loop's pitch (the lips, the
 // jet and the reed have dynamics of their own), so each note is tuned like an
@@ -491,7 +661,7 @@ const tunings = new Map<string, number>();
 const PROBE = 0.7;
 
 function tuning(layer: ModelLayer, r: ModelRender): number {
-  const key = `${JSON.stringify([layer.exciter, layer.resonator])}|${r.baseHz.toFixed(4)}|${r.velocity.toFixed(3)}|${r.sampleRate}`;
+  const key = `${JSON.stringify([layer.exciter, layer.resonator, stringSets(layer, r.off)])}|${r.baseHz.toFixed(4)}|${r.velocity.toFixed(3)}|${r.sampleRate}`;
   const cached = tunings.get(key);
   if (cached !== undefined) return cached;
   const n = Math.round(PROBE * r.sampleRate);
@@ -517,9 +687,21 @@ export function renderModel(layer: ModelLayer, r: ModelRender, input: Float32Arr
   if (r.off.has('exciter')) return;
   const tuned = closedLoop(layer.exciter) && !r.off.has('resonator');
   run(layer, r, input, bend, tuned ? tuning(layer, r) : 1, out, tuned);
+  // each parallel radiator takes the resonator's sound as it is, before the series ones
+  const parallel = (layer.parallel ?? []).filter((_, k) => !r.off.has(`parallel:${k}`));
+  const dry = parallel.length ? out.slice() : null;
   (layer.radiators ?? []).forEach((radiator, k) => {
     if (!r.off.has(`radiator:${k}`)) radiate(radiator, out, r.sampleRate, r.baseHz);
   });
+  if (dry) {
+    for (const radiator of parallel) {
+      const path = dry.slice();
+      radiate(radiator, path, r.sampleRate, r.baseHz);
+      for (let i = 0; i < out.length; i++) out[i] += path[i];
+    }
+    // the paths mixed, as loud together as one
+    for (let i = 0; i < out.length; i++) out[i] /= 1 + parallel.length;
+  }
   // what radiates carries no DC (the lips' and reed's steady flow stays in the instrument)
   const dc = new DcBlocker(r.sampleRate);
   for (let i = 0; i < out.length; i++) out[i] = dc.tick(out[i]);
@@ -535,7 +717,10 @@ function run(layer: ModelLayer, r: ModelRender, input: Float32Array, bend: Float
       : layer.exciter.kind === 'bow' ? layer.exciter.position ?? 0.13 : 0.5;
   let lowest = baseHz;
   if (bend) for (const b of bend) lowest = Math.min(lowest, baseHz * b);
-  const ring = r.off.has('resonator') ? null : resonator(layer.resonator, excite, position, sr, lowest);
+  const ring = r.off.has('resonator') ? null : resonator(layer, excite, position, sr, lowest, r.off);
+  // Plucked or struck strings at a shared bridge are damped in the loop, by
+  // the envelope where it falls, so the sympathetic strings can ring on
+  const damper = !excite.closed && stringSets(layer, r.off).length > 0;
 
   const ear = listen ? new Ear(sr, lowest) : null;
   for (let i = 0; i < out.length; i++) {
@@ -545,9 +730,16 @@ function run(layer: ModelLayer, r: ModelRender, input: Float32Array, bend: Float
       out[i] = excite.tick(0, input[i] ?? 0, period);
       continue;
     }
+    let damp = 1;
+    if (damper) {
+      // what the envelope lost over one trip round the string (once it has
+      // fallen silent, the damper stays on)
+      const was = input[i - Math.round(period)] ?? 0, now = input[i] ?? 0;
+      damp = was > 0 ? Math.min(1, now / was) : now > 0 ? 1 : 0;
+    }
     // retuned by ear: the player's lips or breath move with the loop, as an embouchure does
     const heard = ear ? hz * ear.correction : hz;
-    const back = ring.incoming(heard);
+    const back = ring.incoming(heard, damp);
     out[i] = ring.inject(excite.tick(back, input[i] ?? 0, sr / heard));
     ear?.hear(out[i], sr / (bend ? r.baseHz * bend[i] : r.baseHz));
   }

@@ -154,6 +154,56 @@ module.exports = async (page, ctx) => {
   await ctx.sleep(300);
   check('The columns are kept across tabs', (await heads()).map((h) => h.name).join() === kept, kept);
 
+  // 12. Branches (#108): the sitar's sympathetic strings beside its string,
+  // joined by the bridge, and its two gourds side by side
+  await setSel('.dsp-map-picker', 'sound:sitar');
+  await ctx.sleep(300);
+  const scol = (await heads()).find((h) => h.name === 'Sitar').col;
+  const scratch = () => page.evaluate(async (c) => (await import('/src/components/dspMapState.ts')).savedColumns().find((x) => x.key === c)?.recipe, scol);
+  const paths = (stage) => page.evaluate((c, stage) => {
+    const row = document.querySelector(`.dsp-map-cell[data-col="${c}"][data-stage="${stage}"] .dsp-branches`);
+    const boxes = [...(row?.querySelectorAll('.dsp-branch') ?? [])];
+    const rects = boxes.map((b) => b.getBoundingClientRect());
+    return {
+      bridged: !!row?.classList.contains('bridged'), bridge: row?.querySelector('.dsp-bridge')?.textContent ?? null,
+      branches: boxes.map((b) => [...b.querySelectorAll('.dsp-block')].map((x) => x.dataset.kind).join('+')),
+      sideBySide: rects.every((r, i) => i === 0 || (r.left >= rects[i - 1].right - 1 && Math.abs(r.top - rects[0].top) < 4))
+    };
+  }, scol, stage);
+  const strings = await paths('resonator'), gourds = await paths('radiator');
+  check('The sitar\'s sympathetic strings are drawn beside its string, joined by the bridge',
+    strings.bridged && strings.bridge === 'bridge' && JSON.stringify(strings.branches) === '["string","sympathetic"]' && strings.sideBySide, JSON.stringify(strings));
+  check('…and its second gourd beside the first, in parallel (no bridge there)',
+    !gourds.bridged && JSON.stringify(gourds.branches) === '["body","helmholtz"]' && gourds.sideBySide, JSON.stringify(gourds));
+  // the inspector: the strings and the bridge they share
+  await page.click(`.dsp-map-cell[data-col="${scol}"] .dsp-block[data-id="strings:0"]`);
+  await ctx.sleep(150);
+  const inspected = await page.evaluate(() => ({ title: document.querySelector('.dsp-inspector-title')?.firstChild?.textContent,
+    params: [...document.querySelectorAll('.dsp-inspector .param-name')].map((n) => n.textContent) }));
+  check('Its strings open in the inspector, with the bridge they share', inspected.title === 'Sympathetic strings'
+    && ['Kind', 'Tuned', 'Notes', 'Rings', 'Level', 'Bridge'].every((p) => inspected.params.includes(p)), JSON.stringify(inspected));
+  // a branch switches off as a whole, and the sound changes
+  const s0 = await scratch();
+  await page.click(`.dsp-map-cell[data-col="${scol}"] .dsp-block[data-id="strings:0"] .dsp-power`);
+  await ctx.sleep(200);
+  const s1 = await scratch();
+  const symOff = await page.evaluate((c) => document.querySelector(`.dsp-map-cell[data-col="${c}"] .dsp-block[data-id="strings:0"]`).classList.contains('off'), scol);
+  const symDiff = await renderPeakDiff(s0, s1);
+  check('The sympathetic strings switch off as a branch, and the sound changes', JSON.stringify(s1.layers[0].bypass) === '["strings:0"]' && symOff && symDiff > 0.001,
+    `bypass ${JSON.stringify(s1.layers[0].bypass)}, diff ${symDiff.toFixed(4)}`);
+  // "+": a bell in parallel, a third path
+  const rOptions = await page.evaluate((c) => [...document.querySelector(`.dsp-map-cell[data-col="${c}"][data-stage="radiator"] .dsp-add`).options].map((o) => o.textContent), scol);
+  await setSel(`.dsp-map-cell[data-col="${scol}"][data-stage="radiator"] .dsp-add`, '0|bell|parallel');
+  await ctx.sleep(200);
+  const s2 = await scratch();
+  const three = await paths('radiator');
+  const opened = await page.evaluate(() => document.querySelector('.dsp-inspector-title')?.firstChild?.textContent);
+  check('"+" puts a bell in parallel: a third path, opened in the inspector', rOptions.includes('Bell (in parallel)')
+    && JSON.stringify(s2.layers[0].parallel.map((r) => r.kind)) === '["helmholtz","bell"]' && JSON.stringify(three.branches) === '["body","helmholtz","bell"]' && opened === 'Bell',
+    JSON.stringify({ parallel: s2.layers[0].parallel.map((r) => r.kind), branches: three.branches, opened }));
+  await page.evaluate(() => document.querySelector('.dsp-map-grid').scrollIntoView());
+  await ctx.shot('dspmap_branches');
+
   await ctx.sleep(500);
   const el = await page.$('.bottom-detail-panel');
   await el.screenshot({ path: require('path').join(ctx.shotDir, 'dspmap_end.png') });

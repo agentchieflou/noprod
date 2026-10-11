@@ -134,3 +134,39 @@ test('shared blocks across a violin, a guitar and a synth lead', () => {
   assert.deepEqual(off[1], guitar);  // nothing to switch on the guitar
   assert.ok(!same(samples(off[0]), samples(violin)));
 });
+
+test('branches beside the chain: strings at the bridge and parallel radiators (#108)', () => {
+  const plain = samples(guitar);
+  // strings come only with a string
+  assert.ok(['unison', 'sympathetic'].every((k) => branchesFor(guitar, 0, 'resonator').includes(k as never)));
+  const blown = recipe('flute', [{ type: 'model', exciter: { kind: 'jet' }, resonator: { kind: 'bore' } }]);
+  assert.ok(!branchesFor(blown, 0, 'resonator').includes('sympathetic'));
+  assert.throws(() => addBlock(blown, 0, 'sympathetic'));
+  // a set of sympathetic strings: a block on a branch of its own
+  const ringing = addBlock(guitar, 0, 'sympathetic');
+  assert.equal((ringing.layers[0] as ModelLayer).strings!.length, 1);
+  const set = chainOf(ringing).layers[0].blocks.find((b) => b.id === 'strings:0')!;
+  assert.ok(set.kind === 'sympathetic' && set.stage === 'resonator' && set.branch === 1 && set.on, JSON.stringify(set));
+  assert.equal(chainOf(ringing).layers[0].blocks.find((b) => b.id === 'resonator')!.branch, 0);
+  assert.ok(!same(samples(ringing), plain));
+  // a bell in parallel: any radiator can be one, even one the chain has
+  assert.ok(branchesFor(guitar, 0, 'radiator', { parallel: true }).includes('body'));
+  assert.deepEqual(branchesFor(guitar, 0, 'resonator', { parallel: true }), []);
+  const both = addBlock(ringing, 0, 'bell', { parallel: true });
+  assert.deepEqual((both.layers[0] as ModelLayer).parallel!.map((r) => r.kind), ['bell']);
+  const bell = chainOf(both).layers[0].blocks.find((b) => b.id === 'parallel:0')!;
+  assert.ok(bell.kind === 'bell' && bell.branch === 1 && bell.stage === 'radiator');
+  assert.throws(() => addBlock(guitar, 0, 'lowpass', { parallel: true }));
+  // each branch switches off as a whole, and back
+  const quiet = setBlockOn(setBlockOn(both, 0, 'strings:0', false), 0, 'parallel:0', false);
+  assert.deepEqual(quiet.layers[0].bypass, ['strings:0', 'parallel:0']);
+  assert.ok(same(samples(quiet), plain), 'with its branches off it is the guitar again');
+  assert.deepEqual(setBlockOn(setBlockOn(quiet, 0, 'strings:0', true), 0, 'parallel:0', true), both);
+  // and comes out, the ones after it renumbered
+  const two = addBlock(both, 0, 'unison');
+  const off = setBlockOn(two, 0, 'strings:1', false);
+  const out = removeBlock(off, 0, 'strings:0');
+  assert.deepEqual((out.layers[0] as ModelLayer).strings!.map((s) => s.kind), ['unison']);
+  assert.deepEqual(out.layers[0].bypass, ['strings:0']);
+  assert.equal((removeBlock(both, 0, 'parallel:0').layers[0] as ModelLayer).parallel, undefined);
+});

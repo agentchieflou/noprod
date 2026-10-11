@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { render, midiToHz } from '../src/index.ts';
-import type { Exciter, Layer, ModelLayer, Radiator, Resonator, SoundRecipe } from '../src/index.ts';
+import type { Exciter, Layer, ModelLayer, Radiator, Resonator, SoundRecipe, StringResonator, StringSet } from '../src/index.ts';
 import { amplitudeAt, estimatePitch, levelAt, peak, spectralCentroid, toDb } from '../src/analysis.ts';
 
 const SR = 44100;
@@ -133,5 +133,113 @@ test('every exciter on every resonator renders finite, bounded, repeatable sampl
       }
       assert.deepEqual(render(r, { gate: 0.3, sampleRate: 22050 }), render(r, { gate: 0.3, sampleRate: 22050 }));
     }
+  }
+});
+
+// ------------------------------------------------- strings at a bridge (#108)
+
+const struck = (string: Partial<StringResonator>, strings: StringSet[]) =>
+  model({ kind: 'strike' }, { kind: 'string', decay: 8, ...string }, { strings, env: { sustain: 1, release: 0.3 } });
+// how fast it falls, in dB a second, between two times
+const slope = (x: Float32Array, t0: number, t1: number) => (toDb(levelAt(x, SR, t1, 0.1)) - toDb(levelAt(x, SR, t0, 0.1))) / (t1 - t0);
+
+test('strings at a bridge never gain energy from it: nothing grows once the hammer has struck', () => {
+  // The loosest bridge, strings that barely lose anything, sympathetic
+  // strings at the note and its fifths, octaves and fourth (unheard), and a
+  // course in perfect unison: the course moves as one string, and what is
+  // heard is that string, so its level is its energy
+  const x = raw(recipe([struck({ decay: 1000, brightness: 1, coupling: 1 }, [
+    { kind: 'unison', cents: [0, 0, 0] },
+    { kind: 'sympathetic', cents: [0, 3.5, 702, 1200, 1902, -498], decay: 1000, brightness: 1, level: 0 }
+  ])], { length: 6 }), 60, 6);
+  const first = Math.max(...[0.02, 0.05, 0.1].map((t) => levelAt(x, SR, t, 0.02)));
+  for (let t = 0.2; t < 5.9; t += 0.1) {
+    const level = levelAt(x, SR, t, 0.02);
+    assert.ok(Number.isFinite(level) && level <= first * 1.01, `${toDb(level / first).toFixed(2)} dB at ${t.toFixed(1)} s`);
+  }
+});
+
+test('two strings a cent apart at a bridge die fast, then slowly (a piano\'s two-stage decay)', () => {
+  const pair = raw(recipe([struck({}, [{ kind: 'unison', cents: [1] }])], { length: 6 }), 60, 6);
+  const fast = -60 / slope(pair, 0.1, 0.9), slow = -60 / slope(pair, 3, 5.5);
+  assert.ok(fast < 4 && slow > 6 && slow > 2.5 * fast, `T60 ${fast.toFixed(1)} s, then ${slow.toFixed(1)} s`);
+  // moving together they move the bridge, and give it their energy; what's
+  // left is their difference, which leaves it still and dies at the strings' own rate
+  assert.ok(slow > 6 && slow < 10, `the aftersound's T60 is ${slow.toFixed(1)} s (the strings' 8 s)`);
+  // one string, with nothing to share a bridge with, dies at one rate
+  const one = raw(recipe([struck({}, [])], { length: 6 }), 60, 6);
+  const early = -60 / slope(one, 0.1, 0.9), late = -60 / slope(one, 3, 5.5);
+  assert.ok(late < 1.5 * early, `one string: T60 ${early.toFixed(1)} s, then ${late.toFixed(1)} s`);
+});
+
+test('strings a few cents apart at a bridge beat', () => {
+  const rise = (x: Float32Array) => {
+    let low = Infinity, most = 0;
+    for (let t = 0.3; t < 5.5; t += 0.05) {
+      const db = toDb(levelAt(x, SR, t, 0.1));
+      low = Math.min(low, db);
+      most = Math.max(most, db - low);
+    }
+    return most;
+  };
+  const beating = rise(raw(recipe([struck({}, [{ kind: 'unison', cents: [3] }])], { length: 6 }), 60, 6));
+  const alone = rise(raw(recipe([struck({}, [])], { length: 6 }), 60, 6));
+  assert.ok(beating > 6 && alone < 1, `after its lowest it comes back up ${beating.toFixed(1)} dB (one string: ${alone.toFixed(1)} dB)`);
+});
+
+test('a sympathetic string rings when tuned to the note\'s fifth, not when 50 cents off', () => {
+  const after = (strings: StringSet[]) => {
+    const x = raw(recipe([model({ kind: 'pluck', hardness: 0.8 }, { kind: 'string', decay: 3, coupling: 0.5 },
+      { strings, env: { sustain: 1, release: 0.05 } })], { length: 4 }), 60, 1);
+    // released at 1 s: the played string is damped, the sympathetic one isn't
+    return levelAt(x, SR, 1.25, 0.1);
+  };
+  const fifth = after([{ kind: 'sympathetic', cents: [702], decay: 6 }]);
+  const off = after([{ kind: 'sympathetic', cents: [752], decay: 6 }]);
+  const none = after([{ kind: 'sympathetic', cents: [702], decay: 6, level: 0 }]);
+  assert.ok(fifth > 1e-5 && fifth > off * 10 && fifth > none * 10, `${toDb(fifth).toFixed(1)} dB; 50 cents off ${toDb(off).toFixed(1)}; unheard ${toDb(none).toFixed(1)}`);
+});
+
+test('radiators in parallel each take the resonator\'s sound, mixed, and switch off as a branch', () => {
+  const body: Radiator = { kind: 'body', preset: 'guitar' }, bell: Radiator = { kind: 'bell', cutoff: 2000, mix: 1 };
+  const plucked = model({ kind: 'pluck' }, { kind: 'string', decay: 2 }, { radiators: [body] });
+  const both = { ...plucked, parallel: [bell] };
+  const a = raw(recipe([plucked])), b = raw(recipe([{ ...plucked, radiators: [bell] }])), mixed = raw(recipe([both]));
+  let most = 0;
+  for (let i = 0; i < Math.min(a.length, b.length, mixed.length); i++) most = Math.max(most, Math.abs(mixed[i] - (a[i] + b[i]) / 2));
+  assert.ok(most < 1e-5 * peak(mixed), `the paths mixed: ${most}`);
+  assert.notDeepEqual(mixed, raw(recipe([{ ...plucked, radiators: [body, bell] }])));  // not the bell after the body
+  // switched off, the branch is gone
+  const same = (x: Float32Array, y: Float32Array) => x.length === y.length && x.every((v, i) => v === y[i]);
+  assert.ok(same(raw(recipe([{ ...both, bypass: ['parallel:0'] }])), a));
+});
+
+test('a buzzing bridge fills in the harmonics a pluck leaves out, and stays in tune', () => {
+  const f = midiToHz(50);
+  const sitar = (buzz: number) => raw(recipe([model({ kind: 'pluck', position: 0.2, hardness: 0.8 }, { kind: 'string', decay: 4, brightness: 0.6, buzz })], { root: 50, length: 3 }), 50, 3);
+  for (const t of [0.1, 0.8]) {
+    // plucked a fifth of the way along: no 5th harmonic, unless the bridge buzzes
+    const gap = (x: Float32Array) => toDb(amplitudeAt(x, SR, 5 * f, Math.round(t * SR), 8192) / amplitudeAt(x, SR, 4 * f, Math.round(t * SR), 8192));
+    const plain = gap(sitar(0)), buzzing = gap(sitar(0.5));
+    assert.ok(plain < -15 && buzzing > plain + 10, `at ${t} s the 5th harmonic is ${plain.toFixed(1)} dB under the 4th, ${buzzing.toFixed(1)} buzzing`);
+  }
+  const x = sitar(0.5);
+  const hz = estimatePitch(x, SR, Math.round(0.5 * SR), 4096, f / 1.6, f * 1.6);
+  assert.ok(Math.abs(cents(hz, 50)) < 5, `${cents(hz, 50).toFixed(1)} cents`);
+});
+
+test('strings at a bridge, under every exciter, render finite, bounded, repeatable samples', () => {
+  const exciters: Exciter[] = [{ kind: 'pluck' }, { kind: 'strike' }, { kind: 'bow', pressure: 1 }, { kind: 'lips', tension: 1.3 }, { kind: 'jet', noise: 1 }, { kind: 'reed', stiffness: 1 }];
+  for (const exciter of exciters) {
+    const r = recipe([model(exciter, { kind: 'string', decay: 8, brightness: 1, stiffness: 1, coupling: 1, buzz: 1 }, {
+      strings: [{ kind: 'unison', cents: [-3, 4] }, { kind: 'sympathetic', cents: [0, 700, 1200], decay: 10, brightness: 1, level: 4 }, { kind: 'sympathetic', notes: [30, 100] }],
+      radiators: [{ kind: 'helmholtz' }], parallel: [{ kind: 'bell' }, { kind: 'body', preset: 'cello' }],
+      vibrato: { rate: 6, depth: 40 }, pitch: { amount: 3, time: 0.2 }
+    })], { length: 1 });
+    for (const [note, velocity] of [[24, 1], [60, 0.2], [96, 1]]) {
+      const { left } = render(r, { note, velocity, gate: 0.4, sampleRate: 22050, normalize: false });
+      for (const x of left) assert.ok(Number.isFinite(x) && Math.abs(x) < 50, `${exciter.kind} at ${note}: ${x}`);
+    }
+    assert.deepEqual(render(r, { gate: 0.3, sampleRate: 22050 }), render(r, { gate: 0.3, sampleRate: 22050 }));
   }
 });

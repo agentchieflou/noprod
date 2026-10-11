@@ -1,9 +1,11 @@
-import type { Exciter, ModelLayer, Radiator, Resonator } from '@noprod/sound';
+import { useState } from 'react';
+import type { Exciter, ModelLayer, Radiator, Resonator, StringSet } from '@noprod/sound';
 import { Param, Choice, Section } from './designerControls';
 import { EXCITERS, RESONATORS, RADIATORS, radiatorName } from './designerUtils';
 
-// A physical model's controls (#77): its exciter, resonator and radiators.
-// Each block's editor is exported for the DSP Map's inspector.
+// A physical model's controls (#77): its exciter, resonator and radiators,
+// the strings at its bridge and the radiators beside them (#108). Each
+// block's editor is exported for the DSP Map's inspector.
 
 interface Spec { key: string; label: string; def: number; min: number; max: number; log?: boolean; unit?: string }
 
@@ -37,10 +39,18 @@ const RESONATOR_SPECS: Record<Resonator['kind'], Spec[]> = {
   string: [
     { key: 'decay', label: 'Rings', def: 3, min: 0.1, max: 20, log: true, unit: 's' },
     { key: 'brightness', label: 'Brightness', def: 0.5, min: 0, max: 1 },
-    { key: 'stiffness', label: 'Stiffness', def: 0, min: 0, max: 1 }
+    { key: 'stiffness', label: 'Stiffness', def: 0, min: 0, max: 1 },
+    { key: 'coupling', label: 'Bridge', def: 0.3, min: 0, max: 1 },
+    { key: 'buzz', label: 'Buzz', def: 0, min: 0, max: 1 }
   ],
   bore: [{ key: 'loss', label: 'Loss', def: 0.5, min: 0, max: 1 }]
 };
+
+const STRING_SET_SPECS: Spec[] = [
+  { key: 'decay', label: 'Rings', def: 3, min: 0.1, max: 20, log: true, unit: 's' },
+  { key: 'brightness', label: 'Brightness', def: 0.5, min: 0, max: 1 },
+  { key: 'level', label: 'Level', def: 1, min: 0, max: 4 }
+];
 
 const RADIATOR_SPECS: Record<Radiator['kind'], Spec[]> = {
   body: [{ key: 'mix', label: 'Mix', def: 0.7, min: 0, max: 1 }],
@@ -107,9 +117,47 @@ export function RadiatorParams({ radiator, onChange }: { radiator: Radiator; onC
   );
 }
 
+// A list of numbers, typed: kept as typed until Enter or leaving the field
+function Numbers({ label, value, onChange }: { label: string; value: number[]; onChange: (next: number[]) => void }) {
+  const [text, setText] = useState<string | null>(null);
+  const commit = () => {
+    if (text === null) return;
+    const next = text.split(/[\s,]+/).filter(Boolean).map(Number).filter(Number.isFinite);
+    setText(null);
+    if (next.length) onChange(next);
+  };
+  return (
+    <div className="param-slider-row">
+      <span className="param-name">{label}</span>
+      <input className="designer-numbers" value={text ?? value.join(', ')} aria-label={label}
+        onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} />
+    </div>
+  );
+}
+
+export function StringSetParams({ set, onChange }: { set: StringSet; onChange: (s: StringSet) => void }) {
+  const fixed = set.notes !== undefined;
+  return (
+    <>
+      <Choice label="Kind" value={set.kind} options={[['unison', 'Unison (played with it)'], ['sympathetic', 'Sympathetic (not played)']]}
+        onChange={(kind) => onChange({ ...set, kind })} />
+      <Choice label="Tuned" value={fixed ? 'fixed' : 'note'} options={[['note', 'From the note'], ['fixed', 'To fixed notes']]}
+        onChange={(t) => onChange(t === 'fixed' ? { ...set, cents: undefined, notes: set.notes ?? [62, 67, 74] } : { ...set, notes: undefined, cents: set.cents ?? [0] })} />
+      {fixed
+        ? <Numbers label="Notes" value={set.notes!} onChange={(notes) => onChange({ ...set, notes })} />
+        : <Numbers label="Cents" value={set.cents ?? [0]} onChange={(cents) => onChange({ ...set, cents })} />}
+      <Specs specs={STRING_SET_SPECS.filter((s) => s.key !== 'level' || set.kind === 'sympathetic')} value={set} onChange={onChange} />
+    </>
+  );
+}
+
 export default function ModelParams({ layer, onChange }: { layer: ModelLayer; onChange: (layer: ModelLayer) => void }) {
   const radiators = layer.radiators ?? [];
   const setRadiators = (next: Radiator[]) => onChange({ ...layer, radiators: next.length ? next : undefined });
+  const strings = layer.strings ?? [];
+  const setStrings = (next: StringSet[]) => onChange({ ...layer, strings: next.length ? next : undefined });
+  const parallel = layer.parallel ?? [];
+  const setParallel = (next: Radiator[]) => onChange({ ...layer, parallel: next.length ? next : undefined });
   return (
     <>
       <Section title="Exciter" open>
@@ -129,6 +177,36 @@ export default function ModelParams({ layer, onChange }: { layer: ModelLayer; on
         <select className="rack-map-select designer-select" value="" aria-label="Add a radiator"
           onChange={(e) => e.target.value && setRadiators([...radiators, { kind: e.target.value } as Radiator])}>
           <option value="">+ Add radiator…</option>
+          {RADIATORS.map(([k, name]) => <option key={k} value={k}>{name}</option>)}
+        </select>
+      </Section>
+      {layer.resonator.kind === 'string' && (
+        <Section title={`Strings at the bridge${strings.length ? ` (${strings.length})` : ''}`} open={strings.length > 0}>
+          {strings.map((set, i) => (
+            <div className="designer-filter" key={i}>
+              <StringSetParams set={set} onChange={(next) => setStrings(strings.map((x, k) => (k === i ? next : x)))} />
+              <button className="designer-link" onClick={() => setStrings(strings.filter((_, k) => k !== i))}>Remove</button>
+            </div>
+          ))}
+          <select className="rack-map-select designer-select" value="" aria-label="Add strings at the bridge"
+            onChange={(e) => e.target.value && setStrings([...strings, e.target.value === 'unison' ? { kind: 'unison', cents: [-0.8, 0.7] } : { kind: 'sympathetic', cents: [700, 1200, 1900, 2400] }])}>
+            <option value="">+ Add strings…</option>
+            <option value="unison">Unison strings</option>
+            <option value="sympathetic">Sympathetic strings</option>
+          </select>
+        </Section>
+      )}
+      <Section title={`Radiators in parallel${parallel.length ? ` (${parallel.length})` : ''}`} open={parallel.length > 0}>
+        {parallel.map((r, i) => (
+          <div className="designer-filter" key={i}>
+            <div className="designer-sub">{radiatorName(r.kind)}</div>
+            <RadiatorParams radiator={r} onChange={(next) => setParallel(parallel.map((x, k) => (k === i ? next : x)))} />
+            <button className="designer-link" onClick={() => setParallel(parallel.filter((_, k) => k !== i))}>Remove</button>
+          </div>
+        ))}
+        <select className="rack-map-select designer-select" value="" aria-label="Add a radiator in parallel"
+          onChange={(e) => e.target.value && setParallel([...parallel, { kind: e.target.value } as Radiator])}>
+          <option value="">+ Add in parallel…</option>
           {RADIATORS.map(([k, name]) => <option key={k} value={k}>{name}</option>)}
         </select>
       </Section>
