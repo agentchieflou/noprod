@@ -11,6 +11,7 @@
 
 import { getAudioInputNode, isMonitoring, onInputsChange } from './inputs';
 import { createDeviceDSP, dspKind, resolvedParameters, loadDeviceWorklets, type DeviceDSP, type ParamTarget } from './devices';
+import { loadLiveModels } from './liveModels';
 import { onNativeLatencyChange } from '../native/trackBridge';
 
 export const audioContext: AudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -355,6 +356,8 @@ export async function initEngine(store: { getState: () => any; subscribe: (fn: (
   } catch (err) {
     console.warn('Audio worklets unavailable; dynamics devices will pass audio through', err);
   }
+  // physical models played live; without it they play rendered notes
+  loadLiveModels(audioContext).catch((err) => console.warn('Live physical models unavailable; they will play rendered notes', err));
   syncEngine(store.getState());
   store.subscribe(syncEngine);
   // an input finishing opening (async permission) may complete a monitor connection

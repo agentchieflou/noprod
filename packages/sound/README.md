@@ -73,12 +73,18 @@ the note plays they are also tuned by ear, as a player would: once a period
 the model finds where the sound repeats and nudges the loop toward the
 note, so the attack is in tune too (within 5 cents from when it speaks).
 
-A rendered note runs a `ModelVoice` from start to end: one note of a model
-layer, a sample at a time (`tick(input, bend)`). A live note can run the same
-voice block by block, with the player's input and bend as they come (#106).
-Ticking allocates nothing, and a voice agrees with a rendered note to the
-bit. `modelTuning` gives a closed loop's tuning, to compute off the audio
-thread and pass in.
+A rendered note of a model layer runs a `ModelLayerVoice` from start to
+end: the layer's envelope, glide and vibrato, its model (`ModelVoice`), its
+filters, its ring-out, tremolo, drive and pan, a sample at a time. A
+`LiveNote` runs the same voices for a note played live (#106): for as long
+as the key is held, then `release()`, and it rings out by its own physics.
+It follows the player as it plays: `slur(note)` (legato: the same voice, no
+new attack), `bendTo(semitones)` and `expression` (the bow or breath). Let
+go where a rendered note's gate is, a live note plays that note to the bit.
+`playsLive(recipe)` says which sounds can (pitched, all model layers), and
+`legato(recipe)` which slur (by default, lips, jets and reeds).
+`liveTunings` measures a note's closed-loop tunings, to compute off the
+audio thread and pass in. Playing a voice allocates nothing.
 
 Any block of any layer can be switched off without losing its settings:
 `bypass: ['radiator:0', 'filter:1', 'drive', …]`.

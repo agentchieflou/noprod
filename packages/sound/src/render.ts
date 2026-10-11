@@ -10,7 +10,7 @@ import {
   midiToHz, readTable, releaseTime, sine, tableFor, waveTables
 } from './dsp.ts';
 import { loudness } from './analysis.ts';
-import { closedLoop, modelTail, renderModel, stringSets } from './model.ts';
+import { ModelVoice, closedLoop, modelTail, modelTuning, stringSets } from './model.ts';
 import type {
   Filter, FmLayer, ModelLayer, Layer, NoiseLayer, PartialsLayer, RenderOptions, RenderedSound, SoundRecipe, WaveLayer
 } from './types.ts';
@@ -26,14 +26,18 @@ const GATE = { attack: 0.001, sustain: 1, release: 0.005 }; // a bypassed envelo
 const PEAK_TARGET = Math.pow(10, -1 / 20);   // normalized peak: at most -1 dBFS
 const LOUDNESS_TARGET = -12;                 // LUFS over the loudest 100 ms (analysis.ts loudness)
 
-interface Context {
+// What a note needs to know: its rate, pitch, velocity and noise
+export interface NoteContext {
   sampleRate: number;
-  frames: number;
-  gate: number;        // sample of the note-off (Infinity: none)
-  pitchScale: number;  // frequency multiplier from the note and transpose
   rootHz: number;
+  pitchScale: number;  // frequency multiplier from the note and transpose
   velocity: number;
   seed: number;
+}
+
+interface Context extends NoteContext {
+  frames: number;
+  gate: number;        // sample of the note-off (Infinity: none)
 }
 
 // --------------------------------------------------------------------- api
@@ -104,7 +108,7 @@ function renderRaw(recipe: SoundRecipe, options: RenderOptions, sampleRate: numb
     pitchScale: Math.pow(2, semitones / 12),
     rootHz: midiToHz(root),
     velocity: Math.min(1, Math.max(0, options.velocity ?? 1)),
-    seed: (recipe.seed ?? 0) ^ hashString(recipe.id)
+    seed: noteSeed(recipe)
   };
 
   const left = new Float32Array(frames);
@@ -112,6 +116,9 @@ function renderRaw(recipe: SoundRecipe, options: RenderOptions, sampleRate: numb
   recipe.layers.forEach((layer, i) => { if (!layer.mute) renderLayer(layer, i, ctx, left, right); });
   return trim(left, right, sampleRate);
 }
+
+// Where a recipe's noise starts (the same for every render of it)
+export const noteSeed = (recipe: SoundRecipe) => (recipe.seed ?? 0) ^ hashString(recipe.id);
 
 const longestRelease = (layer: Layer) => layer.mute ? 0 : Math.max(
   releaseTime(layer.env),
@@ -164,6 +171,17 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
   const off = new Set(layer.bypass ?? []);
   if (off.has('source')) return;
 
+  // A physical model plays a sample at a time, as a live note does
+  if (layer.type === 'model') {
+    const voice = new ModelLayerVoice(layer, index, ctx, { gate, frames: ctx.frames - offset });
+    for (let i = 0; voice.next(); i++) {
+      const x = voice.out * voice.level;
+      left[offset + i] += x * voice.pl;
+      right[offset + i] += x * voice.pr;
+    }
+    return;
+  }
+
   // The amplitude envelope first: nothing after it falls silent needs making.
   // (Bypassed, the layer just sounds while the note is held.)
   const envelope = new EnvelopeGenerator(off.has('env') ? GATE : layer.env, sr, gate);
@@ -173,14 +191,6 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
     amp[frames] = envelope.next();
     if (envelope.finished(SILENT)) break;
   }
-  // A physical model rings on after the player stops: a plucked string from
-  // when its damper has silenced it, a bowed or blown one from when the
-  // player's input has fallen 60 dB (its ring-out is its own, not the envelope's)
-  let playing = frames;
-  if (layer.type === 'model') {
-    if (closedLoop(layer.exciter)) playing = Math.min(frames, gate + Math.round(releaseOf(layer, off) * sr));
-    frames = Math.min(amp.length, playing + Math.round(modelTail(layer) * sr));
-  }
   if (frames === 0) return;
 
   const baseHz = (layer.hz ?? ctx.rootHz * (layer.ratio ?? 1)) * ctx.pitchScale;
@@ -188,19 +198,12 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
   const random = createRandom(ctx.seed + index * 7919);
   const srcL = new Float32Array(frames);
   let srcR: Float32Array | null = null;
-  // The envelope shapes the sound, except where it's the player's input to a
-  // closed-loop exciter (bow speed, breath), or the damper on strings that
-  // share a bridge: the model shapes itself then
-  const shaped = !(layer.type === 'model' && (closedLoop(layer.exciter) || stringSets(layer, off).length > 0));
 
   switch (layer.type) {
     case 'partials': srcR = partialsSource(layer, ctx, baseHz, bend, random, srcL); break;
     case 'wave': srcR = waveSource(layer, ctx, baseHz, bend, random, srcL); break;
     case 'fm': fmSource(layer, ctx, gate, baseHz, bend, srcL); break;
     case 'noise': srcR = noiseSource(layer, random, srcL); break;
-    case 'model':
-      renderModel(layer, { sampleRate: sr, baseHz, velocity: ctx.velocity, seed: ctx.seed + index * 7919, off }, amp, bend, srcL);
-      break;
   }
 
   filtersOf(layer).forEach((filter, k) => {
@@ -209,13 +212,7 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
     if (srcR) applyFilter(filter, ctx, gate, srcR);
   });
 
-  // (a closed-loop model fades out over its ring-out once the player stops;
-  // plucked strings at a bridge ring out by themselves)
-  const gain = shaped ? amp : new Float32Array(frames).fill(1);
-  if (!shaped && closedLoop((layer as ModelLayer).exciter)) {
-    const fall = decayCoefficient(modelTail(layer as ModelLayer), sr);
-    for (let i = playing, g = 1; i < frames; i++) gain[i] = (g *= fall);
-  }
+  const gain = amp;
   if (layer.tremolo && !off.has('tremolo')) {
     const { rate, depth, delay = 0 } = layer.tremolo;
     for (let i = 0; i < frames; i++) {
@@ -252,64 +249,227 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
   }
 }
 
-// tanh saturation (a full-scale input stays at full scale), then a 3 Hz DC blocker
-function drive(x: Float32Array, amount: number, sr: number) {
-  const k = 1 + amount;
-  const norm = 1 / Math.tanh(k);
-  const r = 1 - (2 * Math.PI * 3) / sr;
-  let previousIn = 0, previousOut = 0;
-  for (let i = 0; i < x.length; i++) {
-    const shaped = Math.tanh(k * x[i]) * norm;
-    previousOut = shaped - previousIn + r * previousOut;
-    previousIn = shaped;
-    x[i] = previousOut;
+// ---------------------------------------------------- a model layer's note
+
+// The lowest a layer's own glide and vibrato take its pitch
+const lowestBend = (layer: Layer, off: Set<string>) =>
+  Math.pow(2, (Math.min(0, off.has('pitch') ? 0 : layer.pitch?.amount ?? 0) * 100 - (off.has('vibrato') ? 0 : layer.vibrato?.depth ?? 0)) / 1200);
+
+// One note of a model layer, a sample at a time (#106), as a rendered note
+// plays it: the envelope (the player's input to a bow or breath, or the
+// damper on a plucked string), the pitch glide and vibrato, the model, its
+// filters, the fade as it rings out, tremolo and drive. A rendered note
+// knows its gate; a live one is let go with `release()`. Each `next()`
+// makes a sample, `out`, to be scaled by `level` and panned by `pl` and
+// `pr`; it is false once the layer has stopped sounding. A live note also
+// bends (a frequency multiplier) and swells (`expression` scales the
+// player's input to a bow or breath). The stages meet in
+// 32-bit floats, as a rendered layer's buffers do, so the two agree to the bit.
+//
+//   gate        the note-off, in samples (a rendered note)
+//   frames      the most it may play (a rendered note's length)
+//   tune        a closed loop's tuning (else measured here: not on the audio thread)
+//   lowestBend  the lowest it will bend to, beyond its own glide and vibrato
+export class ModelLayerVoice {
+  out = 0;
+  readonly level: number;
+  readonly pl: number;
+  readonly pr: number;
+  private readonly sr: number;
+  private readonly envelope: EnvelopeGenerator;
+  private readonly pitch: PitchCurve | null;
+  private readonly voice: ModelVoice;
+  private readonly filters: FilterVoice[];
+  private readonly shaped: boolean;
+  private readonly closed: boolean;
+  private readonly letGo: number;   // how long the player takes to stop (a closed loop), in samples
+  private readonly tail: number;    // how long it rings on once nothing excites it, in samples
+  private readonly fall: number;
+  private readonly tremolo: Layer['tremolo'] | null;
+  private readonly drive: Drive | null;
+  private readonly frames: number;
+  private i = 0;
+  private gate: number;
+  private envEnd = Infinity;        // where the envelope fell silent
+  private g = 1;                    // the ring-out fade
+
+  constructor(layer: ModelLayer, index: number, note: NoteContext, options: { gate?: number; frames?: number; tune?: number; lowestBend?: number } = {}) {
+    const sr = this.sr = note.sampleRate;
+    const off = new Set(layer.bypass ?? []);
+    this.gate = options.gate ?? Infinity;
+    this.frames = options.frames ?? Infinity;
+    // (bypassed, the envelope just sounds while the note is held)
+    this.envelope = new EnvelopeGenerator(off.has('env') ? GATE : layer.env, sr, this.gate);
+    this.pitch = PitchCurve.of(layer, sr, off);
+    const baseHz = (layer.hz ?? note.rootHz * (layer.ratio ?? 1)) * note.pitchScale;
+    const r = { sampleRate: sr, baseHz, velocity: note.velocity, seed: note.seed + index * 7919, off };
+    this.closed = closedLoop(layer.exciter);
+    const tuned = this.closed && !off.has('resonator') && !off.has('exciter');
+    this.voice = new ModelVoice(layer, r, options.tune ?? (tuned ? modelTuning(layer, r) : 1), lowestBend(layer, off) * (options.lowestBend ?? 1), tuned);
+    this.filters = filtersOf(layer).flatMap((f, k) => (off.has(`filter:${k}`) ? [] : [new FilterVoice(f, note, this.gate)]));
+    // The envelope shapes the sound, except where it's the player's input to a
+    // closed-loop exciter (bow speed, breath), or the damper on strings that
+    // share a bridge: the model shapes itself then
+    this.shaped = !(this.closed || stringSets(layer, off).length > 0);
+    this.letGo = Math.round(releaseOf(layer, off) * sr);
+    this.tail = Math.round(modelTail(layer) * sr);
+    this.fall = decayCoefficient(modelTail(layer), sr);
+    this.tremolo = layer.tremolo && !off.has('tremolo') ? layer.tremolo : null;
+    this.drive = layer.drive && !off.has('drive') ? new Drive(layer.drive, sr) : null;
+    this.level = (layer.level ?? 1) * (1 - (layer.velocity ?? 1) * (1 - note.velocity * note.velocity));
+    const [pl, pr] = panGains(layer.pan ?? 0);
+    this.pl = pl;
+    this.pr = pr;
+  }
+
+  // The key is let go now
+  release() {
+    if (this.gate <= this.i) return;
+    this.gate = this.i;
+    this.envelope.release();
+    for (let k = 0; k < this.filters.length; k++) this.filters[k].release();
+  }
+
+  next(bend = 1, expression = 1) {
+    const i = this.i;
+    if (i >= this.frames) return false;
+    let amp = 0;
+    if (this.envEnd === Infinity) {
+      amp = Math.fround(this.envelope.next());
+      if (this.envelope.finished(SILENT)) this.envEnd = i;
+    }
+    // It rings on after the player stops: a plucked string from when its
+    // damper has silenced it, a bowed or blown one from when the player's
+    // input has fallen 60 dB (its ring-out is its own, not the envelope's)
+    const playing = this.closed ? Math.min(this.envEnd, this.gate + this.letGo) : this.envEnd;
+    if (i >= playing + this.tail) return false;
+
+    let x = this.voice.tick(this.closed ? amp * expression : amp, (this.pitch ? this.pitch.next() : 1) * bend);
+    for (let k = 0; k < this.filters.length; k++) x = Math.fround(this.filters[k].tick(x));
+    // (a closed-loop model fades out over its ring-out once the player stops;
+    // plucked strings at a bridge ring out by themselves)
+    let gain = this.shaped ? amp : 1;
+    if (this.closed && i >= playing) gain = Math.fround((this.g *= this.fall));
+    const tremolo = this.tremolo;
+    if (tremolo) {
+      const t = i / this.sr - (tremolo.delay ?? 0);
+      if (t > 0) gain = Math.fround(gain * (1 - tremolo.depth * (0.5 - 0.5 * sine(tremolo.rate * t + 0.25))));
+    }
+    x = Math.fround(x * gain);
+    if (this.drive) x = Math.fround(this.drive.tick(x));
+    this.out = x;
+    this.i++;
+    return true;
   }
 }
 
+// tanh saturation (a full-scale input stays at full scale), then a 3 Hz DC blocker
+class Drive {
+  private readonly k: number;
+  private readonly norm: number;
+  private readonly r: number;
+  private previousIn = 0;
+  private previousOut = 0;
+  constructor(amount: number, sr: number) {
+    this.k = 1 + amount;
+    this.norm = 1 / Math.tanh(this.k);
+    this.r = 1 - (2 * Math.PI * 3) / sr;
+  }
+  tick(x: number) {
+    const shaped = Math.tanh(this.k * x) * this.norm;
+    this.previousOut = shaped - this.previousIn + this.r * this.previousOut;
+    this.previousIn = shaped;
+    return this.previousOut;
+  }
+}
+
+function drive(x: Float32Array, amount: number, sr: number) {
+  const d = new Drive(amount, sr);
+  for (let i = 0; i < x.length; i++) x[i] = d.tick(x[i]);
+}
+
 // The layer's frequency multiplier over time: pitch envelope and vibrato
-function pitchCurve(layer: Layer, frames: number, sr: number, off: Set<string>): Float64Array | null {
-  const pitch = off.has('pitch') ? undefined : layer.pitch;
-  const vibrato = off.has('vibrato') ? undefined : layer.vibrato;
-  if (!pitch && !vibrato) return null;
-  const out = new Float64Array(frames);
-  let semitones = pitch?.amount ?? 0;
-  const glide = pitch ? decayCoefficient(pitch.time, sr) : 0;
-  for (let i = 0; i < frames; i++) {
-    let cents = semitones * 100;
+// The layer's pitch glide and vibrato, a sample at a time, as a frequency
+// multiplier (`of` gives null if it has neither)
+class PitchCurve {
+  private readonly vibrato: Layer['vibrato'];
+  private readonly glide: number;
+  private readonly sr: number;
+  private semitones: number;
+  private i = 0;
+  private constructor(layer: Layer, sr: number, off: Set<string>) {
+    const pitch = off.has('pitch') ? undefined : layer.pitch;
+    this.vibrato = off.has('vibrato') ? undefined : layer.vibrato;
+    this.semitones = pitch?.amount ?? 0;
+    this.glide = pitch ? decayCoefficient(pitch.time, sr) : 0;
+    this.sr = sr;
+  }
+  static of(layer: Layer, sr: number, off: Set<string>) {
+    return (!off.has('pitch') && layer.pitch) || (!off.has('vibrato') && layer.vibrato) ? new PitchCurve(layer, sr, off) : null;
+  }
+  next() {
+    let cents = this.semitones * 100;
+    const vibrato = this.vibrato;
     if (vibrato) {
-      const t = i / sr - (vibrato.delay ?? 0);
+      const t = this.i / this.sr - (vibrato.delay ?? 0);
       if (t > 0) {
         const depth = vibrato.fade ? Math.min(1, t / vibrato.fade) : 1;
         cents += vibrato.depth * depth * sine(vibrato.rate * t);
       }
     }
-    out[i] = Math.pow(2, cents / 1200);
-    semitones *= glide;
+    this.semitones *= this.glide;
+    this.i++;
+    return Math.pow(2, cents / 1200);
   }
+}
+
+function pitchCurve(layer: Layer, frames: number, sr: number, off: Set<string>): Float64Array | null {
+  const curve = PitchCurve.of(layer, sr, off);
+  if (!curve) return null;
+  const out = new Float64Array(frames);
+  for (let i = 0; i < frames; i++) out[i] = curve.next();
   return out;
 }
 
-function applyFilter(filter: Filter, ctx: Context, gate: number, x: Float32Array) {
-  const sr = ctx.sampleRate;
-  const stages = filter.slope === 24 ? [new StateVariableFilter(filter.type), new StateVariableFilter(filter.type)]
-    : [new StateVariableFilter(filter.type)];
-  const q = filter.q ?? 0.707;
-  const base = filter.cutoff
-    * Math.pow(ctx.pitchScale, filter.keyTrack ?? 0)
-    * Math.pow(2, (filter.velocity ?? 0) * ctx.velocity);
-  const env = filter.env ? new EnvelopeGenerator(filter.env, sr, gate) : null;
-  const amount = filter.env?.amount ?? 0;
-
-  for (let i = 0; i < x.length; i++) {
-    const e = env ? env.next() : 0;
-    if (i % BLOCK === 0) {
-      const cutoff = env ? base * Math.pow(2, amount * e) : base;
-      for (const s of stages) s.set(cutoff, q, sr);
-    }
-    let y = x[i];
-    for (const s of stages) y = s.process(y);
-    x[i] = y;
+// One filter, a sample at a time: its cutoff from the note and velocity,
+// moved by its own envelope
+class FilterVoice {
+  private readonly stages: StateVariableFilter[];
+  private readonly q: number;
+  private readonly base: number;
+  private readonly sr: number;
+  private readonly env: EnvelopeGenerator | null;
+  private readonly amount: number;
+  private i = 0;
+  constructor(filter: Filter, ctx: NoteContext, gate: number) {
+    this.sr = ctx.sampleRate;
+    this.stages = filter.slope === 24 ? [new StateVariableFilter(filter.type), new StateVariableFilter(filter.type)]
+      : [new StateVariableFilter(filter.type)];
+    this.q = filter.q ?? 0.707;
+    this.base = filter.cutoff
+      * Math.pow(ctx.pitchScale, filter.keyTrack ?? 0)
+      * Math.pow(2, (filter.velocity ?? 0) * ctx.velocity);
+    this.env = filter.env ? new EnvelopeGenerator(filter.env, this.sr, gate) : null;
+    this.amount = filter.env?.amount ?? 0;
   }
+  release() {
+    this.env?.release();
+  }
+  tick(x: number) {
+    const e = this.env ? this.env.next() : 0;
+    if (this.i++ % BLOCK === 0) {
+      const cutoff = this.env ? this.base * Math.pow(2, this.amount * e) : this.base;
+      for (let k = 0; k < this.stages.length; k++) this.stages[k].set(cutoff, this.q, this.sr);
+    }
+    let y = x;
+    for (let k = 0; k < this.stages.length; k++) y = this.stages[k].process(y);
+    return y;
+  }
+}
+
+function applyFilter(filter: Filter, ctx: Context, gate: number, x: Float32Array) {
+  const f = new FilterVoice(filter, ctx, gate);
+  for (let i = 0; i < x.length; i++) x[i] = f.tick(x[i]);
 }
 
 // ----------------------------------------------------------------- sources

@@ -23,6 +23,10 @@ export interface SoundRecipe {
   length: number;     // seconds: a one-shot's full length, or how long a pitched note holds without a gate
   gain?: number;      // dB trim after loudness normalization
   seed?: number;      // varies the noise; the same seed always renders the same samples
+  // Played live, a new note while one is held glides the voice there, with
+  // no new attack, as a wind or brass player slurs (default: on when every
+  // layer is lips, an air jet or a reed)
+  legato?: boolean;
   layers: Layer[];
 }
 

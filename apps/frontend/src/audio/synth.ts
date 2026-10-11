@@ -2,7 +2,8 @@
 // One voice per note; the caller owns routing by passing a destination node.
 // Library instruments (Kit 'library', see library.ts) play from here too.
 
-import { triggerLibrary, startLibraryVoice, type LibraryInstrument } from './library';
+import { triggerLibrary, startLibraryVoice, libraryOf, type LibraryInstrument } from './library';
+import { startLiveVoice } from './liveModels';
 
 export interface SynthParams {
   Waveform?: OscillatorType | string;
@@ -146,7 +147,12 @@ export function startVoice(
     triggerDrum(ctx, destination, params, midiNote, when, velocity);
     return { release: () => {} };
   }
-  if (params.Kit === 'library') return startLibraryVoice(ctx, destination, params, midiNote, when, velocity);
+  if (params.Kit === 'library') {
+    // physical models play live, for as long as the key is held
+    const sound = libraryOf(params)?.sound;
+    return (sound && startLiveVoice(ctx, destination, sound, params, midiNote, when, velocity))
+      || startLibraryVoice(ctx, destination, params, midiNote, when, velocity);
+  }
   const osc = ctx.createOscillator();
   const validTypes = ['sine', 'square', 'sawtooth', 'triangle'];
   osc.type = (validTypes.includes(params.Waveform as string) ? params.Waveform : 'sawtooth') as OscillatorType;
