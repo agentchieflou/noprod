@@ -131,25 +131,15 @@ class Ear {
     const window = Math.round(2 * period);
     const lo = Math.floor(period / 1.1), hi = Math.ceil(period * 1.1);
     if (this.written < window + hi + 2) return;
-    const h = this.history, now = w + this.size;
-    // how unlike itself the sound is, `lag` samples apart (0: a perfect repeat)
-    const unlike = (lag: number) => {
-      let diff = 0, energy = 0;
-      for (let j = now - window + 1; j <= now; j++) {
-        const a = h[j], b = h[j - lag];
-        diff += (a - b) * (a - b);
-        energy += a * a + b * b;
-      }
-      return energy > 0 ? diff / energy : 1;
-    };
+    const now = w + this.size;
     // downhill from where it last heard the note repeat: the nearest repeat
     // is the note's, and a few steps cost far less than searching the range
     let best = this.lag > lo && this.lag < hi ? this.lag : Math.round(period);
-    let here = unlike(best), before = unlike(best - 1), after = unlike(best + 1);
+    let here = this.unlike(now, window, best), before = this.unlike(now, window, best - 1), after = this.unlike(now, window, best + 1);
     if (before < here) {
-      while (before < here && best > lo) { after = here; here = before; best--; before = unlike(best - 1); }
+      while (before < here && best > lo) { after = here; here = before; best--; before = this.unlike(now, window, best - 1); }
     } else {
-      while (after < here && best < hi) { before = here; here = after; best++; after = unlike(best + 1); }
+      while (after < here && best < hi) { before = here; here = after; best++; after = this.unlike(now, window, best + 1); }
     }
     // only a clear repeat counts (not the noise of the attack), and only a
     // real minimum, not the edge of the range searched
@@ -160,6 +150,19 @@ class Ear {
     // a share of the error each period: quick, but slower than the loop answers
     this.correction *= Math.pow(heard / period, 0.75);
     this.correction = Math.min(1.06, Math.max(1 / 1.06, this.correction));
+  }
+
+  // How unlike itself the sound is over the last `window` samples, `lag`
+  // samples apart (0: a perfect repeat)
+  private unlike(now: number, window: number, lag: number) {
+    const h = this.history;
+    let diff = 0, energy = 0;
+    for (let j = now - window + 1; j <= now; j++) {
+      const a = h[j], b = h[j - lag];
+      diff += (a - b) * (a - b);
+      energy += a * a + b * b;
+    }
+    return energy > 0 ? diff / energy : 1;
   }
 }
 
@@ -383,7 +386,9 @@ class StringLoop {
       // the fundamental falls 60 dB in `decay` seconds, whatever the filter does to it
       this.loss.g = 1;
       this.loss.g = Math.min(0.99999, Math.pow(10, -3 / (this.decay * hz)) / this.loss.magnitude(w));
-      const delay = Math.max(2, period - this.loss.phaseDelay(w) - this.allpasses.reduce((s, a) => s + a.phaseDelay(w), 0));
+      let stretch = 0;
+      for (let k = 0; k < this.allpasses.length; k++) stretch += this.allpasses[k].phaseDelay(w);
+      const delay = Math.max(2, period - this.loss.phaseDelay(w) - stretch);
       this.dBridge = delay * this.beta;
       this.dNeck = delay - this.dBridge;
       this.period = period;
@@ -401,7 +406,7 @@ class StringLoop {
     }
     this.heard = this.bridge.read(this.dBridge - onto);
     let back = this.loss.tick(this.heard);
-    for (const a of this.allpasses) back = a.tick(back);
+    for (let k = 0; k < this.allpasses.length; k++) back = this.allpasses[k].tick(back);
     this.toBridge = -this.neck.read(this.dNeck);   // reflected at the nut
     return back;
   }
@@ -515,12 +520,12 @@ function bridged(resonator: StringResonator, sets: StringSet[], position: number
     inject(e) {
       main.inject(e);
       let played = main.heard;
-      for (const c of course) {
-        c.string.inject(e);
-        played += c.string.heard;
+      for (let k = 0; k < course.length; k++) {
+        course[k].string.inject(e);
+        played += course[k].string.heard;
       }
       let sympathetic = 0;
-      for (const f of free) sympathetic += f.level * f.string.heard;
+      for (let k = 0; k < free.length; k++) sympathetic += free[k].level * free[k].string.heard;
       // what the bridge passes to the body: the course (as loud together as
       // one string) and the sympathetic strings with it
       return played / (1 + course.length) + sympathetic;
@@ -593,45 +598,46 @@ const BODIES: Record<string, { hz: number; q: number; gain: number }[]> = {
   box: [{ hz: 220, q: 6, gain: 1 }, { hz: 530, q: 6, gain: 0.6 }, { hz: 1300, q: 5, gain: 0.4 }]
 };
 
-function radiate(radiator: Radiator, x: Float32Array, sr: number, noteHz: number) {
+// One radiator, a sample at a time
+interface Radiating { tick(x: number): number }
+
+function radiator(radiator: Radiator, sr: number, noteHz: number): Radiating {
   switch (radiator.kind) {
     case 'body': {
       const modes = radiator.modes ?? BODIES[radiator.preset ?? 'box'];
       const mix = radiator.mix ?? 0.7;
-      const filters = modes.map((m) => { const f = new StateVariableFilter('bandpass'); f.set(m.hz, m.q, sr); return { f, gain: m.gain }; });
+      const filters = modes.map((m) => { const f = new StateVariableFilter('bandpass'); f.set(m.hz, m.q, sr); return f; });
+      const gains = modes.map((m) => m.gain);
       const norm = 1 / Math.max(1, Math.sqrt(modes.reduce((s, m) => s + m.gain * m.gain, 0)));
-      for (let i = 0; i < x.length; i++) {
-        let body = 0;
-        for (const { f, gain } of filters) body += gain * f.process(x[i]);
-        x[i] = (1 - mix) * x[i] + mix * body * norm * 2;
-      }
-      return;
+      return {
+        tick(x) {
+          let body = 0;
+          for (let k = 0; k < filters.length; k++) body += gains[k] * filters[k].process(x);
+          return (1 - mix) * x + mix * body * norm * 2;
+        }
+      };
     }
     case 'helmholtz': {
       const f = new StateVariableFilter('bandpass');
       f.set(radiator.hz ?? 110, radiator.q ?? 6, sr);
       const mix = radiator.mix ?? 0.4;
-      for (let i = 0; i < x.length; i++) x[i] = x[i] + mix * 2 * f.process(x[i]);
-      return;
+      return { tick: (x) => x + mix * 2 * f.process(x) };
     }
     case 'bell': {
       const f = new StateVariableFilter('highpass');
       f.set(radiator.cutoff ?? 700, 0.6, sr);
       const mix = radiator.mix ?? 0.8;
-      for (let i = 0; i < x.length; i++) x[i] = (1 - mix) * x[i] + mix * 1.5 * f.process(x[i]);
-      return;
+      return { tick: (x) => (1 - mix) * x + mix * 1.5 * f.process(x) };
     }
     case 'tonehole': {
       const hp = new StateVariableFilter('highpass');
       hp.set(noteHz * (radiator.cutoff ?? 0.7), 0.7, sr);
       const lp = new OnePole(0.75 * (1 - (radiator.brightness ?? 0.6)));
-      for (let i = 0; i < x.length; i++) x[i] = lp.tick(hp.process(x[i]));
-      return;
+      return { tick: (x) => lp.tick(hp.process(x)) };
     }
     case 'damping': {
       const lp = new OnePole(Math.min(0.99, Math.max(0, radiator.a ?? 0.5)));
-      for (let i = 0; i < x.length; i++) x[i] = lp.tick(x[i]);
-      return;
+      return { tick: (x) => lp.tick(x) };
     }
   }
 }
@@ -656,21 +662,21 @@ export const modelTail = (layer: ModelLayer) => {
 // Closed-loop models settle a little off the loop's pitch (the lips, the
 // jet and the reed have dynamics of their own), so each note is tuned like an
 // instrument: a short probe is played, its pitch measured, and the model
-// retuned by the difference (three times, to converge). Cached per configuration.
+// retuned by the difference (three times, to converge). Cached per
+// configuration. (A live note gets it from here, off the audio thread.)
 const tunings = new Map<string, number>();
 const PROBE = 0.7;
 
-function tuning(layer: ModelLayer, r: ModelRender): number {
+export function modelTuning(layer: ModelLayer, r: ModelRender): number {
   const key = `${JSON.stringify([layer.exciter, layer.resonator, stringSets(layer, r.off)])}|${r.baseHz.toFixed(4)}|${r.velocity.toFixed(3)}|${r.sampleRate}`;
   const cached = tunings.get(key);
   if (cached !== undefined) return cached;
   const n = Math.round(PROBE * r.sampleRate);
-  const input = new Float32Array(n).fill(1);
   const probe = new Float32Array(n);
   let correction = 1;
   for (let pass = 0; pass < 3; pass++) {
-    probe.fill(0);
-    run(layer, r, input, null, correction, probe);
+    const loop = new ModelLoop(layer, r, correction, 1, false);
+    for (let i = 0; i < n; i++) probe[i] = loop.tick(1, 1);
     const size = Math.min(4096, Math.floor(n / 2));
     const hz = estimatePitch(probe, r.sampleRate, n - size, size, r.baseHz / 1.6, r.baseHz * 1.6);
     if (!(hz > 0)) break;
@@ -686,61 +692,110 @@ function tuning(layer: ModelLayer, r: ModelRender): number {
 export function renderModel(layer: ModelLayer, r: ModelRender, input: Float32Array, bend: Float64Array | null, out: Float32Array) {
   if (r.off.has('exciter')) return;
   const tuned = closedLoop(layer.exciter) && !r.off.has('resonator');
-  run(layer, r, input, bend, tuned ? tuning(layer, r) : 1, out, tuned);
-  // each parallel radiator takes the resonator's sound as it is, before the series ones
-  const parallel = (layer.parallel ?? []).filter((_, k) => !r.off.has(`parallel:${k}`));
-  const dry = parallel.length ? out.slice() : null;
-  (layer.radiators ?? []).forEach((radiator, k) => {
-    if (!r.off.has(`radiator:${k}`)) radiate(radiator, out, r.sampleRate, r.baseHz);
-  });
-  if (dry) {
-    for (const radiator of parallel) {
-      const path = dry.slice();
-      radiate(radiator, path, r.sampleRate, r.baseHz);
-      for (let i = 0; i < out.length; i++) out[i] += path[i];
-    }
-    // the paths mixed, as loud together as one
-    for (let i = 0; i < out.length; i++) out[i] /= 1 + parallel.length;
-  }
-  // what radiates carries no DC (the lips' and reed's steady flow stays in the instrument)
-  const dc = new DcBlocker(r.sampleRate);
-  for (let i = 0; i < out.length; i++) out[i] = dc.tick(out[i]);
+  let lowest = 1;
+  if (bend) for (let i = 0; i < bend.length; i++) lowest = Math.min(lowest, bend[i]);
+  const voice = new ModelVoice(layer, r, tuned ? modelTuning(layer, r) : 1, lowest, tuned);
+  for (let i = 0; i < out.length; i++) out[i] = voice.tick(input[i] ?? 0, bend ? bend[i] : 1);
 }
 
-function run(layer: ModelLayer, r: ModelRender, input: Float32Array, bend: Float64Array | null, tune: number, out: Float32Array, listen = false) {
-  const sr = r.sampleRate;
-  const baseHz = r.baseHz * tune;
-  const random = createRandom(r.seed);
-  const excite = excitation(layer.exciter, { sampleRate: sr, velocity: r.velocity, baseHz, random });
-  const position = layer.exciter.kind === 'pluck' ? layer.exciter.position ?? 0.2
-    : layer.exciter.kind === 'strike' ? layer.exciter.position ?? 0.12
-      : layer.exciter.kind === 'bow' ? layer.exciter.position ?? 0.13 : 0.5;
-  let lowest = baseHz;
-  if (bend) for (const b of bend) lowest = Math.min(lowest, baseHz * b);
-  const ring = r.off.has('resonator') ? null : resonator(layer, excite, position, sr, lowest, r.off);
-  // Plucked or struck strings at a shared bridge are damped in the loop, by
-  // the envelope where it falls, so the sympathetic strings can ring on
-  const damper = !excite.closed && stringSets(layer, r.off).length > 0;
+// ----------------------------------------------------------------- voices
 
-  const ear = listen ? new Ear(sr, lowest) : null;
-  for (let i = 0; i < out.length; i++) {
-    const hz = bend ? baseHz * bend[i] : baseHz;
-    const period = sr / hz;
-    if (!ring) {
-      out[i] = excite.tick(0, input[i] ?? 0, period);
-      continue;
+// One note of a model layer, a sample at a time (#106): the exciter in its
+// resonator, then the radiators. A rendered note runs one to its end; a
+// live note runs one block by block, for as long as it's held. Making one
+// allocates (do it outside the audio callback); `tick` doesn't.
+//
+//   tune        the closed loop's tuning, from `modelTuning` (1: none)
+//   lowestBend  the lowest the note will bend to (sizes its delay lines)
+//   listen      tuned by ear as it plays (the closed loops)
+//
+// Each `tick` returns what a rendered note's buffer holds: the stages meet in
+// 32-bit floats, as the buffers between them did, so a voice and a
+// rendered note agree to the bit.
+export class ModelVoice {
+  private readonly loop: ModelLoop | null;
+  private readonly series: Radiating[];
+  private readonly parallel: Radiating[];
+  private readonly dc: DcBlocker;
+
+  constructor(layer: ModelLayer, r: ModelRender, tune: number, lowestBend = 1, listen = false) {
+    this.loop = r.off.has('exciter') ? null : new ModelLoop(layer, r, tune, lowestBend, listen);
+    const radiators = (list: Radiator[] | undefined, id: string) => (list ?? [])
+      .map((x, k) => (r.off.has(`${id}:${k}`) ? null : radiator(x, r.sampleRate, r.baseHz)))
+      .filter((x): x is Radiating => x !== null);
+    this.series = radiators(layer.radiators, 'radiator');
+    // each parallel radiator takes the resonator's sound as it is, before the series ones
+    this.parallel = radiators(layer.parallel, 'parallel');
+    this.dc = new DcBlocker(r.sampleRate);
+  }
+
+  // One sample, given the player's input (0..1) and the frequency multiplier
+  tick(input: number, bend: number) {
+    if (!this.loop) return 0;
+    const dry = Math.fround(this.loop.tick(input, bend));
+    let y = dry;
+    for (let k = 0; k < this.series.length; k++) y = Math.fround(this.series[k].tick(y));
+    if (this.parallel.length) {
+      for (let k = 0; k < this.parallel.length; k++) y = Math.fround(y + Math.fround(this.parallel[k].tick(dry)));
+      // the paths mixed, as loud together as one
+      y = Math.fround(y / (1 + this.parallel.length));
     }
+    // what radiates carries no DC (the lips' and reed's steady flow stays in the instrument)
+    return Math.fround(this.dc.tick(y));
+  }
+}
+
+// The exciter in its resonator, a sample at a time
+class ModelLoop {
+  private readonly sr: number;
+  private readonly baseHz: number;
+  private readonly noteHz: number;
+  private readonly excite: Excitation;
+  private readonly ring: Resonance_ | null;
+  private readonly ear: Ear | null;
+  // Plucked or struck strings at a shared bridge are damped in the loop, by
+  // the envelope where it falls, so the sympathetic strings can ring on; it
+  // looks back a period at what the player's input was
+  private readonly inputs: Float32Array | null;
+  private written = 0;
+
+  constructor(layer: ModelLayer, r: ModelRender, tune: number, lowestBend: number, listen: boolean) {
+    const sr = this.sr = r.sampleRate;
+    this.noteHz = r.baseHz;
+    const baseHz = this.baseHz = r.baseHz * tune;
+    const random = createRandom(r.seed);
+    this.excite = excitation(layer.exciter, { sampleRate: sr, velocity: r.velocity, baseHz, random });
+    const position = layer.exciter.kind === 'pluck' ? layer.exciter.position ?? 0.2
+      : layer.exciter.kind === 'strike' ? layer.exciter.position ?? 0.12
+        : layer.exciter.kind === 'bow' ? layer.exciter.position ?? 0.13 : 0.5;
+    const lowest = baseHz * lowestBend;
+    this.ring = r.off.has('resonator') ? null : resonator(layer, this.excite, position, sr, lowest, r.off);
+    this.inputs = !this.excite.closed && stringSets(layer, r.off).length > 0 ? new Float32Array(Math.ceil(sr / lowest) + 2) : null;
+    this.ear = listen ? new Ear(sr, lowest) : null;
+  }
+
+  tick(input: number, bend: number) {
+    const sr = this.sr;
+    const hz = this.baseHz * bend;
+    const period = sr / hz;
+    if (!this.ring) return this.excite.tick(0, input, period);
     let damp = 1;
-    if (damper) {
+    if (this.inputs) {
       // what the envelope lost over one trip round the string (once it has
       // fallen silent, the damper stays on)
-      const was = input[i - Math.round(period)] ?? 0, now = input[i] ?? 0;
+      const inputs = this.inputs, n = inputs.length;
+      inputs[this.written % n] = input;
+      const back = this.written - Math.round(period);
+      const was = back >= 0 ? inputs[back % n] : 0, now = inputs[this.written % n];
       damp = was > 0 ? Math.min(1, now / was) : now > 0 ? 1 : 0;
+      this.written++;
     }
     // retuned by ear: the player's lips or breath move with the loop, as an embouchure does
+    const ear = this.ear;
     const heard = ear ? hz * ear.correction : hz;
-    const back = ring.incoming(heard, damp);
-    out[i] = ring.inject(excite.tick(back, input[i] ?? 0, sr / heard));
-    ear?.hear(out[i], sr / (bend ? r.baseHz * bend[i] : r.baseHz));
+    const back = this.ring.incoming(heard, damp);
+    const out = this.ring.inject(this.excite.tick(back, input, sr / heard));
+    if (ear) ear.hear(Math.fround(out), sr / (this.noteHz * bend));
+    return out;
   }
 }
