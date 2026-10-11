@@ -21,12 +21,21 @@ const PAIRS: [string, ModelLayer, number][] = [
   ['reed on an open bore', model({ kind: 'reed' }, { kind: 'bore', end: 'open' }), 60]
 ];
 
-test('every model plays in tune, an octave either side', () => {
-  for (const [name, layer, root] of PAIRS) {
-    for (const note of [root - 12, root, root + 12]) {
-      const x = raw(recipe([layer], { root }), note);
-      const hz = estimatePitch(x, SR, Math.round(0.6 * SR), 4096, 40, 3000);
-      assert.ok(Math.abs(cents(hz, note)) < 20, `${name} at ${note}: ${cents(hz, note).toFixed(1)} cents`);
+// In tune to 5 cents from when the note speaks: every 50 ms from 0.1 s to
+// 0.9 s, once it is within 6 dB of its held level (and it speaks by 0.4 s)
+test('every model plays in tune from when it speaks, an octave either side', () => {
+  const notes: [string, ModelLayer, number, number][] = PAIRS.flatMap(([name, layer, root]) =>
+    [root - 12, root, root + 12].map((note): [string, ModelLayer, number, number] => [name, layer, root, note]));
+  notes.push(['jet on an open bore, low', PAIRS[4][1], 72, 48], ['reed on an open bore, low', PAIRS[5][1], 60, 36]);
+  for (const [name, layer, root, note] of notes) {
+    const x = raw(recipe([layer], { root }), note);
+    const f = midiToHz(note);
+    const held = levelAt(x, SR, 0.8, 0.1);
+    assert.ok(levelAt(x, SR, 0.4, 0.05) > held * 0.5, `${name} at ${note} hasn't spoken by 0.4 s`);
+    for (let t = 0.1; t < 0.91; t += 0.05) {
+      if (levelAt(x, SR, t, 0.05) < held * 0.5) continue;
+      const hz = estimatePitch(x, SR, Math.round(t * SR) - 2048, 4096, f / 1.6, f * 1.6);
+      assert.ok(Math.abs(cents(hz, note)) < 5, `${name} at ${note}, ${t.toFixed(2)} s: ${cents(hz, note).toFixed(1)} cents`);
     }
   }
 });
