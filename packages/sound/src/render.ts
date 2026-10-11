@@ -10,7 +10,7 @@ import {
   midiToHz, readTable, releaseTime, sine, tableFor, waveTables
 } from './dsp.ts';
 import { loudness } from './analysis.ts';
-import { closedLoop, modelTail, renderModel } from './model.ts';
+import { closedLoop, modelTail, renderModel, stringSets } from './model.ts';
 import type {
   Filter, FmLayer, ModelLayer, Layer, NoiseLayer, PartialsLayer, RenderOptions, RenderedSound, SoundRecipe, WaveLayer
 } from './types.ts';
@@ -189,8 +189,9 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
   const srcL = new Float32Array(frames);
   let srcR: Float32Array | null = null;
   // The envelope shapes the sound, except where it's the player's input to a
-  // closed-loop exciter (bow speed, breath): the model shapes itself then
-  const shaped = !(layer.type === 'model' && closedLoop(layer.exciter));
+  // closed-loop exciter (bow speed, breath), or the damper on strings that
+  // share a bridge: the model shapes itself then
+  const shaped = !(layer.type === 'model' && (closedLoop(layer.exciter) || stringSets(layer, off).length > 0));
 
   switch (layer.type) {
     case 'partials': srcR = partialsSource(layer, ctx, baseHz, bend, random, srcL); break;
@@ -208,9 +209,10 @@ function renderLayer(layer: Layer, index: number, ctx: Context, left: Float32Arr
     if (srcR) applyFilter(filter, ctx, gate, srcR);
   });
 
-  // (a closed-loop model fades out over its ring-out once the player stops)
+  // (a closed-loop model fades out over its ring-out once the player stops;
+  // plucked strings at a bridge ring out by themselves)
   const gain = shaped ? amp : new Float32Array(frames).fill(1);
-  if (!shaped) {
+  if (!shaped && closedLoop((layer as ModelLayer).exciter)) {
     const fall = decayCoefficient(modelTail(layer as ModelLayer), sr);
     for (let i = playing, g = 1; i < frames; i++) gain[i] = (g *= fall);
   }

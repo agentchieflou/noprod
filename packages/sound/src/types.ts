@@ -167,6 +167,25 @@ export interface ModelLayer extends LayerBase {
   exciter: Exciter;
   resonator: Resonator;
   radiators?: Radiator[];  // in series
+  // More strings at the string's bridge, each set a branch beside it (#108)
+  strings?: StringSet[];
+  // Radiators beside the series ones: each its own path from the resonator,
+  // the paths mixed at the end (a body and a bell at once)
+  parallel?: Radiator[];
+}
+
+// Strings sharing a bridge with the resonator's string, which pass their
+// vibration to each other through it. A unison course is played with it (a
+// piano's three strings to a note, a 12-string's pairs): a cent or two apart,
+// they beat, and the sound dies fast, then slowly. Sympathetic strings aren't
+// played: they ring when the note shares their partials (a sitar's taraf).
+export interface StringSet {
+  kind: 'unison' | 'sympathetic';
+  cents?: number[];    // each string's tuning from the note, in cents (default [0])
+  notes?: number[];    // or fixed pitches, as MIDI notes, whatever is played (sympathetic strings tuned to a scale)
+  decay?: number;      // their T60 (default: the resonator's)
+  brightness?: number; // default: the resonator's
+  level?: number;      // how much of them is heard (default 1)
 }
 
 export type Exciter = PluckExciter | StrikeExciter | BowExciter | LipsExciter | JetExciter | ReedExciter;
@@ -214,6 +233,8 @@ export interface StringResonator {
   decay?: number;      // T60 of the fundamental, seconds (default 3)
   brightness?: number; // how slowly the upper harmonics die, 0..1 (default 0.5)
   stiffness?: number;  // inharmonicity 0..1, a piano-like stretch (default 0)
+  coupling?: number;   // how much the bridge gives, so the strings at it share their vibration, 0..1 (default 0.3; with `strings`)
+  buzz?: number;       // a curved bridge the string buzzes against as it swings (a sitar's jawari), 0..1 (default 0)
 }
 
 export interface BoreResonator {

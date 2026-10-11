@@ -141,4 +141,28 @@ const PLUCKED: SoundRecipe[] = [
   ])
 ];
 
-export const MODELED: SoundRecipe[] = [...BOWED, ...BRASS, ...WINDS, ...PLUCKED];
+// ------------------------------------------------- strings at a bridge (#108)
+
+const COUPLED: SoundRecipe[] = [
+  // a plucked string buzzing on its curved bridge, over a taraf of
+  // sympathetic strings tuned to the scale, and two gourds side by side
+  sound('sitar', 'Sitar', 'plucks', ['sitar', 'string', 'indian', 'sympathetic', 'buzz'], 50, 5, [{
+    type: 'model', exciter: { kind: 'pluck', position: 0.1, hardness: 0.85 },
+    resonator: { kind: 'string', decay: 4, brightness: 0.8, stiffness: 0.02, coupling: 0.8, buzz: 0.5 },
+    strings: [{ kind: 'sympathetic', notes: [62, 64, 66, 67, 69, 71, 73, 74, 76, 78, 81], decay: 6, brightness: 0.85, level: 2 }],
+    radiators: [{ kind: 'body', preset: 'box', mix: 0.5 }],
+    parallel: [{ kind: 'helmholtz', hz: 150, q: 5, mix: 0.4 }],
+    env: { sustain: 1, release: 0.3 }
+  }]),
+  // three strings to a note, a cent or so apart, struck by one hammer: the
+  // sound dies fast while they move the bridge together, then rings on
+  sound('piano-strings-modeled', 'Piano Strings (Modeled)', 'keys', ['piano', 'string', 'struck', 'acoustic'], 60, 5, [{
+    type: 'model', exciter: { kind: 'strike', position: 0.12, hardness: 0.55 },
+    resonator: { kind: 'string', decay: 9, brightness: 0.6, stiffness: 0.25, coupling: 0.3 },
+    strings: [{ kind: 'unison', cents: [-0.9, 0.7] }],
+    radiators: [{ kind: 'body', preset: 'box', mix: 0.3 }],
+    env: { sustain: 1, release: 0.2 }
+  }])
+];
+
+export const MODELED: SoundRecipe[] = [...BOWED, ...BRASS, ...WINDS, ...PLUCKED, ...COUPLED];

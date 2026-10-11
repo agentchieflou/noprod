@@ -2786,6 +2786,59 @@ body {
   align-items: center;
 }
 
+/* paths side by side in a stage: strings at one bridge, radiators in parallel */
+.dsp-branches {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.dsp-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 4px;
+  border-left: 1px dashed var(--border-color);
+}
+
+.dsp-branch:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+
+/* strings at a bridge: joined beneath by it */
+.dsp-branches.bridged {
+  padding-bottom: 7px;
+  margin-bottom: 4px;
+  border-bottom: 2px solid #10b981;
+}
+
+.dsp-bridge {
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  line-height: 10px;
+  padding: 0 3px;
+  color: #10b981;
+  background-color: var(--bg-track);
+}
+
+.designer-numbers {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-primary);
+  background-color: var(--bg-device);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
 .dsp-lane.muted {
   opacity: 0.4;
 }

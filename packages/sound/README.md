@@ -43,7 +43,26 @@ A `model` layer is the three-stage acoustic pipeline as digital waveguides
    (one line, its far end `open`, `stopped` or `flared`).
 3. **Radiators,** in series: `body` (a bank of wooden modes beside the
    direct sound), `helmholtz` (the air cavity), `bell` (a high-pass),
-   `tonehole`, `damping` (H(z) = (1 − a)/(1 − a·z⁻¹)).
+   `tonehole`, `damping` (H(z) = (1 − a)/(1 − a·z⁻¹)). `parallel` radiators
+   each take the resonator's sound on a path of their own, beside the
+   series ones, and the paths are mixed at the end (a body and a bell at
+   once; a sitar's two gourds).
+
+A string can share its bridge with more strings (`strings`, #108): a
+`unison` course, played with it (a piano's three strings to a note, tuned
+a cent or so apart in `cents`), or `sympathetic` strings no one plays,
+tuned in cents from the note or to fixed `notes` (a sitar's taraf). The
+bridge moves with all of them and sends each string's wave back plus its
+own motion: the scattering S = α(z)·11ᵀ − I, with α = 2ρ/(1 + Nρ) and ρ the
+string's impedance over the bridge's (`coupling`), α(z) a one-pole
+low-pass. Its eigenvalues are −1 (the strings moving against each other)
+and α(z)·N − 1 (all together, moving the bridge), so |S| ≤ 1 whatever ρ:
+the coupling never adds energy. What moves the bridge is lost to it, so a
+course dies fast, then slowly, and beats; a sympathetic string rings when
+the note shares its partials. With strings at the bridge, the envelope of a
+plucked or struck string damps it in the loop, so the sympathetic strings
+ring on after it's let go. `buzz` lays the string along a curved bridge (a
+sitar's jawari): it is shorter on one side of each swing, and buzzes.
 
 The layer's envelope is the player's input: bow speed or breath pressure for
 the closed-loop exciters, a damper for plucks and strikes. Loop lengths are
@@ -66,12 +85,13 @@ blocks across five stages, the same for a synth lead as for a violin:
 |---|---|
 | Player input | `env`, `pitch`, `vibrato` |
 | Excitation | `exciter` (pluck, strike, bow, lips, jet, reed) or `source` (partials, wave, fm, noise) |
-| Resonator | `resonator` (string, bore) |
-| Radiator | `radiator:N` (body, helmholtz, bell, tonehole, damping), then `filter:N` |
+| Resonator | `resonator` (string, bore); `strings:N` (unison, sympathetic), branches beside it |
+| Radiator | `radiator:N` (body, helmholtz, bell, tonehole, damping), `parallel:N` (branches beside them), then `filter:N` |
 | Output | `tremolo`, `drive`, `mix` (level and pan) |
 
-Each block has its kind, family, label, whether it's on, and whether it's in
-a closed loop with the resonator. `BLOCKS` catalogues every kind (label,
+Each block has its kind, family, label, whether it's on, whether it's in
+a closed loop with the resonator, and its branch: 0 on the chain itself, 1,
+2… for the paths beside it in its stage. `BLOCKS` catalogues every kind (label,
 description, stage, defaults, the layer types it fits). The edits return new
 recipes:
 
@@ -81,6 +101,10 @@ setKindOn(recipe, 'vibrato', false);         // every block of a kind
 branchesFor(recipe, 0, 'radiator');          // what can be added: ['helmholtz', 'bell', …]
 addBlock(recipe, 0, 'bell');                 // a radiator or filter in series; an exciter or
                                              // resonator swaps the model's; a source adds a layer
+addBlock(recipe, 0, 'sympathetic');          // strings at the string's bridge (a branch)
+addBlock(recipe, 0, 'bell', { parallel: true }); // a radiator beside the series ones (a branch);
+                                             // branchesFor(…, { parallel: true }) lists them
+setBlockOn(recipe, 0, 'strings:0', false);   // a branch switches off as a whole
 removeBlock(recipe, 0, 'radiator:0');        // later blocks (and their bypasses) renumber
 sharedBlocks([violin, guitar, lead]);        // the kinds two or more of them have, by stage
 ```

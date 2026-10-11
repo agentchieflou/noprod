@@ -10,10 +10,12 @@
 //   env, pitch, vibrato          player input
 //   source | exciter             excitation (a spectral layer's source, or a model's exciter)
 //   resonator                    a model's string or bore
+//   strings:N                    more strings at the string's bridge (a branch beside it)
 //   radiator:N, filter:N         radiation, in series (radiators first)
+//   parallel:N                   a radiator beside the series ones (a branch)
 //   tremolo, drive, mix          output (mix, the level and pan, is always on)
 
-import type { Exciter, Filter, FilterType, Layer, Radiator, Resonator, SoundRecipe } from './types.ts';
+import type { Exciter, Filter, FilterType, Layer, Radiator, Resonator, SoundRecipe, StringSet } from './types.ts';
 import { closedLoop } from './model.ts';
 
 export type Stage = 'input' | 'excitation' | 'resonator' | 'radiator' | 'output';
@@ -31,7 +33,7 @@ export type Family = 'envelope' | 'modulation' | 'exciter' | 'source' | 'resonat
 export type BlockKind =
   | 'env' | 'pitch' | 'vibrato'
   | Exciter['kind'] | Exclude<Layer['type'], 'model'>
-  | Resonator['kind']
+  | Resonator['kind'] | StringSet['kind']
   | Radiator['kind'] | FilterType
   | 'tremolo' | 'drive' | 'mix';
 
@@ -67,6 +69,8 @@ export const BLOCKS: Record<BlockKind, BlockInfo> = {
 
   string: { kind: 'string', label: 'String', description: 'A vibrating string: two travelling waves, losing energy at each reflection', stage: 'resonator', family: 'resonator', layers: MODEL, defaults: { kind: 'string' } },
   bore: { kind: 'bore', label: 'Bore', description: 'An air column: a pressure wave reflecting from the open or closed end', stage: 'resonator', family: 'resonator', layers: MODEL, defaults: { kind: 'bore' } },
+  unison: { kind: 'unison', label: 'Unison strings', description: 'More strings tuned with it and played with it, sharing its bridge: they beat, and die fast, then slowly', stage: 'resonator', family: 'resonator', layers: MODEL, defaults: { kind: 'unison', cents: [-0.8, 0.7] } },
+  sympathetic: { kind: 'sympathetic', label: 'Sympathetic strings', description: 'Strings no one plays, at the same bridge: they ring when the note shares their partials', stage: 'resonator', family: 'resonator', layers: MODEL, defaults: { kind: 'sympathetic', cents: [700, 1200, 1900, 2400] } },
 
   body: { kind: 'body', label: 'Body', description: 'A wooden body\'s resonances', stage: 'radiator', family: 'radiator', layers: MODEL, defaults: { kind: 'body', preset: 'box' } },
   helmholtz: { kind: 'helmholtz', label: 'Air cavity', description: 'The air in the body ringing through its sound hole', stage: 'radiator', family: 'radiator', layers: MODEL, defaults: { kind: 'helmholtz' } },
@@ -95,6 +99,7 @@ export interface Block {
   switchable: boolean;
   removable: boolean;
   loop: boolean;      // in a closed loop: the exciter and resonator of a bowed or blown model
+  branch: number;     // 0: the chain itself; 1, 2…: paths beside it in its stage (strings at its bridge, parallel radiators)
 }
 
 export interface LayerChain {
@@ -136,6 +141,12 @@ function radiatorDetail(r: Radiator): string | undefined {
   }
 }
 
+// a course counts the string it's tuned with
+function stringsDetail(set: StringSet): string {
+  const count = (set.notes ?? set.cents ?? [0]).length + (set.kind === 'unison' ? 1 : 0);
+  return `${count} string${count === 1 ? '' : 's'}`;
+}
+
 const LAYER_LABELS: Record<Layer['type'], string> = { partials: 'Partials', wave: 'Oscillator', fm: 'FM', noise: 'Noise', model: 'Model' };
 
 export function layerChain(layer: Layer, index: number): LayerChain {
@@ -146,7 +157,7 @@ export function layerChain(layer: Layer, index: number): LayerChain {
     const info = BLOCKS[kind];
     blocks.push({
       id, layer: index, stage: info.stage, kind, family: info.family, label: info.label,
-      on: !off.has(id), switchable: true, removable: true, loop: false, ...extra
+      on: !off.has(id), switchable: true, removable: true, loop: false, branch: 0, ...extra
     });
   };
 
@@ -160,7 +171,11 @@ export function layerChain(layer: Layer, index: number): LayerChain {
       removable: false, loop: closed,
       detail: layer.resonator.kind === 'bore' ? layer.resonator.end ?? 'open' : undefined
     });
+    if (layer.resonator.kind === 'string') {
+      (layer.strings ?? []).forEach((set, k) => add(`strings:${k}`, set.kind, { branch: k + 1, detail: stringsDetail(set) }));
+    }
     (layer.radiators ?? []).forEach((r, k) => add(`radiator:${k}`, r.kind, { detail: radiatorDetail(r) }));
+    (layer.parallel ?? []).forEach((r, k) => add(`parallel:${k}`, r.kind, { branch: k + 1, detail: radiatorDetail(r) }));
   } else {
     add('source', layer.type, { removable: false, detail: sourceDetail(layer) });
   }
@@ -212,25 +227,38 @@ export function setKindOn(recipe: SoundRecipe, kind: BlockKind, on: boolean): So
   return next;
 }
 
+const STRING_SETS = new Set<BlockKind>(['unison', 'sympathetic']);
+
 // What can be added to a layer: what its type accepts, and it doesn't
-// have yet (another exciter or resonator swaps the one it has)
-export function branchesFor(recipe: SoundRecipe, layer: number, stage?: Stage): BlockKind[] {
+// have yet (another exciter or resonator swaps the one it has; strings at
+// the bridge come only with a string). `parallel`: the radiators that can
+// be added beside the series ones, any of them, as a branch of its own.
+export function branchesFor(recipe: SoundRecipe, layer: number, stage?: Stage, options: { parallel?: boolean } = {}): BlockKind[] {
   const l = recipe.layers[layer];
   if (!l) return [];
+  if (options.parallel) {
+    if (l.type !== 'model' || (stage && stage !== 'radiator')) return [];
+    return (Object.values(BLOCKS) as BlockInfo[]).filter((info) => info.family === 'radiator').map((info) => info.kind);
+  }
   const has = new Set(layerChain(l, layer).blocks.map((b) => b.kind));
   return (Object.values(BLOCKS) as BlockInfo[])
     .filter((info) => (!stage || info.stage === stage) && !has.has(info.kind) && info.kind !== 'mix' && info.kind !== 'env')
     .filter((info) => info.layers.includes(l.type) || info.family === 'source')
+    .filter((info) => !STRING_SETS.has(info.kind) || (l.type === 'model' && l.resonator.kind === 'string'))
     .map((info) => info.kind);
 }
 
 // Adds a block to a layer, with its defaults. An exciter or resonator
-// replaces the model's own; a spectral source adds a layer beside it (a
-// parallel branch), played the same way. Returns the new recipe.
-export function addBlock(recipe: SoundRecipe, layer: number, kind: BlockKind): SoundRecipe {
+// replaces the model's own; strings join the string at its bridge; a
+// spectral source adds a layer beside it (a parallel branch), played the
+// same way; `parallel` puts a radiator beside the series ones. Returns the
+// new recipe.
+export function addBlock(recipe: SoundRecipe, layer: number, kind: BlockKind, options: { parallel?: boolean } = {}): SoundRecipe {
   const info = BLOCKS[kind];
   const l = recipe.layers[layer];
   if (!info || !l) throw new RangeError(`can't add ${kind} to layer ${layer}`);
+  if (options.parallel && info.family !== 'radiator') throw new Error(`a ${info.label.toLowerCase()} can't go in parallel`);
+  if (STRING_SETS.has(kind) && !(l.type === 'model' && l.resonator.kind === 'string')) throw new Error(`${info.label.toLowerCase()} need a string`);
   if (info.family === 'source') {
     const branch = { ...clone(info.defaults as Layer), env: clone(l.env) } as Layer;
     if (!branch.env) delete branch.env;
@@ -240,18 +268,25 @@ export function addBlock(recipe: SoundRecipe, layer: number, kind: BlockKind): S
   return withLayer(recipe, layer, (layer0) => {
     const next = { ...layer0 } as Layer;
     const unbypass = (id: string) => withBypass(next, (next.bypass ?? []).filter((x) => x !== id));
+    const m = next as Extract<Layer, { type: 'model' }>;
+    if (STRING_SETS.has(kind)) {
+      m.strings = [...(m.strings ?? []), clone(info.defaults as StringSet)];
+      return next;
+    }
+    if (options.parallel) {
+      m.parallel = [...(m.parallel ?? []), clone(info.defaults as Radiator)];
+      return next;
+    }
     switch (info.family) {
       case 'exciter':
-        (next as Extract<Layer, { type: 'model' }>).exciter = clone(info.defaults as Exciter);
+        m.exciter = clone(info.defaults as Exciter);
         return unbypass('exciter');
       case 'resonator':
-        (next as Extract<Layer, { type: 'model' }>).resonator = clone(info.defaults as Resonator);
+        m.resonator = clone(info.defaults as Resonator);
         return unbypass('resonator');
-      case 'radiator': {
-        const m = next as Extract<Layer, { type: 'model' }>;
+      case 'radiator':
         m.radiators = [...(m.radiators ?? []), clone(info.defaults as Radiator)];
         return next;
-      }
       case 'filter': {
         const filters = [...filtersOf(next), clone(info.defaults as Filter)];
         next.filter = filters.length === 1 ? filters[0] : filters;
@@ -269,8 +304,8 @@ export function addBlock(recipe: SoundRecipe, layer: number, kind: BlockKind): S
 }
 
 // Removes a block. The exciter, resonator, source, envelope and mix can't
-// be removed (switch them off instead); removing a radiator or filter
-// renumbers the ones after it, and their bypass ids with them.
+// be removed (switch them off instead); removing a radiator, filter or
+// branch renumbers the ones after it, and their bypass ids with them.
 export function removeBlock(recipe: SoundRecipe, layer: number, id: string): SoundRecipe {
   return withLayer(recipe, layer, (l) => {
     const block = layerChain(l, layer).blocks.find((b) => b.id === id);
@@ -285,14 +320,15 @@ export function removeBlock(recipe: SoundRecipe, layer: number, id: string): Sou
         const [g, m] = x.split(':');
         return g === group && m !== undefined && Number(m) > k ? `${g}:${Number(m) - 1}` : x;
       });
-      if (group === 'radiator') {
-        const m = next as Extract<Layer, { type: 'model' }>;
-        const radiators = (m.radiators ?? []).filter((_, j) => j !== k);
-        if (radiators.length) m.radiators = radiators; else delete m.radiators;
-      } else {
+      if (group === 'filter') {
         const filters = filtersOf(l).filter((_, j) => j !== k);
         if (filters.length === 0) delete next.filter;
         else next.filter = filters.length === 1 ? filters[0] : filters;
+      } else {
+        const model = next as Extract<Layer, { type: 'model' }>;
+        const key = group === 'radiator' ? 'radiators' : (group as 'parallel' | 'strings');
+        const rest = ((model[key] ?? []) as unknown[]).filter((_, j) => j !== k);
+        if (rest.length) Object.assign(model, { [key]: rest }); else delete model[key];
       }
     } else {
       delete (next as unknown as Record<string, unknown>)[id];
