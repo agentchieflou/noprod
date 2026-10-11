@@ -13,7 +13,7 @@
 
 import { estimatePitch } from './analysis.ts';
 import { StateVariableFilter, createRandom } from './dsp.ts';
-import type { Exciter, ModelLayer, Radiator, StringResonator, StringSet } from './types.ts';
+import type { BoreResonator, Exciter, ModelLayer, Radiator, StringResonator, StringSet } from './types.ts';
 
 // --------------------------------------------------------------- pieces
 
@@ -87,6 +87,7 @@ class DcBlocker {
 // steady pressure holds them open by `rest` (they still respond far more
 // strongly at their resonance), the same at every pitch.
 class Lips {
+  hz = 0;   // what it's tuned to
   private y1 = 0;
   private y2 = 0;
   private a1 = 0;
@@ -268,7 +269,6 @@ function excitation(exciter: Exciter, ctx: Context): Excitation {
       // pressure difference; the flow through them saturates
       const lips = new Lips();
       const tension = exciter.tension ?? 1;
-      let tuned = 0;
       const top = 0.6 + 0.4 * velocity;
       return {
         closed: true, sign: 1, bore: 2,
@@ -277,7 +277,7 @@ function excitation(exciter: Exciter, ctx: Context): Excitation {
           // the lips' bandwidth is a fixed share of the note, so low notes still pick out their bore resonance;
           // they sit a little below the note, and aren't driven so hard that
           // they flutter (two frequencies at once, neither the note)
-          if (Math.abs(hz - tuned) > 0.01) { lips.set(hz * 0.97, 1 - (Math.PI * 0.15 * hz) / sr, 1.2, sr); tuned = hz; }
+          if (Math.abs(hz - lips.hz) > 0.01) { lips.set(hz * 0.97, 1 - (Math.PI * 0.15 * hz) / sr, 1.2, sr); lips.hz = hz; }
           const mouth = 0.3 * top * input;
           let open = lips.tick(mouth - incoming);
           open *= open;
@@ -363,11 +363,12 @@ class StringLoop {
   private swing = 0;
   heard = 0;
 
-  constructor(string: { decay?: number; brightness?: number; stiffness?: number; buzz?: number }, position: number, sr: number, lowestHz: number) {
+  // (stiff at `hz`, its note; long enough for `lowestHz`, the lowest it bends to)
+  constructor(string: { decay?: number; brightness?: number; stiffness?: number; buzz?: number }, position: number, sr: number, hz: number, lowestHz: number) {
     this.decay = string.decay ?? 3;
     this.loss = new OnePole(0.05 + 0.75 * (1 - (string.brightness ?? 0.5)));
     const stiffness = string.stiffness ?? 0;
-    const c = stiffness > 0 ? stiffnessCoefficient(lowestHz, stiffness * 0.0012, sr) : 0;
+    const c = stiffness > 0 ? stiffnessCoefficient(hz, stiffness * 0.0012, sr) : 0;
     this.allpasses = c ? Array.from({ length: STIFF_SECTIONS }, () => new Allpass(c)) : [];
     const longest = sr / Math.max(10, lowestHz) + 8;
     this.neck = new Delay(longest);
@@ -480,8 +481,8 @@ class FreeString {
 // what's left of the strings' differences rings on (a piano's two-stage decay).
 const BRIDGE_CUTOFF = 2500;
 
-function bridged(resonator: StringResonator, sets: StringSet[], position: number, sr: number, lowestHz: number): Resonance_ {
-  const main = new StringLoop(resonator, position, sr, lowestHz);
+function bridged(resonator: StringResonator, sets: StringSet[], position: number, sr: number, hz: number, lowestHz: number): Resonance_ {
+  const main = new StringLoop(resonator, position, sr, hz, lowestHz);
   const decay = resonator.decay ?? 3;
   // a unison course is played with the string; sympathetic strings aren't touched
   const course: { string: StringLoop; ratio: number; hz: number }[] = [];
@@ -489,12 +490,13 @@ function bridged(resonator: StringResonator, sets: StringSet[], position: number
   for (const set of sets) {
     const tunings = set.notes ? set.notes.map((n) => ({ ratio: 0, hz: 440 * Math.pow(2, (n - 69) / 12) }))
       : (set.cents ?? [0]).map((c) => ({ ratio: Math.pow(2, c / 1200), hz: 0 }));
-    for (const { ratio, hz } of tunings) {
-      const lowest = ratio ? lowestHz * ratio : hz;
+    for (const t of tunings) {
+      const lowest = t.ratio ? lowestHz * t.ratio : t.hz;
       if (set.kind === 'unison') {
-        course.push({ string: new StringLoop({ ...resonator, decay: set.decay ?? decay, brightness: set.brightness ?? resonator.brightness, buzz: 0 }, position, sr, lowest), ratio, hz });
+        const string = new StringLoop({ ...resonator, decay: set.decay ?? decay, brightness: set.brightness ?? resonator.brightness, buzz: 0 }, position, sr, t.ratio ? hz * t.ratio : t.hz, lowest);
+        course.push({ string, ratio: t.ratio, hz: t.hz });
       } else {
-        free.push({ string: new FreeString(set.decay ?? decay, set.brightness ?? resonator.brightness ?? 0.5, sr, lowest), ratio, hz, level: set.level ?? 1 });
+        free.push({ string: new FreeString(set.decay ?? decay, set.brightness ?? resonator.brightness ?? 0.5, sr, lowest), ratio: t.ratio, hz: t.hz, level: set.level ?? 1 });
       }
     }
   }
@@ -533,12 +535,12 @@ function bridged(resonator: StringResonator, sets: StringSet[], position: number
   };
 }
 
-function resonator(layer: ModelLayer, excite: Excitation, position: number, sr: number, lowestHz: number, off: Set<string>): Resonance_ {
+function resonator(layer: ModelLayer, excite: Excitation, position: number, sr: number, hz: number, lowestHz: number, off: Set<string>): Resonance_ {
   const resonator = layer.resonator;
   if (resonator.kind === 'string') {
     const sets = stringSets(layer, off);
-    if (sets.length) return bridged(resonator, sets, position, sr, lowestHz);
-    const string = new StringLoop(resonator, position, sr, lowestHz);
+    if (sets.length) return bridged(resonator, sets, position, sr, hz, lowestHz);
+    const string = new StringLoop(resonator, position, sr, hz, lowestHz);
     return {
       tail: resonator.decay ?? 3,
       incoming(hz) {
@@ -552,38 +554,54 @@ function resonator(layer: ModelLayer, excite: Excitation, position: number, sr: 
     };
   }
 
-  // A bore: one line, the round trip to the far end and back
-  const end = resonator.end ?? 'open';
-  const reflect = end === 'open' ? -1 : 1;
-  const lossAmount = resonator.loss ?? 0.5;
-  const loss = new OnePole(0.3 + 0.6 * lossAmount, 0.995 - 0.15 * lossAmount);
-  // With the exciter's own inversion the loop either keeps the wave's sign
-  // (every harmonic: a period long) or flips it (odd harmonics: half a period)
-  const flips = reflect * excite.sign < 0;
-  const periods = excite.bore * (flips ? 0.5 : 1);
-  // The wave passes this every trip. A loop that keeps the sign would hold
-  // DC, so it needs one; a loop that flips can't, and there it sits low, so
-  // that a low note's fundamental doesn't die before its harmonics
-  const dc = new DcBlocker(sr, flips ? 2 : 12);
-  const line = new Delay((2 * sr) / Math.max(10, lowestHz) + 8);
-  let back = 0, heard = 0, tuned = 0, delay = 0;
-  return {
-    tail: 0.25,
-    incoming(hz) {
-      if (Math.abs(hz - tuned) > 1e-3) {
-        const w = (2 * Math.PI * hz) / sr;
-        delay = Math.max(2, (sr / hz) * periods - loss.phaseDelay(w) - dc.phaseDelay(w));
-        tuned = hz;
-      }
-      heard = line.read(delay);
-      back = dc.tick(reflect * loss.tick(heard));
-      return back;
-    },
-    inject(e) {
-      line.write(softClip(back + e));
-      return heard;
+  return new Bore(resonator, excite, sr, lowestHz);
+}
+
+// A bore: one line, the round trip to the far end and back
+class Bore implements Resonance_ {
+  readonly tail = 0.25;
+  private readonly sr: number;
+  private readonly reflect: number;
+  private readonly loss: OnePole;
+  private readonly periods: number;
+  private readonly dc: DcBlocker;
+  private readonly line: Delay;
+  private back = 0;
+  private heard = 0;
+  private tuned = 0;
+  private delay = 0;
+
+  constructor(resonator: BoreResonator, excite: Excitation, sr: number, lowestHz: number) {
+    this.sr = sr;
+    this.reflect = (resonator.end ?? 'open') === 'open' ? -1 : 1;
+    const lossAmount = resonator.loss ?? 0.5;
+    this.loss = new OnePole(0.3 + 0.6 * lossAmount, 0.995 - 0.15 * lossAmount);
+    // With the exciter's own inversion the loop either keeps the wave's sign
+    // (every harmonic: a period long) or flips it (odd harmonics: half a period)
+    const flips = this.reflect * excite.sign < 0;
+    this.periods = excite.bore * (flips ? 0.5 : 1);
+    // The wave passes this every trip. A loop that keeps the sign would hold
+    // DC, so it needs one; a loop that flips can't, and there it sits low, so
+    // that a low note's fundamental doesn't die before its harmonics
+    this.dc = new DcBlocker(sr, flips ? 2 : 12);
+    this.line = new Delay((2 * sr) / Math.max(10, lowestHz) + 8);
+  }
+
+  incoming(hz: number) {
+    if (Math.abs(hz - this.tuned) > 1e-3) {
+      const w = (2 * Math.PI * hz) / this.sr;
+      this.delay = Math.max(2, (this.sr / hz) * this.periods - this.loss.phaseDelay(w) - this.dc.phaseDelay(w));
+      this.tuned = hz;
     }
-  };
+    this.heard = this.line.read(this.delay);
+    this.back = this.dc.tick(this.reflect * this.loss.tick(this.heard));
+    return this.back;
+  }
+
+  inject(e: number) {
+    this.line.write(softClip(this.back + e));
+    return this.heard;
+  }
 }
 
 // -------------------------------------------------------------- radiators
@@ -769,7 +787,7 @@ class ModelLoop {
       : layer.exciter.kind === 'strike' ? layer.exciter.position ?? 0.12
         : layer.exciter.kind === 'bow' ? layer.exciter.position ?? 0.13 : 0.5;
     const lowest = baseHz * lowestBend;
-    this.ring = r.off.has('resonator') ? null : resonator(layer, this.excite, position, sr, lowest, r.off);
+    this.ring = r.off.has('resonator') ? null : resonator(layer, this.excite, position, sr, baseHz, lowest, r.off);
     this.inputs = !this.excite.closed && stringSets(layer, r.off).length > 0 ? new Float32Array(Math.ceil(sr / lowest) + 2) : null;
     this.ear = listen ? new Ear(sr, lowest) : null;
   }

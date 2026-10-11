@@ -13,12 +13,14 @@ export const decayCoefficient = (seconds: number, sampleRate: number) =>
 
 // ------------------------------------------------------------------ random
 
-// mulberry32: small, fast and the same everywhere
+// mulberry32: small, fast and the same everywhere. (Its state lives in a
+// typed array: a number this big kept in a closure would be boxed afresh
+// every call, which a live voice can't afford on the audio thread.)
 export function createRandom(seed: number) {
-  let a = seed >>> 0;
+  const state = new Uint32Array([seed >>> 0]);
   return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
+    state[0] += 0x6d2b79f5;
+    let t = state[0];
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
@@ -59,7 +61,7 @@ export class EnvelopeGenerator {
   private readonly sustain: number;
   private readonly decayCoef: number;
   private readonly releaseCoef: number;
-  private readonly gate: number;
+  private gate: number;
 
   constructor(env: Envelope | undefined, sampleRate: number, gateSample: number) {
     this.attack = Math.max(1, Math.round((env?.attack ?? 0.002) * sampleRate));
@@ -77,6 +79,11 @@ export class EnvelopeGenerator {
     else if (i < this.holdEnd) this.value = 1;
     else this.value = this.sustain + (this.value - this.sustain) * this.decayCoef;
     return this.value;
+  }
+
+  // Lets the note go now (a live note, whose gate isn't known beforehand)
+  release() {
+    this.gate = Math.min(this.gate, this.sample);
   }
 
   // Below `floor` and staying there: released, or decayed with no sustain
