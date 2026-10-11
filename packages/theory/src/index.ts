@@ -11,3 +11,4 @@ export * from './melody.ts';
 export * from './complement.ts';
 export * from './lessons.ts';
 export * from './coach.ts';
+export * from './accompany.ts';
