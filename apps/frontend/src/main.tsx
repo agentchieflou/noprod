@@ -10,6 +10,7 @@ import { initRecorder } from './audio/recorder'
 import { initCapture } from './audio/capture'
 import { initComputerKeyboard } from './audio/computerKeyboard'
 import { initCoach } from './audio/coach'
+import { initAccompany } from './audio/accompany'
 import { useDAWStore } from './store/useDAWStore'
 
 // The audio engine registers its worklets before the first render so device
@@ -21,6 +22,7 @@ initRecorder(useDAWStore)
 initCapture(useDAWStore)
 initComputerKeyboard(useDAWStore)
 initCoach()
+initAccompany(useDAWStore)
 initEngine(useDAWStore).finally(() => {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

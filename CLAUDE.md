@@ -22,7 +22,8 @@ in the sibling repo `agentchieflou/v-loudio-t`.
 Frontend landmarks: `App.tsx` (layout, bottom-panel tabs), `audio/engine.ts`
 (strips, master), `audio/library.ts` (library instruments, render workers),
 `audio/inputs.ts` (`onMidiEvent`: every note source), `audio/computerKeyboard.ts`,
-`components/KeyboardPanel.tsx`, `SoundDesigner.tsx`, `DspMap.tsx`.
+`audio/accompany.ts` (the coach's band), `components/KeyboardPanel.tsx`,
+`SoundDesigner.tsx`, `DspMap.tsx`.
 
 ## Commands
 

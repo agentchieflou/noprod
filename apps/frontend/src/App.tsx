@@ -43,6 +43,7 @@ import { DEVICE_DEFS, createDevice } from './audio/devices';
 import { MIDI_EFFECT_DEFS, createMidiEffect } from './audio/midiEffects';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
 import { liveModelStats } from './audio/liveModels';
+import { accompanyDebug } from './audio/accompany';
 import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
 import './App.css';
 
@@ -50,7 +51,7 @@ import './App.css';
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
   (window as any).__dawStore = useDAWStore;
-  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats };
+  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, accompany: accompanyDebug };
 }
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 

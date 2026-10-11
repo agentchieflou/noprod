@@ -1,10 +1,12 @@
 // Renders the library notes a project's MIDI clips play shortly after the
-// project changes, so playback finds them ready (see library.ts); then the
-// selected track's sound across two octaves, for playing it live.
+// project changes, so playback finds them ready (see library.ts); the
+// notes the coach's band may play while it's on; then the selected track's
+// sound across two octaves, for playing it live.
 
 import { expandMidiNotes } from './clipPlayback';
 import { applyMidiEffects } from './midiEffects';
 import { libraryOf, prewarmLibrary } from './library';
+import { accompanyWarmup, subscribeAccompany } from './accompany';
 
 interface Store {
   getState: () => any;
@@ -34,12 +36,14 @@ export function startLibraryWarmup(store: Store) {
       notes: Array.from({ length: 25 }, (_, i) => 60 + (i % 2 ? (i + 1) / 2 : -i / 2))
         .map((pitch) => ({ pitch, velocity: 1, duration: sound.length }))
     }] : [];
-    prewarmLibrary([...clipNotes, ...liveNotes]);
+    prewarmLibrary([...clipNotes, ...accompanyWarmup(), ...liveNotes]);
   };
   const schedule = () => { clearTimeout(timer); timer = setTimeout(run, 300); };
   schedule();
-  return store.subscribe((state, previous) => {
+  const band = subscribeAccompany(schedule);
+  const project = store.subscribe((state, previous) => {
     if (state.tracks !== previous.tracks || state.regions !== previous.regions || state.sessionClips !== previous.sessionClips
-      || state.selectedTrackId !== previous.selectedTrackId) schedule();
+      || state.selectedTrackId !== previous.selectedTrackId || state.bpm !== previous.bpm) schedule();
   });
+  return () => { band(); project(); };
 }
