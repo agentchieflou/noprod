@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { render, midiToHz } from '../src/index.ts';
 import type { Exciter, Layer, ModelLayer, Radiator, Resonator, SoundRecipe, StringResonator, StringSet } from '../src/index.ts';
 import { amplitudeAt, estimatePitch, levelAt, peak, spectralCentroid, toDb } from '../src/analysis.ts';
+import { ModelVoice, closedLoop, modelTuning, renderModel } from '../src/model.ts';
+import { findSound } from '../src/library/index.ts';
 
 const SR = 44100;
 const recipe = (layers: Layer[], extra: Partial<SoundRecipe> = {}): SoundRecipe =>
@@ -241,5 +243,33 @@ test('strings at a bridge, under every exciter, render finite, bounded, repeatab
       for (const x of left) assert.ok(Number.isFinite(x) && Math.abs(x) < 50, `${exciter.kind} at ${note}: ${x}`);
     }
     assert.deepEqual(render(r, { gate: 0.3, sampleRate: 22050 }), render(r, { gate: 0.3, sampleRate: 22050 }));
+  }
+});
+
+// ------------------------------------------------------------- voices (#106)
+
+test('a voice ticked block by block, beside another, plays the rendered note to the bit', () => {
+  const n = SR;
+  // a live player: the bow or breath swells and eases, the pitch wavers and bends
+  const input = new Float32Array(n).map((_, i) => Math.min(1, i / 2000) * (0.6 + 0.4 * Math.sin(i / 9000)));
+  const bend = new Float64Array(n).map((_, i) => Math.pow(2, (0.3 * Math.sin(i / 1500) - (i > n / 2 ? 1 : 0)) / 12));
+  for (const id of ['violin', 'trumpet-modeled', 'flute-modeled', 'clarinet-modeled', 'guitar-nylon-modeled', 'sitar', 'piano-strings-modeled']) {
+    const layer = findSound(id)!.layers[0] as ModelLayer;
+    const r = { sampleRate: SR, baseHz: midiToHz(findSound(id)!.root ?? 60), velocity: 0.8, seed: 7, off: new Set(layer.bypass) };
+    const rendered = new Float32Array(n);
+    renderModel(layer, r, input, bend, rendered);
+    const tuned = closedLoop(layer.exciter);
+    let lowest = 1;
+    for (const b of bend) lowest = Math.min(lowest, b);
+    const voice = new ModelVoice(layer, r, tuned ? modelTuning(layer, r) : 1, lowest, tuned);
+    const other = new ModelVoice(layer, { ...r, baseHz: r.baseHz * 1.5 }, 1, 1, tuned);
+    const live = new Float32Array(n);
+    for (let start = 0; start < n; start += 128) {
+      for (let i = start; i < Math.min(n, start + 128); i++) live[i] = voice.tick(input[i], bend[i]);
+      for (let i = 0; i < 128; i++) other.tick(0.5, 1);
+    }
+    const first = live.findIndex((x, i) => x !== rendered[i]);
+    assert.equal(first, -1, `${id} differs from sample ${first}`);
+    assert.ok(peak(live) > 0.01, `${id} is silent`);
   }
 });
