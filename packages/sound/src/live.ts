@@ -57,16 +57,56 @@ export interface LiveNoteOptions {
 
 const SLUR = 0.03;  // seconds a slur takes to reach the new note
 
+// ----------------------------------------------------------- controls
+
+// What a player's controls move in a live note (#106), as data, so the DSP
+// Map and the Sound Designer can show it. `to`: the player's input to a bow
+// or breath (0..1, as the envelope is), vibrato added (cents, full scale
+// `range`), or a bend (semitones, full scale `range`, either way). Each is
+// followed smoothly, reaching a move in `smoothing` seconds.
+export type LiveTarget = 'input' | 'vibrato' | 'bend';
+
+export interface LiveControl {
+  label: string;
+  from: { type: 'cc'; controller: number } | { type: 'pressure' } | { type: 'bend' };
+  to: LiveTarget;
+  range: number;
+  smoothing: number;
+}
+
+export const LIVE_CONTROLS: LiveControl[] = [
+  { label: 'Breath', from: { type: 'cc', controller: 2 }, to: 'input', range: 1, smoothing: 0.03 },
+  { label: 'Expression', from: { type: 'cc', controller: 11 }, to: 'input', range: 1, smoothing: 0.03 },
+  { label: 'Aftertouch', from: { type: 'pressure' }, to: 'input', range: 1, smoothing: 0.03 },
+  { label: 'Mod wheel', from: { type: 'cc', controller: 1 }, to: 'vibrato', range: 40, smoothing: 0.15 },
+  { label: 'Pitch bend', from: { type: 'bend' }, to: 'bend', range: 2, smoothing: 0.01 }
+];
+
+const VIBRATO_RATE = 5.5;  // Hz, of the vibrato a mod wheel adds
+
+// What a MIDI control event moves, and to what (`value`: 0..1, a bend -1..1)
+export function liveControl(event: { type: string; controller?: number; value?: number }): { to: LiveTarget; value: number; smoothing: number } | null {
+  const control = LIVE_CONTROLS.find((c) => c.from.type === event.type && (c.from.type !== 'cc' || c.from.controller === event.controller));
+  if (!control || event.value === undefined) return null;
+  return { to: control.to, value: event.value * control.range, smoothing: control.smoothing };
+}
+
 export class LiveNote {
   readonly note: number;
   private readonly layers: { voice: ModelLayerVoice; offset: number; done: boolean }[];
   private readonly gain: number;
   private readonly glide: number;
   private sounding: number;   // the note the voice is playing (slurs move it)
-  private semitones = 0;      // where the voice is, from its first note: a slur on its way, and the bend
-  private bend = 0;           // the player's bend, in semitones
+  private semitones = 0;      // where the voice is from its first note: a slur on its way
+  private readonly sr: number;
+  // The controls, where they're going and where they are, each followed by a one-pole
+  private readonly target = { input: 1, vibrato: 0, bend: 0 };
+  private readonly follow = { input: 0, vibrato: 0, bend: 0 };
+  private input = 1;
+  private vibrato = 0;
+  private bend = 0;
+  private phase = 0;          // of the added vibrato
   private i = 0;
-  expression = 1;             // the player's swell: scales the bow or breath (0..1)
   done = false;
 
   constructor(recipe: SoundRecipe, options: LiveNoteOptions) {
@@ -80,6 +120,7 @@ export class LiveNote {
       done: false
     }]));
     this.gain = options.gain ?? 1;
+    this.sr = sr;
     this.glide = Math.exp(-1 / (SLUR * sr / 4.6));
     if (!this.layers.length) this.done = true;
   }
@@ -94,24 +135,37 @@ export class LiveNote {
     this.sounding = note;
   }
 
-  // The player's bend, in semitones
-  bendTo(semitones: number) {
-    this.bend = semitones;
+  // A control moved (see `LIVE_CONTROLS`): the player's input to the bow or
+  // breath (0..1), vibrato (cents) or bend (semitones), reached in `smoothing` seconds
+  control(to: LiveTarget, value: number, smoothing = 0.03) {
+    this.target[to] = value;
+    this.follow[to] = Math.exp(-4.6 / Math.max(1, smoothing * this.sr));
   }
 
   // Adds samples [from, to) of the note into `left` and `right`
   process(left: Float32Array, right: Float32Array, from: number, to: number) {
     const target = this.sounding - this.note;
+    const t = this.target, f = this.follow;
     for (let k = from; k < to && !this.done; k++) {
       this.semitones = target + (this.semitones - target) * this.glide;
-      const bend = this.semitones === 0 && this.bend === 0 ? 1 : Math.pow(2, (this.semitones + this.bend) / 12);
+      // (left alone, the controls stay exactly where they are, and so does the note)
+      this.input = t.input + (this.input - t.input) * f.input;
+      this.bend = t.bend + (this.bend - t.bend) * f.bend;
+      this.vibrato = t.vibrato + (this.vibrato - t.vibrato) * f.vibrato;
+      let cents = 100 * (this.semitones + this.bend);
+      if (this.vibrato !== 0) {
+        cents += this.vibrato * Math.sin(2 * Math.PI * this.phase);
+        this.phase += VIBRATO_RATE / this.sr;
+        if (this.phase >= 1) this.phase -= 1;
+      }
+      const bend = cents === 0 ? 1 : Math.pow(2, cents / 1200);
       let l = 0, r = 0, alive = false;
       for (let n = 0; n < this.layers.length; n++) {
         const layer = this.layers[n];
         if (layer.done) continue;
         alive = true;
         if (this.i < layer.offset) continue;
-        if (!layer.voice.next(bend, this.expression)) { layer.done = true; continue; }
+        if (!layer.voice.next(bend, this.input)) { layer.done = true; continue; }
         // mixed as a rendered note's layers are, in 32-bit floats
         const x = layer.voice.out * layer.voice.level;
         l = Math.fround(l + x * layer.voice.pl);

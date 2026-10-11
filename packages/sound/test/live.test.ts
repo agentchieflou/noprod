@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LiveNote, liveTunings, playsLive, legato, render, midiToHz } from '../src/index.ts';
+import { LiveNote, liveTunings, playsLive, legato, liveControl, render, midiToHz } from '../src/index.ts';
 import type { SoundRecipe } from '../src/index.ts';
 import { findSound, LIBRARY } from '../src/library/index.ts';
 import { estimatePitch, levelAt, toDb } from '../src/analysis.ts';
@@ -80,4 +80,42 @@ test('a slur moves the same voice to the next note, without a new attack', () =>
   // no dip, no new attack: the level through the slur stays within 6 dB
   const levels = [0.7, 0.78, 0.82, 0.86, 0.9, 1.0].map((t) => toDb(levelAt(left, SR, t, 0.02)));
   assert.ok(Math.max(...levels) - Math.min(...levels) < 6, levels.map((x) => x.toFixed(1)).join(' '));
+});
+
+// ------------------------------------------------------------ controls
+
+const cents = (hz: number, note: number) => 1200 * Math.log2(hz / midiToHz(note));
+
+test('MIDI controls map to what a live note takes', () => {
+  assert.deepEqual(liveControl({ type: 'cc', controller: 11, value: 0.5 }), { to: 'input', value: 0.5, smoothing: 0.03 });
+  assert.equal(liveControl({ type: 'cc', controller: 2, value: 1 })!.to, 'input');
+  assert.equal(liveControl({ type: 'pressure', value: 1 })!.to, 'input');
+  assert.deepEqual(liveControl({ type: 'cc', controller: 1, value: 1 }), { to: 'vibrato', value: 40, smoothing: 0.15 });
+  assert.deepEqual(liveControl({ type: 'bend', value: -1 }), { to: 'bend', value: -2, smoothing: 0.01 });
+  assert.equal(liveControl({ type: 'cc', controller: 64, value: 1 }), null);
+});
+
+test('the player swells a live bow or breath, bends it and adds vibrato', () => {
+  // the bow eased off to a tenth, then drawn full again: over 6 dB between
+  const violin = findSound('violin')!;
+  const swell = play(violin, 67, 0.8, Infinity, 3, (live, t) => {
+    if (t >= 1 && t < 1.01) live.control('input', 0.1);
+    if (t >= 2 && t < 2.01) live.control('input', 1);
+  });
+  const soft = levelAt(swell.left, SR, 1.8, 0.1), loud = levelAt(swell.left, SR, 2.8, 0.1);
+  assert.ok(toDb(loud / soft) > 6, `${toDb(soft).toFixed(1)} → ${toDb(loud).toFixed(1)} dB`);
+  // a recorder (no vibrato of its own) bent up 2 semitones
+  const recorder = findSound('recorder')!;
+  const bent = play(recorder, 72, 0.8, Infinity, 1.6, (live, t) => { if (t >= 0.8 && t < 0.81) live.control('bend', 2, 0.01); });
+  const before = estimatePitch(bent.left, SR, Math.round(0.6 * SR), 4096, 300, 1000);
+  const after = estimatePitch(bent.left, SR, Math.round(1.3 * SR), 4096, 300, 1000);
+  const moved = 1200 * Math.log2(after / before);
+  assert.ok(Math.abs(cents(before, 72)) < 10 && Math.abs(moved - 200) < 10, `${cents(before, 72).toFixed(1)} cents, then moved ${moved.toFixed(1)}`);
+  // the mod wheel adds vibrato: the pitch swings, where before it held
+  const swings = (x: Float32Array, from: number) => {
+    const hz = [0, 1, 2, 3, 4, 5, 6, 7].map((k) => estimatePitch(x, SR, Math.round((from + k * 0.023) * SR), 1024, 300, 1000));
+    return Math.max(...hz.map((h) => cents(h, 72))) - Math.min(...hz.map((h) => cents(h, 72)));
+  };
+  const wobbled = play(recorder, 72, 0.8, Infinity, 1.8, (live, t) => { if (t >= 0.8 && t < 0.81) live.control('vibrato', 40, 0.15); });
+  assert.ok(swings(wobbled.left, 0.5) < 5 && swings(wobbled.left, 1.4) > 40, `${swings(wobbled.left, 0.5).toFixed(1)} cents, then ${swings(wobbled.left, 1.4).toFixed(1)}`);
 });

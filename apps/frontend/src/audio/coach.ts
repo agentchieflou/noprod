@@ -129,8 +129,10 @@ export function initCoach() {
     if (e.type === 'on') {
       if (!state.open) return;
       coach.noteOn(e.pitch, time, e.velocity);
-    } else {
+    } else if (e.type === 'off') {
       coach.noteOff(e.pitch, time);
+    } else {
+      return;
     }
     if (state.open) refresh();
   });

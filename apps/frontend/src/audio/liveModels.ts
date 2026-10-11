@@ -8,7 +8,7 @@
 // here, once, and cached: the sound's loudness (by rendering it once, as
 // `render` normalizes it) and its closed loops' tunings, per note.
 
-import { liveTunings, loudnessGain, playsLive, type SoundRecipe } from '@noprod/sound';
+import { liveTunings, loudnessGain, playsLive, type LiveTarget, type SoundRecipe } from '@noprod/sound';
 import liveModelsUrl from './worklets/live-models.ts?worker&url';
 import type { LiveModelsMessage } from './worklets/live-models';
 
@@ -88,6 +88,13 @@ export function startLiveVoice(
       send(node, { type: 'off', id, at });
     }
   };
+}
+
+// A control moved (see LIVE_CONTROLS): every live voice at `destination`,
+// and those started after it, follow
+export function controlLiveVoices(ctx: BaseAudioContext, destination: AudioNode, control: { to: LiveTarget; value: number; smoothing: number }, at: number) {
+  if (!ready.has(ctx)) return;
+  send(nodeFor(ctx, destination), { type: 'control', ...control, at });
 }
 
 // How the worklets are coping: voices sounding, blocks made, those that
