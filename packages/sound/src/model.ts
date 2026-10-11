@@ -74,7 +74,7 @@ class DcBlocker {
   private x1 = 0;
   private y1 = 0;
   private readonly r: number;
-  constructor(sampleRate: number) { this.r = 1 - (2 * Math.PI * 12) / sampleRate; }
+  constructor(sampleRate: number, hz = 12) { this.r = 1 - (2 * Math.PI * hz) / sampleRate; }
   tick(x: number) { const y = x - this.x1 + this.r * this.y1; this.x1 = x; this.y1 = y; return y; }
   // negative: it leads, more so at low frequencies
   phaseDelay(w: number) {
@@ -101,6 +101,65 @@ class Lips {
     const y = this.b0 * x - this.a1 * this.y1 - this.a2 * this.y2;
     this.y2 = this.y1; this.y1 = y;
     return y;
+  }
+}
+
+// The player's ear. A bowed or blown loop doesn't settle exactly on its
+// note: the bow, lips, jet or reed pull it, more or less as it grows louder.
+// A player hears this and lips or blows the note back into tune; so does
+// this. Once a period it finds the lag at which the sound best repeats,
+// near the period it should have, and nudges the loop's length toward it.
+class Ear {
+  // kept twice over, so a stretch of it reads without wrapping around
+  private readonly history: Float64Array;
+  private readonly size: number;
+  private written = 0;
+  private due = 0;
+  private lag = 0;
+  correction = 1;
+  constructor(sampleRate: number, lowestHz: number) {
+    this.size = Math.ceil((5.5 * sampleRate) / (lowestHz / 1.1)) + 4;
+    this.history = new Float64Array(2 * this.size);
+  }
+  // Hears one sample `x` of a note meant to repeat every `period` samples
+  hear(x: number, period: number) {
+    const w = this.written % this.size;
+    this.history[w] = this.history[w + this.size] = x;
+    this.written++;
+    if (--this.due > 0) return;
+    this.due = Math.max(1, Math.round(period));
+    const window = Math.round(2 * period);
+    const lo = Math.floor(period / 1.1), hi = Math.ceil(period * 1.1);
+    if (this.written < window + hi + 2) return;
+    const h = this.history, now = w + this.size;
+    // how unlike itself the sound is, `lag` samples apart (0: a perfect repeat)
+    const unlike = (lag: number) => {
+      let diff = 0, energy = 0;
+      for (let j = now - window + 1; j <= now; j++) {
+        const a = h[j], b = h[j - lag];
+        diff += (a - b) * (a - b);
+        energy += a * a + b * b;
+      }
+      return energy > 0 ? diff / energy : 1;
+    };
+    // downhill from where it last heard the note repeat: the nearest repeat
+    // is the note's, and a few steps cost far less than searching the range
+    let best = this.lag > lo && this.lag < hi ? this.lag : Math.round(period);
+    let here = unlike(best), before = unlike(best - 1), after = unlike(best + 1);
+    if (before < here) {
+      while (before < here && best > lo) { after = here; here = before; best--; before = unlike(best - 1); }
+    } else {
+      while (after < here && best < hi) { before = here; here = after; best++; after = unlike(best + 1); }
+    }
+    // only a clear repeat counts (not the noise of the attack), and only a
+    // real minimum, not the edge of the range searched
+    if (here > 0.1 || best <= lo || best >= hi) return;
+    this.lag = best;
+    const bend = before - 2 * here + after;
+    const heard = best + (bend > 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (before - after)) / bend)) : 0);
+    // a share of the error each period: quick, but slower than the loop answers
+    this.correction *= Math.pow(heard / period, 0.75);
+    this.correction = Math.min(1.06, Math.max(1 / 1.06, this.correction));
   }
 }
 
@@ -212,8 +271,10 @@ function excitation(exciter: Exciter, ctx: Context): Excitation {
         closed: true, sign: 1, bore: 2,
         tick: (incoming, input, period) => {
           const hz = (sr / period) * tension;
-          // the lips' bandwidth is a fixed share of the note, so low notes still pick out their bore resonance
-          if (Math.abs(hz - tuned) > 0.01) { lips.set(hz, 1 - (Math.PI * 0.15 * hz) / sr, 1.4, sr); tuned = hz; }
+          // the lips' bandwidth is a fixed share of the note, so low notes still pick out their bore resonance;
+          // they sit a little below the note, and aren't driven so hard that
+          // they flutter (two frequencies at once, neither the note)
+          if (Math.abs(hz - tuned) > 0.01) { lips.set(hz * 0.97, 1 - (Math.PI * 0.15 * hz) / sr, 1.2, sr); tuned = hz; }
           const mouth = 0.3 * top * input;
           let open = lips.tick(mouth - incoming);
           open *= open;
@@ -226,17 +287,25 @@ function excitation(exciter: Exciter, ctx: Context): Excitation {
       // Breath across an edge: the jet takes a while to cross, then splits
       // (a cubic nonlinearity) into or out of the pipe
       const jet = new Delay(Math.ceil(sr / 15));
-      const ratio = exciter.ratio ?? 0.32;
+      const ratio = exciter.ratio ?? 0.34;
       const noise = exciter.noise ?? 0.15;
       const top = 0.75 + 0.25 * velocity;
+      // The jet sits at a fixed point on the curve and the breath sets how
+      // hard it blows. (Were the breath to move that point, the jet's gain
+      // would pass through zero as a note starts, and the note would start
+      // on the wrong resonance.)
+      const bias = 1;
+      const rest = bias * (bias * bias - 1);
       return {
         closed: true, sign: -1, bore: 1.5,
         tick: (incoming, input, period) => {
-          const breath = top * input * (1 + noise * (random() * 2 - 1));
-          jet.write(breath - 0.5 * incoming);
-          const x = jet.read(period * 1.5 * ratio);
-          const split = Math.max(-1, Math.min(1, x * (x * x - 1)));
-          return split + 0.5 * incoming - incoming;
+          jet.write(0.2 * noise * input * (random() * 2 - 1) - 0.5 * incoming);
+          const x = bias + jet.read(period * 1.5 * ratio);
+          const split = top * input * (Math.max(-1, Math.min(1, x * (x * x - 1))) - rest);
+          // The mouth is an open end: it reflects most of the wave, less while
+          // the jet blows across it and sheds the wave's energy as eddies. So
+          // the pipe rings on for a moment when the breath stops
+          return split + (0.85 - 0.35 * Math.min(1, input)) * incoming - incoming;
         }
       };
     }
@@ -317,10 +386,14 @@ function resonator(resonator: Resonator, excite: Excitation, position: number, s
   const reflect = end === 'open' ? -1 : 1;
   const lossAmount = resonator.loss ?? 0.5;
   const loss = new OnePole(0.3 + 0.6 * lossAmount, 0.995 - 0.15 * lossAmount);
-  const dc = new DcBlocker(sr);
   // With the exciter's own inversion the loop either keeps the wave's sign
   // (every harmonic: a period long) or flips it (odd harmonics: half a period)
-  const periods = excite.bore * (reflect * excite.sign < 0 ? 0.5 : 1);
+  const flips = reflect * excite.sign < 0;
+  const periods = excite.bore * (flips ? 0.5 : 1);
+  // The wave passes this every trip. A loop that keeps the sign would hold
+  // DC, so it needs one; a loop that flips can't, and there it sits low, so
+  // that a low note's fundamental doesn't die before its harmonics
+  const dc = new DcBlocker(sr, flips ? 2 : 12);
   const line = new Delay((2 * sr) / Math.max(10, lowestHz) + 8);
   let back = 0, heard = 0, tuned = 0, delay = 0;
   return {
@@ -442,8 +515,8 @@ function tuning(layer: ModelLayer, r: ModelRender): number {
 // over time (the layer's envelope), `bend` its frequency multiplier.
 export function renderModel(layer: ModelLayer, r: ModelRender, input: Float32Array, bend: Float64Array | null, out: Float32Array) {
   if (r.off.has('exciter')) return;
-  const tune = closedLoop(layer.exciter) && !r.off.has('resonator') ? tuning(layer, r) : 1;
-  run(layer, r, input, bend, tune, out);
+  const tuned = closedLoop(layer.exciter) && !r.off.has('resonator');
+  run(layer, r, input, bend, tuned ? tuning(layer, r) : 1, out, tuned);
   (layer.radiators ?? []).forEach((radiator, k) => {
     if (!r.off.has(`radiator:${k}`)) radiate(radiator, out, r.sampleRate, r.baseHz);
   });
@@ -452,7 +525,7 @@ export function renderModel(layer: ModelLayer, r: ModelRender, input: Float32Arr
   for (let i = 0; i < out.length; i++) out[i] = dc.tick(out[i]);
 }
 
-function run(layer: ModelLayer, r: ModelRender, input: Float32Array, bend: Float64Array | null, tune: number, out: Float32Array) {
+function run(layer: ModelLayer, r: ModelRender, input: Float32Array, bend: Float64Array | null, tune: number, out: Float32Array, listen = false) {
   const sr = r.sampleRate;
   const baseHz = r.baseHz * tune;
   const random = createRandom(r.seed);
@@ -464,6 +537,7 @@ function run(layer: ModelLayer, r: ModelRender, input: Float32Array, bend: Float
   if (bend) for (const b of bend) lowest = Math.min(lowest, baseHz * b);
   const ring = r.off.has('resonator') ? null : resonator(layer.resonator, excite, position, sr, lowest);
 
+  const ear = listen ? new Ear(sr, lowest) : null;
   for (let i = 0; i < out.length; i++) {
     const hz = bend ? baseHz * bend[i] : baseHz;
     const period = sr / hz;
@@ -471,7 +545,10 @@ function run(layer: ModelLayer, r: ModelRender, input: Float32Array, bend: Float
       out[i] = excite.tick(0, input[i] ?? 0, period);
       continue;
     }
-    const back = ring.incoming(hz);
-    out[i] = ring.inject(excite.tick(back, input[i] ?? 0, period));
+    // retuned by ear: the player's lips or breath move with the loop, as an embouchure does
+    const heard = ear ? hz * ear.correction : hz;
+    const back = ring.incoming(heard);
+    out[i] = ring.inject(excite.tick(back, input[i] ?? 0, sr / heard));
+    ear?.hear(out[i], sr / (bend ? r.baseHz * bend[i] : r.baseHz));
   }
 }

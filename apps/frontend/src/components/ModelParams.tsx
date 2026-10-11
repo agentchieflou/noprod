@@ -24,7 +24,7 @@ const EXCITER_SPECS: Record<Exciter['kind'], Spec[]> = {
   ],
   lips: [{ key: 'tension', label: 'Tension', def: 1, min: 0.7, max: 1.4 }],
   jet: [
-    { key: 'ratio', label: 'Jet length', def: 0.32, min: 0.1, max: 0.6 },
+    { key: 'ratio', label: 'Jet length', def: 0.34, min: 0.1, max: 0.6 },
     { key: 'noise', label: 'Breath', def: 0.15, min: 0, max: 1 }
   ],
   reed: [

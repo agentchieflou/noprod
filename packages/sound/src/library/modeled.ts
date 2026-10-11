@@ -54,7 +54,7 @@ const BRASS: SoundRecipe[] = [
   sound('trombone', 'Trombone', 'brass', ['trombone', 'brass', 'solo'], 53, 3, [{
     type: 'model', exciter: { kind: 'lips', tension: 1 },
     resonator: { kind: 'bore', end: 'flared', loss: 0.5 },
-    radiators: [{ kind: 'bell', cutoff: 500, mix: 0.6 }],
+    radiators: [{ kind: 'bell', cutoff: 400, mix: 0.6 }],
     vibrato: vibrato(6, 5), env: { attack: 0.04, sustain: 1, release: 0.12 }
   }]),
   // the bell faces away from the listener, behind the player's hand
@@ -70,13 +70,13 @@ const BRASS: SoundRecipe[] = [
 
 const WINDS: SoundRecipe[] = [
   sound('flute-modeled', 'Flute (Modeled)', 'winds', ['flute', 'woodwind', 'breathy', 'solo'], 72, 3, [{
-    type: 'model', exciter: { kind: 'jet', ratio: 0.32, noise: 0.15 },
+    type: 'model', exciter: { kind: 'jet', ratio: 0.34, noise: 0.15 },
     resonator: { kind: 'bore', end: 'open', loss: 0.4 },
     radiators: [{ kind: 'tonehole', cutoff: 0.7, brightness: 0.6 }],
     vibrato: vibrato(14, 5), env: { attack: 0.06, sustain: 1, release: 0.1 }
   }]),
   sound('recorder', 'Recorder', 'winds', ['recorder', 'woodwind', 'baroque', 'pure'], 72, 3, [{
-    type: 'model', exciter: { kind: 'jet', ratio: 0.3, noise: 0.06 },
+    type: 'model', exciter: { kind: 'jet', ratio: 0.34, noise: 0.06 },
     resonator: { kind: 'bore', end: 'open', loss: 0.55 },
     radiators: [{ kind: 'tonehole', cutoff: 0.8, brightness: 0.4 }],
     env: { attack: 0.03, sustain: 1, release: 0.06 }

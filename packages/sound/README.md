@@ -49,7 +49,10 @@ The layer's envelope is the player's input: bow speed or breath pressure for
 the closed-loop exciters, a damper for plucks and strikes. Loop lengths are
 corrected for the phase delay of the filters in them, and closed-loop models
 (whose lips, jets and reeds settle a little off the loop's pitch) are tuned
-by a short probe note, measured and corrected, cached per configuration.
+by a short probe note, measured and corrected, cached per configuration. As
+the note plays they are also tuned by ear, as a player would: once a period
+the model finds where the sound repeats and nudges the loop toward the
+note, so the attack is in tune too (within 5 cents from when it speaks).
 
 Any block of any layer can be switched off without losing its settings:
 `bypass: ['radiator:0', 'filter:1', 'drive', …]`.

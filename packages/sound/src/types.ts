@@ -197,7 +197,7 @@ export interface LipsExciter {
 
 export interface JetExciter {
   kind: 'jet';
-  ratio?: number;     // the jet's travel time as a share of the bore's (default 0.32)
+  ratio?: number;     // the jet's travel time as a share of the bore's (default 0.34)
   noise?: number;     // breath noise 0..1 (default 0.15)
 }
 
