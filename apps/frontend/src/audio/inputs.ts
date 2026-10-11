@@ -7,6 +7,8 @@
 
 import { audioContext, getStripInput } from './engine';
 import { startVoice } from './synth';
+import { controlLiveVoices } from './liveModels';
+import { liveControl } from '@noprod/sound';
 import { applyMidiEffects } from './midiEffects';
 
 // ------------------------------------------------------------------ audio
@@ -85,13 +87,17 @@ export function getAudioInputNode(deviceId: string, channel: string): AudioNode 
 // ------------------------------------------------------------------ MIDI bus
 
 export interface MidiEvent {
-  type: 'on' | 'off';
-  pitch: number;
+  // a note on or off, or a control moving: a controller (cc), the pitch
+  // bend, or how hard the keys are pressed (aftertouch)
+  type: 'on' | 'off' | 'cc' | 'bend' | 'pressure';
+  pitch: number;     // the note (-1 for a control)
   velocity: number;  // 0..1
   channel: number;   // 1..16
   source: string;    // MIDI input id, or 'computer'
   time: number;      // audio-context time
   targets?: string[]; // explicit track ids (the computer keyboard plays the selected track)
+  controller?: number; // cc: which
+  value?: number;      // cc and pressure: 0..1; bend: -1..1
 }
 
 const midiListeners = new Set<(e: MidiEvent) => void>();
@@ -117,8 +123,16 @@ export async function initMidi() {
           const [status, d1, d2] = msg.data;
           const kind = status & 0xf0;
           const channel = (status & 0x0f) + 1;
-          if (kind === 0x90 && d2 > 0) publish({ type: 'on', pitch: d1, velocity: d2 / 127, channel, source: input.id, time: audioContext.currentTime });
-          else if (kind === 0x80 || (kind === 0x90 && d2 === 0)) publish({ type: 'off', pitch: d1, velocity: 0, channel, source: input.id, time: audioContext.currentTime });
+          const time = audioContext.currentTime;
+          const control = (type: 'cc' | 'bend' | 'pressure', value: number, controller?: number) =>
+            publish({ type, pitch: -1, velocity: 0, controller, value, channel, source: input.id, time });
+          if (kind === 0x90 && d2 > 0) publish({ type: 'on', pitch: d1, velocity: d2 / 127, channel, source: input.id, time });
+          else if (kind === 0x80 || (kind === 0x90 && d2 === 0)) publish({ type: 'off', pitch: d1, velocity: 0, channel, source: input.id, time });
+          else if (kind === 0xb0) control('cc', d2 / 127, d1);
+          else if (kind === 0xe0) control('bend', (((d2 << 7) | d1) - 8192) / 8192);
+          // channel aftertouch; a key's own is taken as the channel's
+          else if (kind === 0xd0) control('pressure', d1 / 127);
+          else if (kind === 0xa0) control('pressure', d2 / 127);
         };
       });
       notifyInputs();
@@ -159,6 +173,12 @@ const liveVoices = new Map<string, { release: (at: number) => void }[]>();
 export function initLiveMidi(store: { getState: () => any }) {
   onMidiEvent((e) => {
     const st = store.getState();
+    if (e.type !== 'on' && e.type !== 'off') {
+      // a control moves every live voice on the tracks it plays (see LIVE_CONTROLS)
+      const control = liveControl(e);
+      if (control) midiEventTargets(st, e).forEach((t: any) => controlLiveVoices(audioContext, getStripInput(t.id), control, e.time));
+      return;
+    }
     midiEventTargets(st, e).forEach((t: any) => {
       if (!t.instrument) return;
       const key = `${t.id}:${e.source}:${e.pitch}`;

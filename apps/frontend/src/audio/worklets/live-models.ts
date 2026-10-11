@@ -4,7 +4,7 @@
 // happens at. A voice is made when its note-on arrives (between blocks);
 // rendering a block allocates nothing.
 
-import { LiveNote, legato, type SoundRecipe } from '@noprod/sound';
+import { LiveNote, legato, type LiveTarget, type SoundRecipe } from '@noprod/sound';
 
 // The AudioWorkletGlobalScope's (not in the DOM types)
 declare const sampleRate: number;
@@ -18,6 +18,7 @@ const BLOCK = 128;
 export type LiveModelsMessage =
   | { type: 'on'; id: number; recipe: SoundRecipe; note: number; velocity: number; transpose: number; gain: number; tunings: number[]; at: number }
   | { type: 'off'; id: number; at: number }
+  | { type: 'control'; to: LiveTarget; value: number; smoothing: number; at: number }
   | { type: 'stop' }
   | { type: 'stats' };
 
@@ -36,6 +37,8 @@ class LiveModels extends AudioWorkletProcessor {
   private voices: Voice[] = [];
   private byId = new Map<number, Voice>();
   private pending: Pending[] = [];
+  // where the player's controls are: every voice follows them, new ones from the start
+  private controls: { to: LiveTarget; value: number }[] = [];
   // How it's coping, as this processor can see it (to the millisecond). A
   // block that takes longer to make than it lasts is late; the audio
   // device has some audio queued (`margin`, its output latency), so the
@@ -66,6 +69,14 @@ class LiveModels extends AudioWorkletProcessor {
       this.pending = [];
       return;
     }
+    if (m.type === 'control') {
+      this.schedule(m.at, () => {
+        const was = this.controls.findIndex((c) => c.to === m.to);
+        if (was >= 0) this.controls[was].value = m.value; else this.controls.push({ to: m.to, value: m.value });
+        for (const v of this.voices) v.live.control(m.to, m.value, m.smoothing);
+      });
+      return;
+    }
     if (m.type === 'on') {
       // made now, between blocks (a slur may not need it); it starts sounding at its time
       const live = new LiveNote(m.recipe, { note: m.note, velocity: m.velocity, sampleRate, transpose: m.transpose, gain: m.gain, tunings: m.tunings });
@@ -79,6 +90,7 @@ class LiveModels extends AudioWorkletProcessor {
           this.byId.set(m.id, slurring);
           return;
         }
+        for (const c of this.controls) live.control(c.to, c.value, 0);
         const voice: Voice = { live, sound: m.recipe.id, legato: slurs, held: [{ id: m.id, note: m.note }], start: m.at, released: false };
         this.steal();
         this.voices.push(voice);

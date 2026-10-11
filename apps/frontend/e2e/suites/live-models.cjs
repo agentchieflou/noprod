@@ -9,14 +9,32 @@ module.exports = async (page, ctx) => {
   await ctx.sleep(150);
   await page.evaluate(() => [...document.querySelectorAll('.browser-item')].find((e) => e.querySelector('.browser-item-label')?.textContent === 'Violin').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
   await ctx.sleep(500);
-  const track = await page.evaluate(async () => {
+  const violinTrack = await page.evaluate(async () => {
     window.__inputs = await import('/src/audio/inputs.ts');
     const st = window.__dawStore.getState();
     return st.selectedTrackId;
   });
+  let track = violinTrack;
   const midi = (type, pitch, velocity = 0.8) => page.evaluate((type, pitch, velocity, track) => window.__inputs.publishMidi({
     type, pitch, velocity: type === 'on' ? velocity : 0, channel: 1, source: 'test-midi', time: window.__transport.audioContext.currentTime, targets: [track]
   }), type, pitch, velocity, track);
+  const control = (type, value, controller) => page.evaluate((type, value, controller, track) => window.__inputs.publishMidi({
+    type, pitch: -1, velocity: 0, controller, value, channel: 1, source: 'test-midi', time: window.__transport.audioContext.currentTime, targets: [track]
+  }), type, value, controller, track);
+  // the master's pitch (Hz), over a few analyser frames
+  const pitch = (lo, hi) => page.evaluate(async (lo, hi) => {
+    const { estimatePitch } = await import(window.__fs + '/packages/sound/src/analysis.ts');
+    const an = window.__transport.masterAnalyser, sr = window.__transport.audioContext.sampleRate;
+    const buf = new Float32Array(an.fftSize), found = [];
+    for (let k = 0; k < 6; k++) {
+      an.getFloatTimeDomainData(buf);
+      const hz = estimatePitch(buf, sr, 0, buf.length, lo, hi);
+      if (hz > 0) found.push(hz);
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    found.sort((a, b) => a - b);
+    return found[found.length >> 1] ?? 0;
+  }, lo, hi);
   // the master's level (dBFS RMS) over `ms`
   const level = (ms = 300) => page.evaluate(async (ms) => {
     const an = window.__transport.masterAnalyser;
@@ -52,7 +70,20 @@ module.exports = async (page, ctx) => {
   check('Let go, it rings down and ends', after < -70 && after < late - 40 && ended.voices === 0,
     `${ringing.toFixed(1)} dB just after, ${after.toFixed(1)} dB at 1.3 s; voices ${ended.voices}`);
 
-  // 3. Eight at once, without dropouts
+  // 3. Expression (CC11): the bow eased off, then drawn full: more than 6 dB between
+  await midi('on', 67);
+  await ctx.sleep(800);
+  await control('cc', 0, 11);
+  await ctx.sleep(1000);
+  const eased = await level(200);
+  await control('cc', 1, 11);
+  await ctx.sleep(800);
+  const drawn = await level(200);
+  await midi('off', 67);
+  check('CC11 from 0 to 127 swells the bow by more than 6 dB', drawn - eased > 6, `${eased.toFixed(1)} → ${drawn.toFixed(1)} dB`);
+  await ctx.sleep(1200);
+
+  // 4. Eight at once, without dropouts
   const pitches = [55, 59, 62, 67, 71, 74, 79, 83];
   const before = await stats();
   for (const p of pitches) await midi('on', p, 0.6);
@@ -66,6 +97,24 @@ module.exports = async (page, ctx) => {
   await ctx.sleep(1500);
   const quiet = await stats();
   check('…and all of them end when let go (no stuck notes)', quiet.voices === 0, `voices ${quiet.voices}`);
+
+  // 5. Pitch bend: a recorder (no vibrato of its own, and legato) bent up 2 semitones
+  await page.evaluate(() => [...document.querySelectorAll('.browser-folder')].find((e) => e.textContent.trim().startsWith('Winds')).click());
+  await ctx.sleep(150);
+  await page.evaluate(() => [...document.querySelectorAll('.browser-item')].find((e) => e.querySelector('.browser-item-label')?.textContent === 'Recorder').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  await ctx.sleep(500);
+  track = await page.evaluate(() => window.__dawStore.getState().selectedTrackId);
+  await midi('on', 72);
+  await ctx.sleep(800);
+  const straight = await pitch(300, 1000);
+  await control('bend', 1);
+  await ctx.sleep(500);
+  const bent = await pitch(300, 1000);
+  await control('bend', 0);
+  await midi('off', 72);
+  const moved = 1200 * Math.log2(bent / straight);
+  check('Pitch bend up full moves the pitch 200 cents (± 10)', Math.abs(moved - 200) <= 10, `${straight.toFixed(1)} Hz → ${bent.toFixed(1)} Hz: ${moved.toFixed(1)} cents`);
+  await ctx.sleep(800);
 
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
   check('No page errors', errors.length === 0, errors.join(' / '));

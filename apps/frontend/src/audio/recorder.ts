@@ -181,6 +181,7 @@ async function stopRecording() {
         cap.events.map((e) => ({ ...e, time: e.time - compensation })).forEach((e) => {
           const key = `${e.source}:${e.pitch}`;
           if (e.type === 'on') { if (e.time >= tA && e.time < tB) open.set(key, e); return; }
+          if (e.type !== 'off') return;
           const on = open.get(key);
           if (!on) return;
           open.delete(key);

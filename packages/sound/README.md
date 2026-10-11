@@ -79,7 +79,11 @@ filters, its ring-out, tremolo, drive and pan, a sample at a time. A
 `LiveNote` runs the same voices for a note played live (#106): for as long
 as the key is held, then `release()`, and it rings out by its own physics.
 It follows the player as it plays: `slur(note)` (legato: the same voice, no
-new attack), `bendTo(semitones)` and `expression` (the bow or breath). Let
+new attack) and `control(to, value)`, smoothed: the player's `input` to a
+bow or breath, added `vibrato`, a `bend`. `LIVE_CONTROLS` maps MIDI to
+these, as data: breath (CC2), expression (CC11) and aftertouch move the
+input, the mod wheel (CC1) adds up to 40 cents of vibrato, and the pitch
+bend is ±2 semitones; `liveControl(event)` applies it. Let
 go where a rendered note's gate is, a live note plays that note to the bit.
 `playsLive(recipe)` says which sounds can (pitched, all model layers), and
 `legato(recipe)` which slur (by default, lips, jets and reeds).

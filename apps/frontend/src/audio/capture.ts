@@ -58,6 +58,7 @@ function toNotes(events: Buffered[], now: number) {
   events.forEach((e) => {
     const key = `${e.source}:${e.pitch}`;
     if (e.type === 'on') { open.set(key, e); return; }
+    if (e.type !== 'off') return;
     const on = open.get(key);
     if (on) { notes.push({ on, off: e.time }); open.delete(key); }
   });
