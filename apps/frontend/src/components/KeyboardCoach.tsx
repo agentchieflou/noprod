@@ -1,10 +1,11 @@
 import { useSyncExternalStore } from 'react';
-import { X, ChevronLeft, ChevronRight, RotateCcw, GraduationCap, Check } from 'lucide-react';
-import { ALL_KEYS, findLesson, keyName, sameKey, type CoachMode } from '@noprod/theory';
+import { X, ChevronLeft, ChevronRight, RotateCcw, GraduationCap, Check, Music } from 'lucide-react';
+import { ACCOMPANY_STYLES, ALL_KEYS, findLesson, findStyle, keyName, sameKey, type CoachMode } from '@noprod/theory';
 import {
   subscribeCoach, getCoachState, setCoachOpen, setCoachMode, setCoachKey, setCoachLesson, restartLesson, setCoachFocus, pretty, LESSON_GROUPS
 } from '../audio/coach';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled, setKeyboardMode, setOctave } from '../audio/computerKeyboard';
+import { subscribeAccompany, getAccompanyState, setAccompany, setAccompanyStyle } from '../audio/accompany';
 
 const MODES: [CoachMode, string, string][] = [
   ['off', 'Off', 'No suggestions'],
@@ -26,6 +27,7 @@ function Message({ text }: { text: string }) {
 export default function KeyboardCoach({ onPiano }: { onPiano: boolean }) {
   const coach = useSyncExternalStore(subscribeCoach, getCoachState);
   const kb = useSyncExternalStore(subscribeKeyboard, getKeyboardState);
+  const band = useSyncExternalStore(subscribeAccompany, getAccompanyState);
   const { readout, mode, key } = coach;
   const lesson = readout.lesson;
   const about = coach.lesson ? findLesson(coach.lesson)?.description : undefined;
@@ -83,6 +85,19 @@ export default function KeyboardCoach({ onPiano }: { onPiano: boolean }) {
                 {ALL_KEYS.map((k, i) => k.mode === m && <option key={i} value={i}>{pretty(keyName(k))}</option>)}
               </optgroup>
             ))}
+          </select>
+        </div>
+      )}
+
+      {mode === 'chords' && (
+        <div className="kb-row">
+          <button className={`btn-metronome coach-accompany ${band.on ? 'active' : ''}`} onClick={() => setAccompany(!band.on)}
+            title={band.on ? 'Stop the band' : 'A bass and keys part that follow the chords you play (starts the transport)'}>
+            <Music size={11} /> Accompany
+          </button>
+          <select className="rack-map-select coach-select" value={band.style} title={findStyle(band.style)?.description}
+            aria-label="Accompaniment style" onChange={(e) => setAccompanyStyle(e.target.value)}>
+            {ACCOMPANY_STYLES.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
       )}
