@@ -3062,3 +3062,13 @@ body {
   color: var(--text-primary);
   font-weight: 600;
 }
+
+.app-version {
+  margin-left: auto;
+  align-self: center;
+  padding-right: 12px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  user-select: text;
+}
