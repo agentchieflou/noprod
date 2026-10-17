@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useDAWStore } from '../store/useDAWStore';
 import { libraryOf, renderSound, toAudioBuffer, playRendered, exportWav, resynthesizeBuffer } from '../audio/library';
 import { saveUserSound, findAnySound } from '../audio/userSounds';
+import { describeStorageError } from '../project/storage';
 import { audioContext, getStripInput } from '../audio/engine';
 import { getFile } from '../browser/library';
 import { midiNoteName } from '../audio/synth';
@@ -288,9 +289,13 @@ export default function SoundDesigner({ track }: { track: any }) {
   const saveMine = async () => {
     // A built-in sound is saved as a new one of mine, sounding exactly the same
     const mine = recipe.id.startsWith('my-') ? recipe : withId(recipe, `my-${uuidv4().slice(0, 8)}`);
-    await saveUserSound(mine);
     if (mine !== recipe) update(mine);
-    flash(`Saved “${mine.name}” to My Sounds`);
+    try {
+      await saveUserSound(mine);
+      flash(`Saved “${mine.name}” to My Sounds`);
+    } catch (err) {
+      flash(`“${mine.name}” is in My Sounds until you close the page: ${describeStorageError(err)}`);
+    }
   };
 
   return (

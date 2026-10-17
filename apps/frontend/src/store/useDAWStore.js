@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { createDevice } from '../audio/devices';
 import { clipTimelineLength } from '../audio/clipPlayback';
 import { sliceClip, cutRange, overlapping } from '../project/comping';
+import { reportStorageError } from '../project/storage';
 
 // Undo/redo: which slice of the store is history-tracked. Transport/selection/UI
 // state stays out so undoing never yanks the playhead or flips the view.
@@ -291,8 +292,11 @@ export const useDAWStore = create((set, get) => ({
   // Plugins found by scanning real folders (persisted in localStorage, not per project).
   // [{ name, format, path }]
   scannedPlugins: (() => {
+    let saved = null;
+    try { saved = localStorage.getItem('noprod-scanned-plugins'); } catch (err) { reportStorageError('Plug-in list', err); }
     try {
-      return JSON.parse(localStorage.getItem('noprod-scanned-plugins') || '[]');
+      const list = JSON.parse(saved || '[]');
+      return Array.isArray(list) ? list : [];
     } catch {
       return [];
     }
@@ -460,7 +464,7 @@ export const useDAWStore = create((set, get) => ({
   setScannedPlugins: (scannedPlugins) => {
     try {
       localStorage.setItem('noprod-scanned-plugins', JSON.stringify(scannedPlugins));
-    } catch { /* storage full/unavailable: list still lives in memory */ }
+    } catch (err) { reportStorageError('Plug-in list', err); /* still lives in memory */ }
     set({ scannedPlugins });
   },
 
