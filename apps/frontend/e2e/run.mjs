@@ -27,7 +27,7 @@ const frontend = resolve(here, '..');
 const root = resolve(here, '../../..');
 const require = createRequire(import.meta.url);
 
-const ORDER = ['library', 'designer', 'resynth', 'modeled', 'dspmap', 'live-models', 'coach', 'accompany', 'keyboard', 'session', 'dictation'];
+const ORDER = ['library', 'designer', 'resynth', 'modeled', 'dspmap', 'live-models', 'coach', 'accompany', 'keyboard', 'session', 'automation', 'dictation'];
 const asked = process.argv.slice(2);
 const skip = (process.env.E2E_SKIP ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const suites = (asked.length ? asked : ORDER).filter((s) => !skip.includes(s));
