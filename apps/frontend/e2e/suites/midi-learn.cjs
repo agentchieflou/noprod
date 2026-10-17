@@ -3,7 +3,12 @@ module.exports = async (page, ctx) => {
   const results = [];
   const check = (name, ok, detail = '') => { const line = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`; results.push(line); console.log(line); };
   await page.mouse.click(5, 5);
-  await page.evaluate(async () => { window.__inputs = await import('/src/audio/inputs.ts'); });
+  // Everything the checks import, up front: a late first import can make Vite reload the page
+  await page.evaluate(async () => {
+    window.__inputs = await import('/src/audio/inputs.ts');
+    window.__devices = await import('/src/audio/devices.ts');
+    window.__projectFile = await import('/src/project/projectFile.ts');
+  });
 
   const track = await page.evaluate(() => {
     const st = window.__dawStore.getState();
@@ -92,7 +97,7 @@ module.exports = async (page, ctx) => {
 
   // 5. A device parameter, mapped through the UI, survives save and load
   const dev = await page.evaluate(async () => {
-    const { createDevice } = await import('/src/audio/devices.ts');
+    const { createDevice } = window.__devices;
     const st = window.__dawStore.getState();
     st.addDeviceToTrack(st.selectedTrackId, createDevice('reverb'));
     const t = window.__dawStore.getState().tracks.find((x) => x.id === st.selectedTrackId);
@@ -110,7 +115,7 @@ module.exports = async (page, ctx) => {
   await cc(21, 127);
   check('The controller moves the device parameter', (await devValue()) === 100, `${await devValue()}`);
   const reloaded = await page.evaluate(async () => {
-    const { serializeProject, deserializeProject } = await import('/src/project/projectFile.ts');
+    const { serializeProject, deserializeProject } = window.__projectFile;
     const st = window.__dawStore.getState();
     const blob = await serializeProject(st);
     const project = await deserializeProject(blob, window.__transport.audioContext);
