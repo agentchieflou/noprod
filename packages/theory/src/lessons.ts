@@ -103,12 +103,20 @@ export const LESSONS: Lesson[] = [
     'The eight chords under the Canon in D, each voiced close to the last.'),
   chordLesson('minor-am', 'i–VI–III–VII in A minor', { tonic: 9, mode: 'minor' }, ['i', 'VI', 'III', 'VII'],
     'A minor-key loop heard all over rock and pop: Am, F, C, G.'),
+  chordLesson('country-g', 'I–IV–V–I in G', { tonic: 7, mode: 'major' }, ['I', 'IV', 'V', 'I'],
+    'The three chords of country and folk: the IV and V each a step from home.'),
+  chordLesson('fifties-f', 'I–vi–IV–V in F', { tonic: 5, mode: 'major' }, ['I', 'vi', 'IV', 'V'],
+    'The turnaround of 1950s doo-wop songs, in F: F, Dm, Bb, C.'),
+  chordLesson('minor-cadence-d', 'i–iv–V–i in D minor', { tonic: 2, mode: 'minor' }, ['i', 'iv', 'V', 'i'],
+    'A minor cadence: iv, then a major V whose C# leads home to Dm.'),
   melodyLesson('twinkle', 'A nursery tune in C: a leap up to G, then repeated notes stepping back down.'),
   melodyLesson('ode-to-joy', "Beethoven's theme in C: almost all steps, with a drop to low G before the last line."),
   melodyLesson('frere-jacques', 'The round in C: short phrases, each played twice.'),
   melodyLesson('mary', 'Four notes in C: E, D, C and back, with a jump up to G.'),
   melodyLesson('amazing-grace', 'The hymn tune in G, in waltz time: wider leaps up to the high D.'),
-  melodyLesson('greensleeves', 'The 16th-century tune in A minor, with the raised G# leading home to A.')
+  melodyLesson('greensleeves', 'The 16th-century tune in A minor, with the raised G# leading home to A.'),
+  melodyLesson('jingle-bells', "The chorus in C: a run of E's, a climb to G, and a fall home to C."),
+  melodyLesson('saints', 'The chorus in C: a rising C, E, F, G figure, repeated, then a run back down to C.')
 ];
 
 export const findLesson = (id: string) => LESSONS.find(lesson => lesson.id === id) ?? null;
