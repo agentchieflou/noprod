@@ -217,13 +217,25 @@ async function workletStats(g: Graph) {
 // Offline: `seconds` of the song rendered as fast as the machine can.
 // speed = song seconds per wall second; load = 1 / speed is the share of
 // a render thread the same work takes in real time.
-export async function offline(variant: Variant, seconds: number, tracks: number, sampleRate = 44100) {
+export async function offline(variant: Variant, seconds: number, tracks: number, sampleRate = 44100, sync = false) {
   const ctx = new OfflineAudioContext(2, Math.ceil(seconds * sampleRate), sampleRate);
   const g = await build(ctx, variant, tracks);
   g.start = 0;
   const t0 = performance.now();
   schedule(g, 0, seconds);
   const scheduled = performance.now() - t0;
+  // The handshake the design's render uses: nothing renders until every
+  // event posted has reached the worklet (a message posted just before
+  // startRendering can otherwise arrive after the render has passed it)
+  if (sync) {
+    const nodes = g.engine ? [g.engine] : g.players;
+    await Promise.all(nodes.map((n) => new Promise<void>((resolve) => {
+      const listen = (e: MessageEvent) => { if (e.data?.type === 'synced') { n.port.removeEventListener('message', listen); resolve(); } };
+      n.port.addEventListener('message', listen);
+      n.port.start();
+      n.port.postMessage({ type: 'sync' });
+    })));
+  }
   const t1 = performance.now();
   const out = await ctx.startRendering();
   const wall = (performance.now() - t1) / 1000;

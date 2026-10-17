@@ -13,7 +13,8 @@ type Message =
   | { type: 'buffer'; id: number; l: Float32Array; r: Float32Array }
   | { type: 'notes'; notes: NoteEvent[] }
   | { type: 'retract'; from: number }
-  | { type: 'stats' };
+  | { type: 'stats' }
+  | { type: 'sync' };
 
 class PlayerProcessor extends AudioWorkletProcessor {
   private queue = new VoiceQueue(sampleRate);
@@ -24,6 +25,7 @@ class PlayerProcessor extends AudioWorkletProcessor {
       if (m.type === 'buffer') this.queue.addBuffer(m.id, { l: m.l, r: m.r } as Buf);
       else if (m.type === 'notes') for (const n of m.notes) this.queue.add(n, currentFrame);
       else if (m.type === 'retract') this.queue.retractFrom(Math.round(m.from * sampleRate));
+      else if (m.type === 'sync') this.port.postMessage({ type: 'synced' });
       else if (m.type === 'stats') this.port.postMessage({ type: 'stats', late: this.queue.late, worstLateMs: 1000 * this.queue.worstLate / sampleRate, played: this.queue.played });
     };
   }

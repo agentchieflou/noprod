@@ -12,7 +12,8 @@ declare class AudioWorkletProcessor { readonly port: MessagePort; constructor(op
 type Message =
   | { type: 'buffer'; id: number; l: Float32Array; r: Float32Array }
   | { type: 'notes'; track: number; notes: NoteEvent[] }
-  | { type: 'stats' };
+  | { type: 'stats' }
+  | { type: 'sync' };
 
 interface Track { queue: VoiceQueue; eq: EqEight; comp: Compressor; reverb: FdnReverb; l: Float32Array; r: Float32Array }
 
@@ -36,6 +37,7 @@ class EngineProcessor extends AudioWorkletProcessor {
       const m = e.data;
       if (m.type === 'buffer') { const buf = { l: m.l, r: m.r }; this.buffers.set(m.id, buf); for (const t of this.tracks) t.queue.addBuffer(m.id, buf); }
       else if (m.type === 'notes') { this.messages++; for (const n of m.notes) this.tracks[m.track].queue.add(n, currentFrame); }
+      else if (m.type === 'sync') this.port.postMessage({ type: 'synced' });
       else if (m.type === 'stats') this.port.postMessage({
         type: 'stats',
         late: this.tracks.reduce((s, t) => s + t.queue.late, 0),
