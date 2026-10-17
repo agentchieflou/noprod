@@ -62,6 +62,13 @@ module.exports = async (page, ctx) => {
   const range = groups.every((g) => g.slice(1).every((p) => p >= 48 && p <= 72));
   check('Voiced within C3–C5, held for the bar at velocity 0.8', range && clip.notes.every((n) => Math.abs(n.duration - barLen) < 1e-6 && n.velocity === 0.8), '');
 
+  // Note ids are unique across clips
+  await click();
+  all = await regions();
+  const ids = all.flatMap((r) => r.notes.map((n) => n.id));
+  check('Two written clips share no note id', all.length === 2 && ids.length === 32 && new Set(ids).size === 32, `${all.length} clips, ${new Set(ids).size}/${ids.length} ids`);
+  await page.evaluate(() => { window.__dawStore.getState().undo(); return 1; });
+
   // 3. One undo removes the clip
   await page.evaluate(() => { window.__dawStore.getState().undo(); return 1; });
   check('One undo removes the region', (await regions()).length === 0);

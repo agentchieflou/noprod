@@ -7,6 +7,7 @@ import {
   Coach, LESSONS, PROGRESSIONS, findLesson, parseNumeral, spellInKey, voiceLead,
   type ChordQuality, type CoachMode, type CoachReadout, type Highlight, type Key
 } from '@noprod/theory';
+import { v4 as uuidv4 } from 'uuid';
 import { onMidiEvent } from './inputs';
 import { getPosition } from './transport';
 import { barAt, barsUntil, type TimeSig } from './timeline';
@@ -160,8 +161,8 @@ export function buildClipNotes(chords: ClipChord[], start: number, bpm: number, 
     // The root nearest an octave below the lowest note, never above that
     const ceiling = voicing[0] - 12;
     const pitches = bass ? [ceiling - (((ceiling - chord.root) % 12) + 12) % 12, ...voicing] : voicing;
-    pitches.forEach((pitch, j) => notes.push({
-      id: `chord-${i}-${j}`, pitch, start: bar.time - start, duration: bar.length, velocity: CLIP_VELOCITY
+    pitches.forEach((pitch) => notes.push({
+      id: uuidv4(), pitch, start: bar.time - start, duration: bar.length, velocity: CLIP_VELOCITY
     }));
     duration = bar.time - start + bar.length;
   });
