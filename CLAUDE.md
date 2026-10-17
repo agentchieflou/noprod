@@ -82,13 +82,30 @@ envelopes, determinism (`packages/sound/src/analysis.ts`).
 
 - Write code that reads like the code around it. Comments are short and say
   why; names and idioms match the file you're in. Don't add dependencies
-  without a reason.
+  without a reason (and see "Dependencies" below).
 - A user's edits go through store actions (`updateInstrumentParameter`,
   `setTrackInstrument`, …) so they can be undone and are saved with the
   project.
 - One topic per commit, with a descriptive subject. The body says why.
 - Pull requests are squash-merged. The body lists what changed and the
   evidence: test counts, suites run.
+
+## Dependencies: we own what we ship
+
+- Nothing restricted by its license goes into what we ship or run for users:
+  the apps, the packages, GhostDAW and the plugins. That means copyleft
+  (GPL, AGPL, LGPL, MPL, EPL, SSPL and the like), source-available (BUSL,
+  Commons Clause, non-commercial) and paid licenses (JUCE's, for one). What
+  such a dependency does is rebuilt natively in this repo, so we own it.
+- Permissive licenses are fine: MIT, BSD, Apache-2.0, ISC, Zlib, MIT-0,
+  CC0 and public domain. That includes the VST3 SDK, which is MIT.
+- A rebuild is clean-room. Work from documentation, specifications and
+  observed behavior; never read or copy the restricted project's source.
+- Before adding a dependency, check its license and those of everything it
+  pulls in, and name them in the PR. Dev tooling that never ships (the e2e
+  runner, linters) may use any license that allows our use of it.
+- Still to rebuild: Strudel (AGPL; the sequencer and AI dictation) and
+  JUCE (GhostDAW).
 
 ## Work tiers
 
