@@ -260,6 +260,26 @@ module.exports = async (page, ctx) => {
   check('Stop turns it back to Play all within 2 s, and no other column starts',
     firstPlaying !== null && stopped.back !== null && stopped.back < 2000 && stopped.seen.every((c) => c === firstPlaying), JSON.stringify({ firstPlaying, ...stopped }));
 
+  // 13b. Leaving the tab (#165): Play all ends with the map. Count the sounds that start
+  // (each column is one source) while the map is off the panel: only the first column plays
+  await page.evaluate(() => {
+    window.__starts = 0;
+    window.__startOrig = AudioBufferSourceNode.prototype.start;
+    AudioBufferSourceNode.prototype.start = function (...a) { window.__starts++; return window.__startOrig.apply(this, a); };
+  });
+  await clickToolbar('Play all');
+  await page.waitForFunction(() => window.__starts >= 1, { timeout: 5000 });
+  await page.evaluate(() => [...document.querySelectorAll('.detail-tab')].find((b) => b.textContent === 'Device Chain').click());
+  await ctx.sleep(6000); // longer than the remaining columns take at 1.5 s each
+  const leftTab = await page.evaluate(() => window.__starts);
+  await page.evaluate(() => {
+    AudioBufferSourceNode.prototype.start = window.__startOrig;
+    [...document.querySelectorAll('.detail-tab')].find((b) => b.textContent === 'DSP Map').click();
+  });
+  await ctx.sleep(300);
+  const idle = await page.evaluate(() => [...document.querySelectorAll('.dsp-map-toolbar button')].map((b) => b.textContent.trim()).find((t) => /^(Play all|Stop)$/.test(t)));
+  check('Leaving the tab ends Play all: no column after the first starts', leftTab === 1 && idle === 'Play all', `${leftTab} sound(s) started; button ${idle}`);
+
   // 14. Reset map (#97): the four classic instruments again, no track touched.
   // The selected track still leads the map, as it always does.
   const trumpet = (await heads()).find((h) => h.name.startsWith('Trumpet')).col;
