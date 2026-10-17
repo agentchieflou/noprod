@@ -5,7 +5,8 @@
 // instruments of the tracks each event targets. Every MIDI event is also
 // published on a bus for recording / capture.
 
-import { audioContext, getStripInput } from './engine';
+import { audioContext, getStripInput, audioNeedsStart, resumeAudio } from './engine';
+import { notify } from '../notify';
 import { startVoice } from './synth';
 import { controlLiveVoices } from './liveModels';
 import { liveControl } from '@noprod/sound';
@@ -48,12 +49,12 @@ export function openAudioInput(deviceId: string): Promise<OpenInput | null> {
   if (ready) return Promise.resolve(ready);
   let p = opening.get(deviceId);
   if (p) return p;
-  p = navigator.mediaDevices.getUserMedia({
+  p = Promise.resolve().then(() => navigator.mediaDevices.getUserMedia({
     audio: {
       deviceId: deviceId === 'default' ? undefined : { exact: deviceId },
       echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2
     }
-  }).then((stream) => {
+  })).then((stream) => {
     const source = audioContext.createMediaStreamSource(stream);
     const stereo = audioContext.createGain();
     source.connect(stereo);
@@ -70,6 +71,10 @@ export function openAudioInput(deviceId: string): Promise<OpenInput | null> {
     return open;
   }).catch((err) => {
     console.warn('Audio input unavailable', err);
+    const denied = err?.name === 'NotAllowedError' || err?.name === 'SecurityError';
+    notify(denied
+      ? 'Microphone access was denied, so armed audio tracks will record nothing. Allow the microphone for this site in your browser’s site settings, then arm the track again.'
+      : `The audio input could not be opened (${err?.message || err}). Check that it is connected, then arm the track again.`, 'error');
     return null;
   }).finally(() => { opening.delete(deviceId); });
   opening.set(deviceId, p);
@@ -102,7 +107,11 @@ export interface MidiEvent {
 
 const midiListeners = new Set<(e: MidiEvent) => void>();
 export const onMidiEvent = (fn: (e: MidiEvent) => void) => { midiListeners.add(fn); return () => { midiListeners.delete(fn); }; };
-const publish = (e: MidiEvent) => midiListeners.forEach((fn) => fn(e));
+const publish = (e: MidiEvent) => {
+  // a key struck before any click: start audio if the browser lets us (else the start prompt stays up)
+  if (e.type === 'on' && audioNeedsStart()) void resumeAudio();
+  midiListeners.forEach((fn) => fn(e));
+};
 export const publishMidi = publish;
 
 export interface MidiDevice { id: string; name: string }
@@ -139,7 +148,12 @@ export async function initMidi() {
     };
     attach();
     midiAccess.onstatechange = attach;
-  } catch { /* MIDI permission denied or unsupported */ }
+  } catch (err: any) {
+    const denied = err?.name === 'SecurityError' || err?.name === 'NotAllowedError';
+    notify(denied
+      ? 'MIDI access was denied, so hardware MIDI keyboards won’t work. Allow MIDI for this site in your browser’s site settings and reload.'
+      : `MIDI could not be started (${err?.message || err}). Hardware MIDI keyboards won’t work.`, 'error');
+  }
 }
 
 // ------------------------------------------------------ live MIDI playing

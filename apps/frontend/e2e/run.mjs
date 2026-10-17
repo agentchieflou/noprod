@@ -53,6 +53,9 @@ await server.listen();
 const url = server.resolvedUrls.local[0];
 console.log(`frontend at ${url}`);
 
+// Suites that need the browser's real autoplay policy (audio starts suspended)
+const NO_AUTOPLAY = new Set(['resilience']);
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // The dictation suite's services: the Sequencer, then the stand-in orchestrator
@@ -75,7 +78,7 @@ for (const name of suites) {
   const browser = await puppeteer.launch({
     executablePath,
     headless: true,
-    args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream']
+    args: ['--no-sandbox', ...(NO_AUTOPLAY.has(name) ? [] : ['--autoplay-policy=no-user-gesture-required']), '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream']
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 1000 });
@@ -96,7 +99,7 @@ for (const name of suites) {
     if (services && !services.ready) throw new Error('the Sequencer did not start (it loads Strudel from unpkg)');
     await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
     const suite = require(join(here, 'suites', `${name}.cjs`));
-    const ctx = { sleep, logs, fixtures, shotDir, shot: (n) => page.screenshot({ path: join(shotDir, `${n}.png`) }) };
+    const ctx = { sleep, browser, url, logs, fixtures, shotDir, shot: (n) => page.screenshot({ path: join(shotDir, `${n}.png`) }) };
     await Promise.race([suite(page, ctx), sleep(10 * 60000).then(() => { throw new Error('timed out after 10 minutes'); })]);
   } catch (e) {
     lines.push(`FAIL ${name} stopped: ${e.message}`);

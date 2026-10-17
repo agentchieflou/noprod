@@ -31,7 +31,11 @@ import { useMidiLearn } from './components/useMidiLearn';
 import FileMenu from './components/FileMenu';
 import { automationParams } from './audio/automation';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
-import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
+import { audioContext, masterAnalyser, masterLimiter, getStripInput, resumeAudio } from './audio/engine';
+import { notify, guarded } from './notify';
+import { Panel } from './components/ErrorBoundary';
+import AudioStatus from './components/AudioStatus';
+import Notices from './components/Notices';
 import { liveModelStats } from './audio/liveModels';
 import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
 import './App.css';
@@ -313,15 +317,13 @@ function App() {
       !fileNameLower.endsWith('.ogg') && 
       !fileNameLower.endsWith('.m4a')
     ) {
-      alert("Unsupported file format. Please drop a WAV, MP3, OGG, or M4A file.");
+      notify("Unsupported file format. Please drop a WAV, MP3, OGG, or M4A file.", 'error');
       return;
     }
 
     try {
       // Ensure audio context is running to decode
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-      }
+      await resumeAudio();
 
       const arrayBuffer = await file.arrayBuffer();
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
@@ -347,7 +349,7 @@ function App() {
       }
     } catch (err: any) {
       console.error("Audio Decoding Error:", err);
-      alert(`Audio decoding failed: ${err.message || err}. Ensure the file is not corrupted.`);
+      notify(`Audio decoding failed: ${err.message || err}. Ensure the file is not corrupted.`, 'error');
     }
   };
 
@@ -441,7 +443,7 @@ function App() {
   // Run grouping
   const handleGroupSelectedTracks = () => {
     if (selectedTrackIds.length < 2) {
-      alert("Please select at least 2 tracks using the checkboxes to group them.");
+      notify("Please select at least 2 tracks using the checkboxes to group them.");
       return;
     }
     groupTracks(selectedTrackIds);
@@ -476,7 +478,7 @@ function App() {
   // Audition a note immediately through the track's channel (instrument panel keyboard)
   const auditionNote = (track: any, pitch: number) => {
     if (!track?.instrument) return;
-    if (audioContext.state === 'suspended') audioContext.resume();
+    void resumeAudio();
     // played as a key is, so a note that isn't rendered yet still sounds
     const now = audioContext.currentTime;
     startVoice(audioContext, getStripInput(track.id), track.instrument.parameters, pitch, now, 1).release(now + 0.35);
@@ -484,7 +486,7 @@ function App() {
 
   // Freeze: render the track's clips offline (instrument included for MIDI),
   // store the buffer on the track and lock its devices. Unfreeze reverses it.
-  const handleFreezeTrack = async (track: any) => {
+  const handleFreezeTrack = guarded('Freezing the track', async (track: any) => {
     if (track.isFrozen) {
       unfreezeTrack(track.id);
       return;
@@ -492,7 +494,7 @@ function App() {
     if (isPlaying) togglePlayback();
     const trackRegions = regions.filter((r: any) => r.trackId === track.id);
     if (trackRegions.length === 0) {
-      alert('Nothing to freeze: this track has no clips.');
+      notify('Nothing to freeze: this track has no clips.');
       return;
     }
     const end = Math.max(...trackRegions.map((r: any) => r.startTime + clipTimelineLength(r, bpm))) + 0.5; // headroom for release tails
@@ -508,7 +510,7 @@ function App() {
     await whenRendered(offline); // library notes render in workers first
     const rendered = await offline.startRendering();
     setTrackFrozen(track.id, rendered, end);
-  };
+  });
 
   // Ableton Live Set (.als) Import Handler
   const handleAlsImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -519,23 +521,25 @@ function App() {
       const { parseAbletonSet } = await import('./alsImport');
       const set = await parseAbletonSet(file, returns, PRESET_COLORS);
       if (!set) {
-        alert("Invalid file format. Ensure this is a valid Ableton Live Set (.als) file.");
+        notify("Invalid file format. Ensure this is a valid Ableton Live Set (.als) file.", 'error');
         return;
       }
       const { tempo, tracksList, regionsList } = set;
 
       // Update store state
       loadAbletonSet(tempo, tracksList, regionsList);
-      alert(`Loaded Ableton Live Set: "${file.name}"!\nBPM: ${tempo}\nTracks: ${tracksList.length}\nRegions: ${regionsList.length}`);
+      notify(`Loaded Ableton Live Set “${file.name}”: ${tempo} BPM, ${tracksList.length} tracks, ${regionsList.length} regions`);
 
     } catch (err: any) {
       console.error("ALS Import Error:", err);
-      alert(`Failed to load Ableton Live Set: ${err.message || err}`);
+      notify(`Failed to load Ableton Live Set: ${err.message || err}`, 'error');
     }
   };
 
   return (
     <div className="daw-container">
+      <AudioStatus />
+      <Notices />
       {/* Ableton-style Control Bar */}
       <div className="control-bar">
         <div className="logo-section">NoProd</div>
@@ -550,7 +554,7 @@ function App() {
           className={`btn-transport capture-btn ${capturable ? 'capturable' : ''}`}
           onClick={() => {
             const n = captureMidi(useDAWStore.getState());
-            if (!n) alert('Nothing to capture: play something on an armed MIDI track (or one with monitoring In) first.');
+            if (!n) notify('Nothing to capture: play something on an armed MIDI track (or one with monitoring In) first.');
           }}
           title="Capture MIDI: turn what you just played on armed MIDI tracks into a clip"
         >
@@ -1077,13 +1081,13 @@ function App() {
 
             </div>
           ) : (
-            <Suspense fallback={null}><SessionView tracks={visibleTracks} onDropFile={handleDrop} onOpenClip={() => setActiveTab('clip')} /></Suspense>
+            <Panel name="session"><Suspense fallback={null}><SessionView tracks={visibleTracks} onDropFile={handleDrop} onOpenClip={() => setActiveTab('clip')} /></Suspense></Panel>
           )}
         </div>
       </div>
 
-      {(keyboardMidi || coachOpen) && <Suspense fallback={null}><KeyboardPanel /></Suspense>}
-      {pluginEditor && <Suspense fallback={null}><PluginEditorWindow /></Suspense>}
+      {(keyboardMidi || coachOpen) && <Panel name="keyboard"><Suspense fallback={null}><KeyboardPanel /></Suspense></Panel>}
+      {pluginEditor && <Panel name="plugin-editor"><Suspense fallback={null}><PluginEditorWindow /></Suspense></Panel>}
 
       {/* Bottom Detail panel */}
       <div className={`bottom-detail-panel ${(activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi') || activeTab === 'sound' || activeTab === 'dspmap' ? 'tall' : ''}`}>
@@ -1098,6 +1102,7 @@ function App() {
         </div>
         
         <div className="detail-content">
+          <Panel key={activeTab} name={activeTab}>
           {activeTab === 'devices' && (
             <div className={`device-chain-view ${selectedTrack?.isFrozen ? 'frozen-locked' : ''}`}>
               {selectedTrack ? (
@@ -1152,6 +1157,7 @@ function App() {
               <DictationPanel status={dictationStatus} code={dictationCode} result={dictationResult} error={dictationError} />
             </Suspense>
           )}
+          </Panel>
         </div>
       </div>
     </div>
