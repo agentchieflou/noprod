@@ -56,6 +56,11 @@ test('every General MIDI name plays a library sound, not the default synth', () 
     assert.ok(sound && findSound(sound), `${name} → ${sound}`);
     assert.notEqual(sound, 'lead-triangle', name);
   }
+  assert.equal(strudelSound('gm_whistle', true).sound, 'flute-modeled', 'a held tone, not the samba trill');
+  assert.equal(strudelSound('gm_bird_tweet', true).sound, 'whistle');
+  // unpitched, they are still the drums they were
+  assert.equal(strudelSound('gm_melodic_tom', false).drum, 47);
+  assert.equal(strudelSound('gm_reverse_cymbal', false).drum, 49);
 });
 
 test('every drum name dictation knows is a pad on every kit', () => {

@@ -8,7 +8,9 @@ export const STRUDEL_DRUMS: Record<string, number> = {
   bd: 36, kick: 36, sd: 38, snare: 38, rim: 37, rs: 37, cp: 39, clap: 39,
   hh: 42, ch: 42, hihat: 42, oh: 46, lt: 45, mt: 47, ht: 50, tom: 47,
   cr: 49, crash: 49, rd: 51, ride: 51, cb: 56, cowbell: 56, sh: 70, shaker: 70,
-  tb: 54, tambourine: 54, perc: 75, misc: 76
+  tb: 54, tambourine: 54, perc: 75, misc: 76,
+  // General MIDI names that are drums unpitched (their pitched sound is a library sound)
+  gm_melodic_tom: 47, gm_reverse_cymbal: 49
 };
 
 // Melodic names: the first pattern found in a name picks its sound (so
@@ -49,7 +51,8 @@ const SOUNDS: [RegExp, string][] = [
   [/flute|piccolo/, 'flute'],
   [/clarinet|oboe|bassoon|sax/, 'clarinet'],
   [/harmonica|bagpipe|shanai/, 'clarinet'],
-  [/whistle|bird_tweet/, 'whistle'],
+  [/bird_tweet/, 'whistle'],
+  [/whistle/, 'flute-modeled'],
   [/choir|voice|aah|ooh/, 'pad-choir'],
   [/pad/, 'pad-warm'],
   [/marimba|xylophone/, 'marimba'],
