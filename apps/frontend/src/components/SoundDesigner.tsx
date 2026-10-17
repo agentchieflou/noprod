@@ -213,7 +213,7 @@ function LayerCard({ layer, index, onChange, onRemove, onDuplicate }: {
 
 const NOTES = Array.from({ length: 85 }, (_, i) => 24 + i); // C1..C8
 
-export default function SoundDesigner({ track }: { track: any }) {
+export default function SoundDesigner({ track, onOpenDspMap }: { track: any; onOpenDspMap?: () => void }) {
   const { updateInstrumentParameter, setTrackInstrument } = useDAWStore();
   const params = track?.instrument?.parameters;
   const lib = libraryOf(params);
@@ -344,6 +344,7 @@ export default function SoundDesigner({ track }: { track: any }) {
             title={original ? `Back to the saved “${original.name}”` : 'Not a library sound'}><RotateCcw size={11} /> Revert</button>
           <button className="designer-button" onClick={() => fileInput.current?.click()}
             title="Replace this sound with a recording's resynthesis: its partials and noise (or drop a sample here)"><Wand2 size={11} /> From audio</button>
+          {onOpenDspMap && <button className="designer-button" onClick={onOpenDspMap} title="Show this sound's stages beside the other instruments'">DSP Map</button>}
           <input ref={fileInput} type="file" accept="audio/*" hidden onChange={(e) => { fromAudio(e.target.files?.[0] ?? null); e.target.value = ''; }} />
         </div>
         <div className="designer-hint">{message ?? 'Loudness is normalized; Gain trims it.'}</div>

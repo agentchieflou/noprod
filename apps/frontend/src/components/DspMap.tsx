@@ -1,18 +1,20 @@
-import { Fragment, useEffect, useState } from 'react';
-import { Play, Power, X } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { Pencil, Play, Power, Square, X } from 'lucide-react';
 import {
-  BLOCKS, CATEGORY_NAMES, LIBRARY, STAGES, addBlock, branchesFor, chainOf, removeBlock, setBlockOn, setKindOn, sharedBlocks,
+  BLOCKS, CATEGORY_NAMES, KITS, LIBRARY, STAGES, addBlock, branchesFor, chainOf, removeBlock, setBlockOn, setKindOn, sharedBlocks,
   type Block, type BlockKind, type Category, type Chain, type Layer, type SharedBlock, type SoundRecipe, type Stage
 } from '@noprod/sound';
 import { useDAWStore } from '../store/useDAWStore';
-import { libraryOf, createLibraryInstrument } from '../audio/library';
+import { libraryOf, createLibraryInstrument, createLibraryKit } from '../audio/library';
 import { renderSound, toAudioBuffer, playRendered } from '../audio/designing';
 import { getStripInput } from '../audio/engine';
 import { midiNoteName } from '../audio/synth';
 import { Param, Choice, EnvelopeParams, FilterParams } from './designerControls';
 import { filtersOf, asFilter } from './designerUtils';
 import { ExciterParams, ResonatorParams, RadiatorParams, StringSetParams } from './ModelParams';
-import { savedColumns, saveColumns, savedNote, saveNote, scratchColumn, type MapColumn } from './dspMapState';
+import {
+  defaultColumns, savedColumns, saveColumns, savedNote, saveNote, scratchColumn, kitColumn, padOf, padOptions, selectedPads, saveSelectedPads, type MapColumn
+} from './dspMapState';
 
 // The DSP Map (#80): instruments side by side, each drawn as the stages its
 // sound passes through (player input → excitation → resonator → radiator →
@@ -22,7 +24,7 @@ import { savedColumns, saveColumns, savedNote, saveNote, scratchColumn, type Map
 // (strings at a string's bridge, a radiator in parallel), drawn side by
 // side in its stage. A track's column edits the track's instrument
 // (undoable, saved with the project); a library sound's column edits a
-// scratch copy.
+// scratch copy. A kit's column shows one pad's sound at a time.
 
 interface Column {
   key: string;
@@ -32,12 +34,23 @@ interface Column {
   recipe: SoundRecipe;
   chain: Chain;
   track: any | null;
+  pad: string | null;  // a kit's pad (its sound id); null for a single sound
+  pads: { id: string; label: string }[];
 }
 
 interface Selection { col: string; layer: number; id: string }
 
 const NOTES = Array.from({ length: 61 }, (_, i) => 36 + i); // C2..C7
-const soundOf = (track: any): SoundRecipe | undefined => libraryOf(track?.instrument?.parameters)?.sound;
+// What a track plays on the map: its sound, or a kit's chosen pad (else the first)
+const soundOf = (track: any, pad?: string): { recipe: SoundRecipe; pad: string | null } | undefined => {
+  const lib = libraryOf(track?.instrument?.parameters);
+  if (!lib) return undefined;
+  if (lib.kit) {
+    const id = padOf(lib.kit, lib.sounds, pad);
+    return id ? { recipe: lib.sounds![id], pad: id } : undefined;
+  }
+  return lib.sound ? { recipe: lib.sound, pad: null } : undefined;
+};
 
 // ----------------------------------------------------------- block params
 
@@ -155,20 +168,46 @@ function BlockParams({ layer, id, onChange, onRemove }: { layer: Layer; id: stri
 
 // ------------------------------------------------------------------- map
 
-export default function DspMap() {
-  const { tracks, selectedTrackId, updateInstrumentParameter, addMidiTrackWithInstrument } = useDAWStore();
+export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void }) {
+  const { tracks, selectedTrackId, setSelectedTrackId, updateInstrumentParameter, addMidiTrackWithInstrument } = useDAWStore();
   const [columns, setColumns] = useState<MapColumn[]>(savedColumns);
   useEffect(() => saveColumns(columns), [columns]);
+  const [selPads, setSelPads] = useState(selectedPads);
+  useEffect(() => saveSelectedPads(selPads), [selPads]);
   const [note, setNote] = useState(savedNote);
   useEffect(() => saveNote(note), [note]);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [hover, setHover] = useState<BlockKind | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
+  const [playingAll, setPlayingAll] = useState(false);
+  // Each "Play all" takes a number, and Stop moves it on: a sequence waiting
+  // between columns sees its number is no longer the current one, and ends
+  const playRun = useRef(0);
+  const sounding = useRef<AudioBufferSourceNode | null>(null);
+  // Leaving the tab unmounts the map, and with it Stop: end the sequence and its sound here
+  useEffect(() => () => {
+    playRun.current++;
+    sounding.current?.stop();
+  }, []);
+
+  // Escape clears the inspector, unless someone is typing or choosing in a field
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (e.key === 'Escape' && tag !== 'INPUT' && tag !== 'SELECT') setSelection(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // The columns, resolved to what they play now
   const trackColumn = (track: any, column: MapColumn | null): Column => {
-    const recipe = soundOf(track)!;
-    return { key: `track:${track.id}`, column, name: recipe.name, source: `Track · ${track.name}${column ? '' : ' (selected)'}`, recipe, chain: chainOf(recipe), track };
+    const lib = libraryOf(track.instrument.parameters)!;
+    const { recipe, pad } = soundOf(track, column?.kind === 'track' ? column.pad : selPads[track.id])!;
+    return {
+      key: `track:${track.id}`, column, name: recipe.name, source: `Track · ${track.name}${column ? '' : ' (selected)'}`, recipe, chain: chainOf(recipe), track,
+      pad, pads: lib.kit ? padOptions(lib.kit, lib.sounds) : []
+    };
   };
   const shown: Column[] = [];
   const selectedTrack = tracks.find((t: any) => t.id === selectedTrackId && t.type === 'midi' && soundOf(t));
@@ -177,8 +216,13 @@ export default function DspMap() {
     if (c.kind === 'track') {
       const track = tracks.find((t: any) => t.id === c.trackId);
       if (track && soundOf(track)) shown.push(trackColumn(track, c));
+    } else if (c.kind === 'kit') {
+      const pad = padOf(c.kit, c.sounds, c.pad);
+      if (!pad) continue;
+      const recipe = c.sounds[pad];
+      shown.push({ key: c.key, column: c, name: recipe.name, source: 'Library · scratch copy', recipe, chain: chainOf(recipe), track: null, pad, pads: padOptions(c.kit, c.sounds) });
     } else {
-      shown.push({ key: c.key, column: c, name: c.recipe.name, source: 'Library · scratch copy', recipe: c.recipe, chain: chainOf(c.recipe), track: null });
+      shown.push({ key: c.key, column: c, name: c.recipe.name, source: 'Library · scratch copy', recipe: c.recipe, chain: chainOf(c.recipe), track: null, pad: null, pads: [] });
     }
   }
   const shared = sharedBlocks(shown.map((c) => c.chain));
@@ -187,7 +231,9 @@ export default function DspMap() {
   const edit = (c: Column, next: SoundRecipe) => {
     if (c.track) {
       const lib = libraryOf(c.track.instrument.parameters)!;
-      updateInstrumentParameter(c.track.id, 'Library', { ...lib, sound: next });
+      updateInstrumentParameter(c.track.id, 'Library', c.pad ? { ...lib, sounds: { ...lib.sounds, [c.pad]: next } } : { ...lib, sound: next });
+    } else if (c.column?.kind === 'kit') {
+      setColumns((cols) => cols.map((x) => (x === c.column && x.kind === 'kit' ? { ...x, sounds: { ...x.sounds, [c.pad!]: next } } : x)));
     } else {
       setColumns((cols) => cols.map((x) => (x.kind === 'scratch' && x.key === c.key ? { ...x, recipe: next } : x)));
     }
@@ -198,18 +244,32 @@ export default function DspMap() {
     s.chains.forEach((i) => edit(shown[i], setKindOn(shown[i].recipe, s.kind, on)));
   };
 
-  const play = async (c: Column) => {
+  // A sequence passes its run number: a column still rendering when Stop or the unmount comes stays silent
+  const play = async (c: Column, run?: number) => {
     setPlaying(c.key);
-    const pitched = c.recipe.pitched;
+    const pitched = c.recipe.pitched && !c.pad; // a kit's pad plays unpitched, as the Sound Designer does
     const sound = await renderSound(c.recipe, { note: pitched ? note : undefined, velocity: 0.9, gate: pitched ? 1.2 : undefined });
-    playRendered(toAudioBuffer(sound), c.track ? getStripInput(c.track.id) : undefined);
+    if (run !== undefined && playRun.current !== run) return;
+    sounding.current = playRendered(toAudioBuffer(sound), c.track ? getStripInput(c.track.id) : undefined);
     setTimeout(() => setPlaying((p) => (p === c.key ? null : p)), 1400);
   };
   const playAll = async () => {
+    const run = ++playRun.current;
+    setPlayingAll(true);
     for (const c of shown) {
-      await play(c);
+      if (playRun.current !== run) return;
+      await play(c, run);
       await new Promise((r) => setTimeout(r, 1500));
     }
+    if (playRun.current === run) setPlayingAll(false);
+  };
+  const stopAll = () => {
+    playRun.current++;
+    setPlayingAll(false);
+  };
+  const resetMap = () => {
+    setColumns(defaultColumns());
+    setSelection(null);
   };
 
   const add = (value: string) => {
@@ -217,13 +277,25 @@ export default function DspMap() {
     if (kind === 'track') setColumns((cols) => [...cols, { kind: 'track', trackId: id }]);
     const recipe = kind === 'sound' ? LIBRARY.find((r) => r.id === id) : undefined;
     if (recipe) setColumns((cols) => [...cols, scratchColumn(recipe)]);
+    const kit = kind === 'kit' ? KITS.find((k) => k.id === id) : undefined;
+    if (kit) setColumns((cols) => [...cols, kitColumn(kit)]);
+  };
+  const setPad = (c: Column, pad: string) => {
+    if (selection?.col === c.key) setSelection(null);
+    if (c.column) setColumns((cols) => cols.map((x) => (x === c.column && x.kind !== 'scratch' ? { ...x, pad } : x)));
+    else setSelPads((p) => ({ ...p, [c.track.id]: pad }));
   };
   const remove = (c: Column) => setColumns((cols) => cols.filter((x) => x !== c.column));
   // A scratch copy onto a new track: the column then edits the track
   const moveToTrack = (c: Column) => {
-    addMidiTrackWithInstrument(createLibraryInstrument(c.recipe), c.recipe.name);
+    const kit = c.column?.kind === 'kit' ? c.column : null;
+    if (kit) {
+      const instrument = createLibraryKit(kit.kit);
+      instrument.parameters.Library.sounds = kit.sounds;
+      addMidiTrackWithInstrument(instrument, kit.kit.name);
+    } else addMidiTrackWithInstrument(createLibraryInstrument(c.recipe), c.recipe.name);
     const trackId = useDAWStore.getState().selectedTrackId;
-    setColumns((cols) => cols.map((x) => (x === c.column ? { kind: 'track', trackId } : x)));
+    setColumns((cols) => cols.map((x) => (x === c.column ? { kind: 'track', trackId, pad: kit?.pad } : x)));
   };
 
   const present = new Set(shown.filter((c) => c.track).map((c) => c.track.id));
@@ -345,13 +417,19 @@ export default function DspMap() {
           <select className="rack-map-select designer-select" value={note} onChange={(e) => setNote(Number(e.target.value))} title="The note every column plays">
             {NOTES.map((n) => <option key={n} value={n}>{midiNoteName(n)}</option>)}
           </select>
-          <button className="designer-button" onClick={playAll} disabled={!shown.length}><Play size={10} /> Play all</button>
+          <button className="designer-button" onClick={playingAll ? stopAll : playAll} disabled={!shown.length && !playingAll}>
+            {playingAll ? <><Square size={10} /> Stop</> : <><Play size={10} /> Play all</>}
+          </button>
+          <button className="designer-button" onClick={resetMap} title="The four classic instruments again. Tracks are not changed">Reset map</button>
           <select className="rack-map-select designer-select dsp-map-picker" value="" onChange={(e) => e.target.value && add(e.target.value)} title="Add an instrument to compare">
             <option value="">+ Add instrument…</option>
             <optgroup label="Tracks">
               {tracks.filter((t: any) => t.type === 'midi' && soundOf(t) && !present.has(t.id)).map((t: any) => (
                 <option key={t.id} value={`track:${t.id}`}>{t.name}</option>
               ))}
+            </optgroup>
+            <optgroup label="Library · Kits">
+              {KITS.map((k) => <option key={k.id} value={`kit:${k.id}`}>{k.name}</option>)}
             </optgroup>
             {categories.map((cat) => (
               <optgroup key={cat} label={`Library · ${CATEGORY_NAMES[cat]}`}>
@@ -371,8 +449,16 @@ export default function DspMap() {
                 <div className="designer-row">
                   <button className="btn-icon designer-play" title={`Play ${midiNoteName(note)}`} onClick={() => play(c)}><Play size={12} /></button>
                   <span className="dsp-head-name" title={c.name}>{c.name}</span>
+                  {c.track && onOpenDesigner && (
+                    <button className="btn-icon" title="Edit in the Sound Designer" onClick={() => { setSelectedTrackId(c.track.id); onOpenDesigner(); }}><Pencil size={11} /></button>
+                  )}
                   {c.column && <button className="btn-icon" title="Take off the map" onClick={() => remove(c)}><X size={11} /></button>}
                 </div>
+                {c.pads.length > 0 && (
+                  <select className="rack-map-select designer-pad" value={c.pad!} onChange={(e) => setPad(c, e.target.value)} title="Which of the kit's sounds to show">
+                    {c.pads.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                  </select>
+                )}
                 <div className="dsp-head-source">
                   <span>{c.source}</span>
                   {!c.track && <button className="designer-link" onClick={() => moveToTrack(c)}>Use on a new track</button>}

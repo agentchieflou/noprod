@@ -15,7 +15,7 @@ let band: typeof import('./accompany') | null = null;
 let loading: Promise<typeof import('./coach')> | null = null;
 export function loadCoach() {
   loading ??= Promise.all([import('./coach'), import('./accompany')]).then(([coach, accompany]) => {
-    coach.initCoach();
+    coach.initCoach(store);
     accompany.initAccompany(store);
     band = accompany;
     coach.subscribeCoach(() => {

@@ -4,6 +4,7 @@ import {
   Layers, CheckSquare, Square as SquareIcon, Sliders, Wand2,
   Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic, GraduationCap
 } from 'lucide-react';
+import { APP_VERSION, APP_COMMIT } from './buildInfo';
 import { useDAWStore, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { startVoice } from './audio/synth';
 import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
@@ -1082,6 +1083,7 @@ function App() {
           <button className={`detail-tab ${activeTab === 'dspmap' ? 'active' : ''}`} onClick={() => setActiveTab('dspmap')}>DSP Map</button>
           <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>
           <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>
+        <span className="app-version" title={`noprod ${APP_VERSION}, build ${APP_COMMIT}`}>v{APP_VERSION} · {APP_COMMIT}</span>
         </div>
         
         <div className="detail-content">
@@ -1124,10 +1126,10 @@ function App() {
           )}
           
           {activeTab === 'sound' && (
-            <Suspense fallback={null}><SoundDesigner track={selectedTrack?.type === 'midi' ? selectedTrack : null} /></Suspense>
+            <Suspense fallback={null}><SoundDesigner track={selectedTrack?.type === 'midi' ? selectedTrack : null} onOpenDspMap={() => setActiveTab('dspmap')} /></Suspense>
           )}
 
-          {activeTab === 'dspmap' && <Suspense fallback={null}><DspMap /></Suspense>}
+          {activeTab === 'dspmap' && <Suspense fallback={null}><DspMap onOpenDesigner={() => setActiveTab('sound')} /></Suspense>}
 
           {activeTab === 'vst-paths' && (
             <Suspense fallback={null}><PluginFolders selectedTrack={selectedTrack} /></Suspense>
