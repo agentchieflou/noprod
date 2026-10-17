@@ -36,6 +36,8 @@ export interface EngineOptions {
   // Called when the node had to be remade (more outputs): what was queued is gone
   onReset?: () => void;
   onDropped?: (key: string, lateBy: number, reason: DropReason) => void;
+  // The processor threw: it is remade (onReset follows) and this is told
+  onError?: (e: Event) => void;
   budget?: number; // bytes of buffers kept beyond those playing (the tests set a small one)
 }
 
@@ -74,6 +76,9 @@ export class Engine {
       if (r.type === 'dropped') { this.opts.onDropped?.(r.key, r.lateBy, r.reason); return; }
       this.waiting = this.waiting.filter((fn) => !fn(r));
     };
+    // A throw on the audio thread stops the processor for good: start a
+    // fresh one, as growing does, and let the transport start over
+    node.onprocessorerror = (e) => { if (this.node === node) { this.opts.onError?.(e); this.remake(this.outputs); } };
     return node;
   }
 
@@ -89,9 +94,13 @@ export class Engine {
     return index;
   }
 
-  private grow(outputs: number) {
+  private grow(outputs: number) { this.remake(outputs); }
+
+  private remake(outputs: number) {
     this.node.port.onmessage = null;
+    this.node.onprocessorerror = null;
     this.node.disconnect();
+    this.waiting = [];
     this.outputs = outputs;
     this.node = this.make(outputs);
     this.forgets = [];
@@ -187,6 +196,7 @@ export interface LiveEngineHooks {
   onStripInputChange: (fn: (id: string, input: AudioNode | null) => void) => unknown;
   onReset?: () => void;
   onDropped?: (key: string, lateBy: number, reason: DropReason) => void;
+  onError?: (e: Event) => void;
 }
 
 let hooks: LiveEngineHooks | null = null;
@@ -199,7 +209,8 @@ export async function initLiveEngine(ctx: AudioContext, h: LiveEngineHooks) {
   live = new Engine(ctx, {
     connect: (node, output, stripId) => node.connect(h.getStripInput(stripId), output),
     onReset: h.onReset,
-    onDropped: h.onDropped
+    onDropped: h.onDropped,
+    onError: h.onError
   });
   h.onStripInputChange((id, input) => { if (input) live?.reconnect(id); else live?.disconnect(id); });
   return live;

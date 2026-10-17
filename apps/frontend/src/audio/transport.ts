@@ -77,6 +77,10 @@ export function initTransport(store: { getState: () => any; subscribe: (fn: (s: 
   ready = initLiveEngine(audioContext, {
     stripIdOf, getStripInput, onStripInputChange,
     onReset: () => { if (playing) reschedule(); },
+    onError: (e) => {
+      console.error('The audio engine failed and was restarted', e);
+      notify('The audio engine failed and was restarted; playback starts over from the playhead.', 'error');
+    },
     onDropped: (_key, _lateBy, reason) => { dropped++; if (reason === 'late') droppedLate++; }
   }).then((engine) => {
     scheduler = new Scheduler(engine, audioContext, getState);

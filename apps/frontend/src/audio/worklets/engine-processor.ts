@@ -38,15 +38,17 @@ interface Pending {
   releaseAt?: number;      // let go before it started
 }
 
-interface Sounding { strip: number; span: number | null; buf: number | null; voice?: Voice; clip?: ClipPlayer }
+// A voice or clip playing: its own record, on its strip's list for as long as
+// it plays, and in `sounding` by key while it is the latest with that key (a
+// clip restarted under its key while its last player fades leaves two)
+interface Sounding { key: string; strip: number; span: number | null; buf: number | null; voice?: Voice; clip?: ClipPlayer }
 
 // The buffer an event plays, if any
 const bufferOf = (spec: VoiceSpec | undefined, clip: ClipEvent | undefined) =>
   clip ? clip.buf : spec?.kind === 'buffer' ? spec.buf : null;
 
 interface Strip {
-  voices: Voice[];
-  clips: ClipPlayer[];
+  playing: Sounding[];
   live: LiveVoices | null;
   chokes: Map<number, BufferVoice[]>;
 }
@@ -81,14 +83,14 @@ class EngineProcessor extends AudioWorkletProcessor {
     super(options);
     this.margin = options.processorOptions?.margin ?? 10;
     const outputs = options.processorOptions?.outputs ?? 1;
-    for (let i = 0; i < outputs; i++) this.strips.push({ voices: [], clips: [], live: null, chokes: new Map() });
+    for (let i = 0; i < outputs; i++) this.strips.push({ playing: [], live: null, chokes: new Map() });
     this.port.onmessage = (e: MessageEvent<EngineMessage>) => this.receive(e.data);
   }
 
   private reply(m: EngineReply) { this.port.postMessage(m); }
 
   private strip(i: number): Strip {
-    while (this.strips.length <= i) this.strips.push({ voices: [], clips: [], live: null, chokes: new Map() });
+    while (this.strips.length <= i) this.strips.push({ playing: [], live: null, chokes: new Map() });
     return this.strips[i];
   }
 
@@ -197,12 +199,16 @@ class EngineProcessor extends AudioWorkletProcessor {
       this.discard(p);
       return false;
     });
-    for (const s of this.sounding.values()) if (s.span === id) s.clip?.stop(at);
+    for (const s of this.playing()) if (s.span === id) s.clip?.stop(at);
+  }
+
+  private *playing() {
+    for (const strip of this.strips) yield* strip.playing;
   }
 
   // A voice or clip has ended: what it played may go
-  private ended(key: string, s: Sounding) {
-    this.sounding.delete(key);
+  private ended(s: Sounding) {
+    if (this.sounding.get(s.key) === s) this.sounding.delete(s.key);
     this.unpin(s.buf);
   }
 
@@ -250,8 +256,8 @@ class EngineProcessor extends AudioWorkletProcessor {
       this.discard(p);
       return false;
     });
-    for (const s of this.sounding.values()) {
-      if (s.strip !== strip || s.span === null) continue;
+    for (const s of this.strips[strip]?.playing ?? []) {
+      if (s.span === null) continue;
       s.voice?.stop(at);
       s.clip?.stop(at);
     }
@@ -260,7 +266,7 @@ class EngineProcessor extends AudioWorkletProcessor {
   private stopAll(at: number) {
     for (const p of this.pending) this.discard(p);
     this.pending = [];
-    for (const s of this.sounding.values()) { s.voice?.stop(at); s.clip?.stop(at); }
+    for (const s of this.playing()) { s.voice?.stop(at); s.clip?.stop(at); }
     for (const strip of this.strips) strip.live?.stop();
   }
 
@@ -275,9 +281,7 @@ class EngineProcessor extends AudioWorkletProcessor {
       const end = Math.min(span.endFrame, span.startFrame + Math.round((p.clip.endPos - span.posStart) * sampleRate));
       const player = new ClipPlayer(p.key, p.frame, p.clip, buf, end, sampleRate, seed);
       if (p.stopAt !== undefined) player.stop(p.stopAt);
-      strip.clips.push(player);
-      this.sounding.set(p.key, { strip: p.strip, span: p.span, buf: p.buf, clip: player });
-      this.started++;
+      this.play(strip, { key: p.key, strip: p.strip, span: p.span, buf: p.buf, clip: player });
       return;
     }
     const spec = p.note ? p.note.voice : p.live!;
@@ -293,8 +297,12 @@ class EngineProcessor extends AudioWorkletProcessor {
     }
     if (p.stopAt !== undefined) voice.stop(p.stopAt);
     if (p.releaseAt !== undefined) voice.release(Math.max(p.releaseAt, p.frame));
-    strip.voices.push(voice);
-    this.sounding.set(p.key, { strip: p.strip, span: p.span, buf: p.buf, voice });
+    this.play(strip, { key: p.key, strip: p.strip, span: p.span, buf: p.buf, voice });
+  }
+
+  private play(strip: Strip, s: Sounding) {
+    strip.playing.push(s);
+    this.sounding.set(s.key, s);
     this.started++;
   }
 
@@ -305,24 +313,18 @@ class EngineProcessor extends AudioWorkletProcessor {
     while (this.pending.length && this.pending[0].frame < end) this.begin(this.pending.shift()!);
     for (let i = 0; i < this.strips.length && i < outputs.length; i++) {
       const strip = this.strips[i];
-      if (!strip.voices.length && !strip.clips.length && !strip.live) continue;
+      if (!strip.playing.length && !strip.live) continue;
       const out = outputs[i];
       const l = out[0], r = out[1] ?? out[0];
       l.fill(0); if (r !== l) r.fill(0);
       let kept = 0;
-      for (let k = 0; k < strip.voices.length; k++) {
-        const v = strip.voices[k];
-        v.render(l, r, Math.max(0, v.start - frame), BLOCK, frame);
-        if (v.done) this.ended(v.key, this.sounding.get(v.key)!); else strip.voices[kept++] = v;
+      for (let k = 0; k < strip.playing.length; k++) {
+        const s = strip.playing[k];
+        const src = (s.voice ?? s.clip)!;
+        src.render(l, r, Math.max(0, src.start - frame), BLOCK, frame);
+        if (src.done) this.ended(s); else strip.playing[kept++] = s;
       }
-      strip.voices.length = kept;
-      kept = 0;
-      for (let k = 0; k < strip.clips.length; k++) {
-        const c = strip.clips[k];
-        c.render(l, r, Math.max(0, c.start - frame), BLOCK, frame);
-        if (c.done) this.ended(c.key, this.sounding.get(c.key)!); else strip.clips[kept++] = c;
-      }
-      strip.clips.length = kept;
+      strip.playing.length = kept;
       strip.live?.render(l, r, frame);
     }
     // the render thread's pace, as live-models.ts kept it

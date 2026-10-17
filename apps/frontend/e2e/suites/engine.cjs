@@ -412,6 +412,43 @@ module.exports = async (page, ctx) => {
     forced.started === 0 && forced.dropped === 2 && forced.reported.length === 2 && forced.reported.every((r) => r.endsWith(':buffer')) && forced.peak === 0,
     `${forced.started} started, ${forced.dropped} dropped, reported: ${forced.reported.join(' ')}; peak ${forced.peak}`);
 
+  // 12. A clip restarted under its own key while its last player fades (a
+  // gain change mid-play restarts it; the scheduler keys restarts apart,
+  // but the worklet must take the same key too): the old player's end must
+  // not take the new one's record, a later note on another strip still
+  // sounds, and the render runs to its last block.
+  const restarted = await page.evaluate(async (sampleRate) => {
+    const seconds = 2;
+    const ctxO = new OfflineAudioContext(2, sampleRate * seconds, sampleRate);
+    await window.__node.loadEngine(ctxO);
+    let errors = 0;
+    const engine = new window.__node.Engine(ctxO, { connect: (n, o) => n.connect(ctxO.destination, o), onError: () => { errors++; } }, 4);
+    engine.span({ id: 1, ctxStart: 0, posStart: 0, posEnd: seconds });
+    const b = ctxO.createBuffer(2, sampleRate, sampleRate);
+    const l = b.getChannelData(0);
+    for (let k = 0; k < l.length; k++) l[k] = 0.3 * Math.sin((k * 2 * Math.PI * 220) / sampleRate);
+    b.copyToChannel(l, 1);
+    const buf = engine.bufferId(b);
+    const strip = engine.output('clip');
+    const clip = { key: 'c', strip, span: 1, pos: 0.05, endPos: 0.8, buf, offset: 0, rate: 1, loop: null, gain: 1, grains: null };
+    engine.clips([clip]);
+    // at 0.3 s: the same clip again, quieter, under the same key
+    engine.retract(['c'], 0.3);
+    engine.clips([{ ...clip, pos: 0.3, offset: 0.25, gain: 0.5 }]);
+    engine.notes([{ key: 'n', strip: engine.output('note'), span: 1, pos: 1.5, voice: { kind: 'synth', wave: 'sine', hz: 440, attack: 0.001, decay: 0.05, sustain: 0.8, release: 0.005, peak: 0.3 }, duration: 0.2 }]);
+    await engine.sync();
+    const out = await ctxO.startRendering();
+    const stats = await Promise.race([engine.stats(), new Promise((r) => setTimeout(() => r(null), 3000))]);
+    engine.dispose();
+    const x = out.getChannelData(0);
+    let late = 0;
+    for (let k = Math.round(1.5 * sampleRate); k < Math.round(1.7 * sampleRate); k += 3) late = Math.max(late, Math.abs(x[k]));
+    return { blocks: stats?.blocks ?? null, started: stats?.started ?? null, expected: Math.ceil((sampleRate * seconds) / 128), late: +late.toFixed(3), errors };
+  }, sampleRate);
+  check('A clip restarted under its own key mid-play: the engine runs on, and a later note still sounds',
+    restarted.blocks === restarted.expected && restarted.started === 3 && restarted.late > 0.1 && restarted.errors === 0,
+    `${restarted.blocks} of ${restarted.expected} blocks processed, ${restarted.started} started, peak after 1.5 s ${restarted.late}, ${restarted.errors} processor errors`);
+
   await ctx.shot('engine');
   const errors = ctx.logs.filter((l) => /^\[(pageerror|error)\]/.test(l) && !l.includes('ws://localhost:8080'));
   check('No page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

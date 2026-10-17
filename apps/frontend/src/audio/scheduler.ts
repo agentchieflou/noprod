@@ -30,7 +30,7 @@ const WARP_GRAINS: Record<string, { grain: number; jitter: number }> = {
 };
 
 interface PostedNote { pos: number; cancel: (at?: number) => void; posted: boolean }
-interface PostedClip { pos: number; signature: string }
+interface PostedClip { pos: number; signature: string; key: string } // key: the engine's, fresh on each restart
 
 export interface Span {
   id: number;
@@ -72,6 +72,8 @@ export class Scheduler {
   spans: Span[] = [];
   // the tracks whose arrangement clips are silent (a session clip holds them)
   owned = new Set<string>();
+  private generation = 0; // restarts of a clip get a key of their own
+
   // for the tests: notes asked for, those that reached the engine (a
   // render can arrive too late, or be taken back first), clips posted,
   // and events taken back
@@ -279,7 +281,7 @@ export class Scheduler {
     const events: ClipEvent[] = [];
     for (const c of this.clipEvents(this.getState(), span, from)) {
       const key = `${span.id}:${c.key}`;
-      span.clips.set(key, { pos: c.event.pos, signature: c.signature });
+      span.clips.set(key, { pos: c.event.pos, signature: c.signature, key });
       events.push({ key, span: span.id, ...c.event });
     }
     this.counts.clips += events.length;
@@ -312,13 +314,15 @@ export class Scheduler {
     for (const [key, posted] of span.clips) {
       const c = wantClips.get(key);
       if (c && c.signature === posted.signature) { wantClips.delete(key); continue; }
-      retract.push(key);
+      retract.push(posted.key);
       span.clips.delete(key);
     }
     const events: ClipEvent[] = [];
     for (const [key, c] of wantClips) {
-      span.clips.set(key, { pos: c.event.pos, signature: c.signature });
-      events.push({ key, span: span.id, ...c.event });
+      // a restart is a new player while the old one fades: keyed apart
+      const engineKey = `${key}#${++this.generation}`;
+      span.clips.set(key, { pos: c.event.pos, signature: c.signature, key: engineKey });
+      events.push({ key: engineKey, span: span.id, ...c.event });
     }
     this.counts.retracted += retract.length;
     this.counts.clips += events.length;
