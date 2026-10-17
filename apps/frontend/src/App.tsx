@@ -7,10 +7,11 @@ import {
 import { APP_VERSION, APP_COMMIT } from './buildInfo';
 import { useDAWStore, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { startVoice } from './audio/synth';
-import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
+import { clipTimelineLength } from './audio/clipPlayback';
 import BrowserSidebar, { SAMPLE_DRAG_TYPE, SOUND_DRAG_TYPE } from './components/BrowserSidebar';
 import { getFile } from './browser/library';
-import { createLibraryInstrument, soundAsBuffer, whenRendered, libraryStats } from './audio/library';
+import { createLibraryInstrument, soundAsBuffer, libraryStats } from './audio/library';
+import { renderArrangement } from './audio/scheduler';
 import { startLibraryWarmup } from './audio/libraryWarmup';
 import { findAnySound, loadUserSounds } from './audio/userSounds';
 import type { DictationResult } from './audio/dictation';
@@ -42,7 +43,7 @@ import { Panel } from './components/ErrorBoundary';
 import AudioStatus from './components/AudioStatus';
 import Notices from './components/Notices';
 import { liveModelStats } from './audio/liveModels';
-import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
+import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain, engineStats, engineReady, getScheduler } from './audio/transport';
 // Not lazy with the DSP Map: it notes each track's sound as it's selected, for the map's A/B
 import './components/dspMapState';
 import './App.css';
@@ -68,7 +69,7 @@ const AudioRegionNode = lazy(() => import('./components/ClipNodes').then((m) => 
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
   (window as any).__dawStore = useDAWStore;
-  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, libraryStats,
+  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, libraryStats, engineStats, engineReady, getScheduler,
     // the coach's band, once it has loaded (coachLoader.ts)
     get accompany() { return accompanyDebug(); } };
 }
@@ -501,17 +502,8 @@ function App() {
       return;
     }
     const end = Math.max(...trackRegions.map((r: any) => r.startTime + clipTimelineLength(r, bpm))) + 0.5; // headroom for release tails
-    const sampleRate = audioContext.sampleRate;
-    const offline = new OfflineAudioContext(2, Math.ceil(sampleRate * end), sampleRate);
-
-    // Same clip renderer as playback, so gain/transpose/loop/warp are baked in
-    trackRegions.forEach((region: any) => {
-      scheduleClip(offline, region, track.instrument?.parameters, offline.destination,
-        region.startTime, 0, clipTimelineLength(region, bpm), bpm, { midiEffects: track.midiEffects });
-    });
-
-    await whenRendered(offline); // library notes render in workers first
-    const rendered = await offline.startRendering();
+    // The engine renders the track as playback plays it: gain, transpose, loop and warp baked in
+    const rendered = await renderArrangement({ state: useDAWStore.getState(), trackIds: [track.id], from: 0, to: end, sampleRate: audioContext.sampleRate });
     setTrackFrozen(track.id, rendered, end);
   });
 

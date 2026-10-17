@@ -1,40 +1,39 @@
-// Transport: owns the playhead and schedules everything that plays on the
-// arrangement timeline (seconds).
+// Transport: owns the playhead and what plays on the arrangement timeline
+// (seconds, until #159's step 4).
 //
-// Playback is a sequence of segments. Each segment maps a timeline range
-// [posStart, posEnd) onto audio-context time starting at ctxStart and
-// schedules every clip, note and frozen buffer overlapping that range, cut at
-// posEnd. A loop is just "when the current segment is about to end at the loop
-// end, queue another [loopStart, loopEnd) segment exactly where it finishes",
-// so loops wrap sample-accurately. Metronome clicks are scheduled with a short
-// lookahead from a timer since a segment without a loop has no end.
+// Playback is a sequence of spans. Each span maps a timeline range
+// [posStart, posEnd) onto audio-context time starting at ctxStart; the
+// scheduler (scheduler.ts) posts its notes to the engine worklet a window
+// ahead and its clips once, and takes back what an edit undoes. A loop is
+// just "when the current span is about to end at the loop end, queue
+// another [loopStart, loopEnd) exactly where it finishes", so loops wrap
+// sample-accurately. Metronome clicks and automation are scheduled with a
+// short lookahead from a timer, as nodes and AudioParam events.
 
-import { audioContext, getStripInput, getAutomationTargets, setAutomationPlaying, getCompensationSeconds, onCompensationChange } from './engine';
-import { scheduleClip, clipTimelineLength } from './clipPlayback';
+import { audioContext, getStripInput, getAutomationTargets, setAutomationPlaying, getCompensationSeconds, onCompensationChange, onStripInputChange, stripIdOf } from './engine';
+import { initLiveEngine, liveEngine, type Engine } from './engineNode';
+import { Scheduler, type Span } from './scheduler';
 import { beatsBetween, barAt, barSeconds } from './timeline';
 import { onStretchReady } from './warp';
+import { notify } from '../notify';
 
 type Stoppable = { stop: (when?: number) => void };
 
-interface Segment {
-  ctxStart: number;
-  posStart: number;
-  posEnd: number;        // Infinity when not looping
-  sources: Stoppable[];
-  trackSources: Map<string, Stoppable[]>; // arrangement clips per track, for session takeover
-  clickCursor: number;   // next timeline position to consider for a metronome click
-}
-
-const LOOKAHEAD = 0.25;  // seconds of audio scheduled ahead of the playhead
-const TICK_MS = 40;
+const POST_AHEAD = 1.0;  // seconds of notes posted to the engine ahead of the playhead
+const LOOKAHEAD = 0.25;  // seconds of clicks scheduled ahead
+const TICK_MS = 25;
 
 let getState: () => any = () => ({});
 let playing = false;
 let stoppedPosition = 0;
-let segments: Segment[] = [];
+let scheduler: Scheduler | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 let countInEnd = 0;      // ctx time at which a count-in finishes (0 = none)
+let clickSources: Stoppable[] = [];
+let dropped = 0;         // events the engine dropped during this playback
 const listeners = new Set<() => void>();
+
+const spans = (): Span[] => scheduler?.spans ?? [];
 
 // Tracks currently playing a Session View clip: their arrangement clips stay
 // silent until Back to Arrangement (as in Ableton).
@@ -43,9 +42,7 @@ export const sessionOwnedTracks = new Set<string>();
 // A session clip is taking over `trackId` at context time `atCtx`
 export function releaseTrackFromArrangement(trackId: string, atCtx: number) {
   sessionOwnedTracks.add(trackId);
-  segments.forEach((s) => (s.trackSources.get(trackId) || []).forEach((src) => {
-    try { src.stop(atCtx); } catch { /* already stopped */ }
-  }));
+  scheduler?.silenceTrack(trackId, atCtx);
 }
 
 // Context time of the next launch point after now: next beat or bar of the
@@ -73,11 +70,22 @@ const automationChanged = (st: any, prev: any) => {
 };
 
 // Follow the store: isPlaying starts/stops the transport, and edits to what
-// plays (clips, tempo, loop, freeze) reschedule from the playhead.
+// plays (clips, notes, tempo, loop, freeze) reach the engine as diffs.
 export function initTransport(store: { getState: () => any; subscribe: (fn: (s: any, prev: any) => void) => unknown }) {
   getState = store.getState;
+  ready = initLiveEngine(audioContext, {
+    stripIdOf, getStripInput, onStripInputChange,
+    onReset: () => { if (playing) reschedule(); },
+    onDropped: () => { dropped++; }
+  }).then((engine) => {
+    scheduler = new Scheduler(engine, audioContext, getState);
+    scheduler.owned = sessionOwnedTracks;
+  }, (err) => {
+    console.error('The engine worklet could not load; nothing on the timeline will play', err);
+    notify('The audio engine could not start in this browser, so playback is unavailable.', 'error');
+  });
   // A warped clip's stretched render takes over from its grains
-  onStretchReady(() => { if (playing) reschedule(); });
+  onStretchReady(() => { if (playing) resync(); });
   store.subscribe((st, prev) => {
     if (st.isPlaying !== prev.isPlaying) {
       if (!st.isPlaying) stop();
@@ -86,7 +94,7 @@ export function initTransport(store: { getState: () => any; subscribe: (fn: (s: 
       return;
     }
     if (!playing) {
-      if (st.bpm !== prev.bpm) notify(); // the transport snapshot's tempo changed
+      if (st.bpm !== prev.bpm) notify_(); // the transport snapshot's tempo changed
       return;
     }
     if (st.isLoopEnabled !== prev.isLoopEnabled || st.loopStart !== prev.loopStart || st.loopEnd !== prev.loopEnd) {
@@ -95,15 +103,20 @@ export function initTransport(store: { getState: () => any; subscribe: (fn: (s: 
       loopDebounce = setTimeout(reschedule, 60);
       return;
     }
-    if (st.regions !== prev.regions || st.bpm !== prev.bpm || frozenSig(st) !== frozenSig(prev)) {
-      reschedule();
-    } else if (st.tracks !== prev.tracks && automationChanged(st, prev)) {
-      refreshAutomation();
+    if (st.regions !== prev.regions || st.bpm !== prev.bpm || frozenSig(st) !== frozenSig(prev) || st.tracks !== prev.tracks) {
+      resync();
     }
+    if (st.tracks !== prev.tracks && automationChanged(st, prev)) refreshAutomation();
   });
 }
 
-const notify = () => listeners.forEach((fn) => fn());
+let ready: Promise<void> = Promise.resolve();
+// Resolves once the engine is up (the tests wait on it)
+export const engineReady = () => ready;
+export const getEngine = (): Engine | null => liveEngine();
+export const getScheduler = () => scheduler;
+
+const notify_ = () => listeners.forEach((fn) => fn());
 export const onTransportChange = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 
 export const isPlaying = () => playing;
@@ -111,13 +124,14 @@ export const isCountingIn = () => playing && countInEnd > audioContext.currentTi
 
 // Timeline position in seconds right now
 export function getPosition(): number {
-  if (!playing || segments.length === 0) return stoppedPosition;
+  const list = spans();
+  if (!playing || list.length === 0) return stoppedPosition;
   const now = audioContext.currentTime;
-  for (let i = segments.length - 1; i >= 0; i--) {
-    const s = segments[i];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const s = list[i];
     if (now >= s.ctxStart) return Math.min(s.posEnd, s.posStart + (now - s.ctxStart));
   }
-  return segments[0].posStart; // still in a count-in
+  return list[0].posStart; // still in a count-in
 }
 
 // ------------------------------------------------------------------ helpers
@@ -138,7 +152,7 @@ clickGain.connect(clickDelay);
 clickDelay.connect(audioContext.destination);
 onCompensationChange(() => { clickDelay.delayTime.value = getCompensationSeconds(); });
 
-function playClick(when: number, accent: boolean, sources: Stoppable[]) {
+function playClick(when: number, accent: boolean) {
   const osc = audioContext.createOscillator();
   const env = audioContext.createGain();
   osc.frequency.value = accent ? 1600 : 1000;
@@ -149,54 +163,15 @@ function playClick(when: number, accent: boolean, sources: Stoppable[]) {
   env.connect(clickGain);
   osc.start(when);
   osc.stop(when + 0.06);
-  sources.push(osc);
+  osc.onended = () => { osc.disconnect(); env.disconnect(); };
+  clickSources.push(osc);
+  if (clickSources.length > 64) clickSources = clickSources.slice(-32);
 }
 
 // --------------------------------------------------------------- scheduling
 
-function scheduleSegment(ctxStart: number, posStart: number, posEnd: number): Segment {
-  const st = getState();
-  const seg: Segment = { ctxStart, posStart, posEnd, sources: [], trackSources: new Map(), clickCursor: posStart };
-  const at = (pos: number) => ctxStart + (pos - posStart);
-  const tracks: any[] = st.tracks || [];
-  const trackById = new Map(tracks.map((t) => [t.id, t]));
-
-  // Frozen tracks play their rendered buffer instead of live clips
-  tracks.forEach((t) => {
-    if (!t.isFrozen || !t.frozenBuffer) return;
-    const a = Math.max(posStart, 0), b = Math.min(posEnd, t.frozenDuration);
-    if (b <= a) return;
-    const src = audioContext.createBufferSource();
-    src.buffer = t.frozenBuffer;
-    src.connect(getStripInput(t.id));
-    src.start(at(a), a, b - a);
-    seg.sources.push(src);
-  });
-
-  // Clips: each plays the part of itself overlapping this segment
-  (st.regions || []).forEach((region: any) => {
-    const track = trackById.get(region.trackId);
-    if (!track || track.isFrozen || sessionOwnedTracks.has(region.trackId)) return;
-    const start = region.startTime;
-    const end = start + clipTimelineLength(region, st.bpm || 120);
-    const a = Math.max(posStart, start), b = Math.min(posEnd, end);
-    if (b <= a) return;
-    const srcs = scheduleClip(
-      audioContext, region, track.instrument?.parameters, getStripInput(region.trackId),
-      at(a), a - start, b - start, st.bpm || 120, { midiEffects: track.midiEffects }
-    );
-    seg.sources.push(...srcs);
-    seg.trackSources.set(region.trackId, [...(seg.trackSources.get(region.trackId) || []), ...srcs]);
-  });
-
-  segments.push(seg);
-  scheduleAutomation(seg);
-  segmentListeners.forEach((fn) => fn({ ctxStart, posStart, posEnd }));
-  return seg;
-}
-
 // Recording places captured audio/MIDI on the timeline by replaying this
-// ctx-time -> position map, so it hears about every segment (loop pass).
+// ctx-time -> position map, so it hears about every span (loop pass).
 export interface SegmentInfo { ctxStart: number; posStart: number; posEnd: number }
 const segmentListeners = new Set<(s: SegmentInfo) => void>();
 export const onSegmentScheduled = (fn: (s: SegmentInfo) => void) => {
@@ -204,7 +179,15 @@ export const onSegmentScheduled = (fn: (s: SegmentInfo) => void) => {
   return () => { segmentListeners.delete(fn); };
 };
 export const getSegments = (): SegmentInfo[] =>
-  segments.map(({ ctxStart, posStart, posEnd }) => ({ ctxStart, posStart, posEnd }));
+  spans().map(({ ctxStart, posStart, posEnd }) => ({ ctxStart, posStart, posEnd }));
+
+function openSpan(ctxStart: number, posStart: number, posEnd: number): Span {
+  if (!scheduler) throw new Error('the engine is not ready');
+  const span = scheduler.open(ctxStart, posStart, posEnd);
+  scheduleAutomation(span);
+  segmentListeners.forEach((fn) => fn({ ctxStart, posStart, posEnd }));
+  return span;
+}
 
 // Everything needed to work out the musical position at any context time
 // (tempo-synced plugins on browser tracks, trackBridge.ts). Changes are
@@ -238,29 +221,29 @@ export function envelopeAt(points: { time: number; value: number }[], t: number)
   return points[points.length - 1].value;
 }
 
-// Write every track's automation lanes for one segment as AudioParam events
+// Write every track's automation lanes for one span as AudioParam events
 // (setValueAtTime at the start, linear ramps through each breakpoint, and a
 // ramp to the boundary value at a loop end). `fromCtx` re-applies from a
 // later point, e.g. after an envelope edit mid-playback.
-function scheduleAutomation(seg: Segment, fromCtx = seg.ctxStart) {
+function scheduleAutomation(span: Span, fromCtx = span.ctxStart) {
   const st = getState();
-  const segCtxEnd = seg.ctxStart + (seg.posEnd - seg.posStart);
+  const segCtxEnd = span.ctxStart + (span.posEnd - span.posStart);
   if (fromCtx >= segCtxEnd) return;
-  const startCtx = Math.max(seg.ctxStart, fromCtx);
-  const a = seg.posStart + (startCtx - seg.ctxStart);
+  const startCtx = Math.max(span.ctxStart, fromCtx);
+  const a = span.posStart + (startCtx - span.ctxStart);
   (st.tracks || []).forEach((t: any) => {
     Object.entries(t.automation || {}).forEach(([key, pts]: [string, any]) => {
       if (!pts?.length) return;
       getAutomationTargets(t.id, key).forEach(({ param, map }) => {
-        // the epsilon keeps a previous segment's ramp that ends exactly here
+        // the epsilon keeps a previous span's ramp that ends exactly here
         param.cancelScheduledValues(startCtx + 1e-6);
         param.setValueAtTime(map(envelopeAt(pts, a)), startCtx + 1e-6);
         pts.forEach((pt: any) => {
-          if (pt.time > a && pt.time < seg.posEnd) {
-            param.linearRampToValueAtTime(map(pt.value), seg.ctxStart + (pt.time - seg.posStart));
+          if (pt.time > a && pt.time < span.posEnd) {
+            param.linearRampToValueAtTime(map(pt.value), span.ctxStart + (pt.time - span.posStart));
           }
         });
-        if (Number.isFinite(seg.posEnd)) param.linearRampToValueAtTime(map(envelopeAt(pts, seg.posEnd)), segCtxEnd);
+        if (Number.isFinite(span.posEnd)) param.linearRampToValueAtTime(map(envelopeAt(pts, span.posEnd)), segCtxEnd);
       });
     });
   });
@@ -269,53 +252,63 @@ function scheduleAutomation(seg: Segment, fromCtx = seg.ctxStart) {
 // An envelope changed while playing: re-apply from just ahead of now
 function refreshAutomation() {
   const from = audioContext.currentTime + 0.02;
-  segments.forEach((seg) => scheduleAutomation(seg, from));
+  spans().forEach((span) => { if (span.engine) scheduleAutomation(span, from); });
+}
+
+// What plays changed: every open span re-reads the store (a diff, not a rebuild)
+function resync() {
+  if (!playing || !scheduler || isCountingIn()) return;
+  const now = audioContext.currentTime;
+  for (const span of spans()) if (span.engine) scheduler.resync(span, now);
 }
 
 function tick() {
-  if (!playing) return;
+  if (!playing || !scheduler) return;
   const st = getState();
   const now = audioContext.currentTime;
   const horizon = now + LOOKAHEAD;
+  const list = spans();
 
   // Queue the next loop pass just before the current one ends
-  const last = segments[segments.length - 1];
+  const last = list[list.length - 1];
   const loop = loopRange(st);
   if (last && loop && last.posEnd === loop[1]) {
     const lastCtxEnd = last.ctxStart + (last.posEnd - last.posStart);
-    if (horizon >= lastCtxEnd) scheduleSegment(lastCtxEnd, loop[0], loop[1]);
+    if (now + POST_AHEAD >= lastCtxEnd) openSpan(lastCtxEnd, loop[0], loop[1]);
   }
 
-  // Metronome clicks within the lookahead window. Cursors advance even with
-  // the click off so switching it on mid-play doesn't replay past beats.
-  segments.forEach((s) => {
+  for (const s of spans()) {
+    if (!s.engine) continue;
+    // Notes a window ahead
+    scheduler.advance(s, s.posStart + (now + POST_AHEAD - s.ctxStart));
+    // Metronome clicks within the lookahead window. Cursors advance even with
+    // the click off so switching it on mid-play doesn't replay past beats.
     const segCtxEnd = s.ctxStart + (s.posEnd - s.posStart);
     const windowEndPos = Math.min(s.posEnd, s.posStart + (Math.min(horizon, segCtxEnd) - s.ctxStart));
-    if (windowEndPos <= s.clickCursor) return;
+    if (windowEndPos <= s.clickCursor) continue;
     if (st.isMetronomeEnabled) {
       beatsBetween(st.bpm || 120, s.clickCursor, windowEndPos, st.timeSignatures).forEach((b) => {
         const when = s.ctxStart + (b.time - s.posStart);
-        if (when >= now - 0.005) playClick(Math.max(now, when), b.accent, s.sources);
+        if (when >= now - 0.005) playClick(Math.max(now, when), b.accent);
       });
     }
     s.clickCursor = windowEndPos;
-  });
+  }
 
-  // Drop segments that finished long enough ago that their sources are done
-  segments = segments.filter((s, i) => i === segments.length - 1
-    || s.ctxStart + (s.posEnd - s.posStart) > now - 5);
+  scheduler.prune(now);
 }
 
-function startSegmentsAt(pos: number, ctxStart: number) {
+function startSpanAt(pos: number, ctxStart: number) {
   const loop = loopRange(getState());
   // Ableton-style: a loop only engages when playback starts before its end
   const end = loop && pos < loop[1] ? loop[1] : Infinity;
-  scheduleSegment(ctxStart, pos, end);
+  openSpan(ctxStart, pos, end);
 }
 
-function stopAllSources() {
-  segments.forEach((s) => s.sources.forEach((src) => { try { src.stop(); } catch { /* already stopped */ } }));
-  segments = [];
+function stopAllSources(at = audioContext.currentTime) {
+  scheduler?.clear(at);
+  clickSources.forEach((src) => { try { src.stop(); } catch { /* already stopped */ } });
+  clickSources = [];
 }
 
 // ------------------------------------------------------------------ control
@@ -325,21 +318,28 @@ function stopAllSources() {
 // the timeline starts moving.
 export function play(countInSeconds = 0, countInGrid?: { time: number; accent: boolean }[]) {
   if (playing) return;
+  if (!scheduler) {
+    // the engine is still loading: start once it is
+    ready.then(() => { if (getState().isPlaying && !playing) play(countInSeconds, countInGrid); });
+    return;
+  }
   if (audioContext.state === 'suspended') audioContext.resume();
+  scheduler.claim(); // outputs for every track first: growing them resets the engine
+  scheduler.prepare(stoppedPosition, stoppedPosition + POST_AHEAD);
   playing = true;
+  dropped = 0;
   setAutomationPlaying(true);
   const startCtx = audioContext.currentTime + 0.05;
   countInEnd = 0;
   if (countInSeconds > 0 && countInGrid) {
-    const pre: Segment = { ctxStart: startCtx, posStart: stoppedPosition - countInSeconds, posEnd: stoppedPosition, sources: [], trackSources: new Map(), clickCursor: Infinity };
-    countInGrid.forEach((b) => playClick(startCtx + b.time, b.accent, pre.sources));
-    segments.push(pre);
+    scheduler.open(startCtx, stoppedPosition - countInSeconds, stoppedPosition, false).clickCursor = Infinity;
+    countInGrid.forEach((b) => playClick(startCtx + b.time, b.accent));
     countInEnd = startCtx + countInSeconds;
   }
-  startSegmentsAt(stoppedPosition, startCtx + countInSeconds);
+  startSpanAt(stoppedPosition, startCtx + countInSeconds);
   timer = setInterval(tick, TICK_MS);
   tick();
-  notify();
+  notify_();
 }
 
 // Count-in: N bars of clicks in the signature at the playhead, then play.
@@ -365,7 +365,8 @@ export function stop() {
   timer = null;
   stopAllSources();
   setAutomationPlaying(false, getState());
-  notify();
+  if (dropped > 0) notify(`The audio engine dropped ${dropped} note${dropped === 1 ? '' : 's'}: the audio thread fell behind. A smaller project, or fewer devices, helps.`, 'error');
+  notify_();
 }
 
 // Move the playhead. While playing, playback continues from the new spot.
@@ -373,19 +374,27 @@ export function setPosition(pos: number) {
   const p = Math.max(0, pos);
   if (!playing) {
     stoppedPosition = p;
-    notify();
+    notify_();
     return;
   }
-  stopAllSources();
+  scheduler?.prepare(p, p + POST_AHEAD);
+  const at = audioContext.currentTime + 0.03;
+  stopAllSources(at);
   countInEnd = 0;
-  startSegmentsAt(p, audioContext.currentTime + 0.03);
+  startSpanAt(p, at);
   tick();
-  notify();
+  notify_();
 }
 
-// Clips, notes, tempo or loop settings changed: rebuild what's scheduled
-// from the current playhead so edits are heard straight away.
+// Loop or freeze settings changed: rebuild what's scheduled from the current
+// playhead so the change is heard straight away.
 export function reschedule() {
   if (!playing || isCountingIn()) return;
   setPosition(getPosition());
+}
+
+// For the tests: what the engine has done and what the scheduler posted
+export async function engineStats() {
+  const engine = liveEngine();
+  return { engine: engine ? await engine.stats() : null, scheduler: scheduler ? { ...scheduler.counts, spans: scheduler.spans.length } : null, dropped };
 }
