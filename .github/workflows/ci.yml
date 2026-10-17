@@ -5,19 +5,24 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   packages:
-    name: Packages (sound, theory)
+    name: Packages (sound, theory, pattern)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
         env:
@@ -27,15 +32,18 @@ jobs:
         run: |
           (cd packages/sound && ../../node_modules/.bin/tsc -p .)
           (cd packages/theory && ../../node_modules/.bin/tsc -p .)
+          (cd packages/pattern && ../../node_modules/.bin/tsc -p .)
 
   frontend:
     name: Frontend (types, lint, build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
         env:
@@ -51,6 +59,25 @@ jobs:
           name: sourcemaps
           path: apps/frontend/dist/assets/*.map
           if-no-files-found: error
+
+  licenses:
+    name: Licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: '1'
+      - run: node --test scripts/*.test.mjs
+      - run: node scripts/check-licenses.mjs
+      - name: Advisories in what we ship
+        run: npm audit --omit=dev --audit-level=high
 
   e2e:
     name: Browser tests

@@ -11,11 +11,17 @@
     "start:frontend": "npm run dev --workspace=apps/frontend",
     "start:orchestrator": "npm start --workspace=apps/orchestrator",
     "start:sequencer": "npm start --workspace=apps/sequencer",
-    "test": "npm test --workspace=packages/sound --workspace=packages/theory",
+    "test": "npm test --workspace=packages/sound --workspace=packages/theory --workspace=packages/pattern",
     "e2e": "npm run e2e --workspace=apps/frontend",
     "e2e:dist": "npm run e2e:dist --workspace=apps/frontend"
   },
   "keywords": [],
   "author": "",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2"
+  }
 }

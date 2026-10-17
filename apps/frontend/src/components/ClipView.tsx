@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { Trash2 } from 'lucide-react';
 import { useDAWStore } from '../store/useDAWStore';
 import { useState } from 'react';
 import { clipTimelineLength } from '../audio/clipPlayback';
@@ -57,6 +58,7 @@ interface Props {
   onChange: (patch: any) => void;    // writes clip properties back to the store
   trackColor: string;
   onAudition: (pitch: number) => void;
+  onDelete?: () => void;             // arrangement clips only
 }
 
 const round = (v: number, step = 0.001) => Math.round(v / step) * step;
@@ -151,7 +153,7 @@ function SampleDisplay({ region, color, onChange }: { region: any; color: string
 // Clip View: per-clip properties (gain, transpose/detune, loop, warp) next to
 // the sample display (audio) or the piano roll (MIDI). Every change updates
 // the clip in the store, which playback and the arrangement visuals follow.
-export default function ClipView({ region, onChange, trackColor, onAudition }: Props) {
+export default function ClipView({ region, onChange, trackColor, onAudition, onDelete }: Props) {
   const bpm = useDAWStore((s: any) => s.bpm);
   const isMidi = region.type === 'midi';
   const buf: AudioBuffer | undefined = region.audioBuffer;
@@ -194,7 +196,12 @@ export default function ClipView({ region, onChange, trackColor, onAudition }: P
         <div className="clip-prop-box">
           <span className="clip-control-label">Clip</span>
           <input className="clip-name-input" value={region.file} onChange={(e) => set({ file: e.target.value })} />
-          <span className="clip-meta">{isMidi ? 'MIDI' : 'Audio'} · {length.toFixed(2)}s on timeline</span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+            <span className="clip-meta">{isMidi ? 'MIDI' : 'Audio'} · {length.toFixed(2)}s on timeline</span>
+            {onDelete && (
+              <button className="btn-icon" title="Delete clip" onClick={onDelete}><Trash2 size={12} /></button>
+            )}
+          </div>
         </div>
 
         <div className="clip-prop-box">

@@ -57,17 +57,19 @@ export default function PianoRoll({ region, trackColor, bpm, onAudition, onNotes
   const snap = (t: number) => Math.round(t / snapSec) * snapSec;
   const snapFloor = (t: number) => Math.floor(t / snapSec) * snapSec;
 
-  // Delete key removes the selected note
+  // Delete key removes the selected note. Capture phase, and it stops the event,
+  // so the app's Delete (which removes the clip) doesn't also run.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNoteId && (e.target as HTMLElement).tagName !== 'INPUT') {
         e.preventDefault();
+        e.stopImmediatePropagation();
         updateRegionNotes(region.id, notes.filter((n: any) => n.id !== selectedNoteId));
         setSelectedNoteId(null);
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [selectedNoteId, notes, region.id, updateRegionNotes]);
 
   const handleGridMouseDown = (e: React.MouseEvent) => {

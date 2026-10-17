@@ -6,18 +6,13 @@ name: Audio core
 # types or the frontend's native bridge change.
 on:
   pull_request:
-    paths:
-      - 'apps/audio_core/**'
-      - 'packages/shared/**'
-      - 'apps/frontend/src/native/**'
-      - '.github/workflows/audio-core.yml'
+    paths: ['apps/audio_core/**', 'packages/shared/**', 'apps/frontend/src/native/**', '.github/workflows/audio-core.yml']
   push:
     branches: [main]
-    paths:
-      - 'apps/audio_core/**'
-      - 'packages/shared/**'
-      - 'apps/frontend/src/native/**'
-      - '.github/workflows/audio-core.yml'
+    paths: ['apps/audio_core/**', 'packages/shared/**', 'apps/frontend/src/native/**', '.github/workflows/audio-core.yml']
+
+permissions:
+  contents: read
 
 concurrency:
   group: audio-core-${{ github.ref }}
@@ -39,7 +34,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Ninja
         if: runner.os != 'Windows'
         run: |
@@ -64,9 +61,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
+          persist-credentials: false
       - name: JUCE's Linux dependencies
         run: |
           sudo apt-get update
