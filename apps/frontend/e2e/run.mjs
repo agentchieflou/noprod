@@ -94,8 +94,15 @@ async function startGhostdaw() {
     child.stderr.on('data', look); // the log names it too
     child.on('exit', () => { clearTimeout(timer); done(null); });
   });
-  const stop = () => { child.kill(); rmSync(dataDir, { recursive: true, force: true }); };
-  if (!pairingCode) { stop(); throw new Error(`GhostDAW did not print a pairing code:\n${output}`); }
+  // Stops it and waits for it to be gone, so the next suite finds no GhostDAW
+  const stop = () => new Promise((done) => {
+    const finish = () => { rmSync(dataDir, { recursive: true, force: true }); done(); };
+    if (child.exitCode !== null) return finish();
+    const force = setTimeout(() => child.kill('SIGKILL'), 3000);
+    child.once('exit', () => { clearTimeout(force); finish(); });
+    child.kill();
+  });
+  if (!pairingCode) { await stop(); throw new Error(`GhostDAW did not print a pairing code:\n${output}`); }
   console.log(`ghostdaw ${child.pid} paired with code ${pairingCode}`);
   return { ready: true, pairingCode, stop };
 }
@@ -143,6 +150,7 @@ for (const name of suites) {
   }
   results.push({ name, passed: lines.length - failed.length, failed });
   await browser.close();
+  await services?.stop();
 }
 
 await server.close();

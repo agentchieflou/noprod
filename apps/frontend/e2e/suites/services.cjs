@@ -6,7 +6,8 @@ module.exports = async (page, ctx) => {
   const check = (name, ok, detail = '') => { const line = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`; results.push(line); console.log(line); };
   await page.mouse.click(5, 5);
 
-  const GHOSTDAW = 'ws://localhost:8082';
+  // An address nothing listens on, so GhostDAW is away whatever else runs
+  const GHOSTDAW = 'ws://localhost:8089';
   const waitFor = async (fn, arg, ms = 20000) => {
     for (let t = 0; t < ms; t += 250) { if (await page.evaluate(fn, arg)) return true; await ctx.sleep(250); }
     return false;
@@ -48,6 +49,7 @@ module.exports = async (page, ctx) => {
       await page.evaluate(() => [...document.querySelectorAll('.service-row')].map((r) => `${r.dataset.service}:${r.querySelector('[data-status]').dataset.status}`).join()) === 'ghostdaw:off');
 
     // Turning GhostDAW on connects to its address, and keeps trying while it is away
+    await page.evaluate((url) => window.__services.set('ghostdaw', { url }), GHOSTDAW);
     await page.evaluate(() => document.querySelector('[data-service=ghostdaw] input[type=checkbox]').click());
     check('Turning GhostDAW on opens a connection to its address', await waitFor((url) => window.__sockets.includes(url), GHOSTDAW));
     check('It shows "trying" while GhostDAW is away', await waitFor(() => document.querySelector('[data-service=ghostdaw] [data-status]')?.dataset.status === 'trying', null, 5000));
