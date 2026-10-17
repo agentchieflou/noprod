@@ -77,13 +77,14 @@ module.exports = async (page, ctx) => {
   await ctx.sleep(100);
   const silenced = await state();
   check('Moving the fader to the bottom sets the track volume to 0', silenced.volume === 0, `${silenced.volume}`);
+  await page.evaluate(async () => { window.__projectFile = await import('/src/project/projectFile.ts'); return 1; });
   const saved = await page.evaluate(async () => {
-    const { serializeProject } = await import('/src/project/projectFile.ts');
+    const { serializeProject, deserializeProject } = window.__projectFile;
     const blob = await serializeProject(window.__dawStore.getState());
-    const text = await new Response(blob.stream().pipeThrough(new DecompressionStream('gzip'))).text();
-    return JSON.parse(text).project.tracks[0].volume;
+    const project = await deserializeProject(blob, window.__transport.audioContext);
+    return project.tracks[0].volume;
   });
-  check('The fader\'s value is saved in the project', saved === 0, `${saved}`);
+  check('The fader\'s value survives saving and loading the project', saved === 0, `${saved}`);
   await page.evaluate((id) => window.__play(id, 'organ', 2), track1);
   await ctx.sleep(600);
   const muted = await dbs();
