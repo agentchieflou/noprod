@@ -1,7 +1,9 @@
 # Vendored code
 
 Native code copied into this repo. `scripts/check-licenses.mjs` fails if a
-directory under `apps/audio_core/third_party` is missing from this list.
+directory under `apps/audio_core/third_party`, or a git submodule, is missing
+from this list. Permissive submodules go here too; restricted ones are
+temporary exceptions in the script.
 
 | Directory | What | License | Source |
 |---|---|---|---|

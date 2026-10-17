@@ -67,6 +67,7 @@ jobs:
       - run: npm ci
         env:
           PUPPETEER_SKIP_DOWNLOAD: '1'
+      - run: node --test scripts/*.test.mjs
       - run: node scripts/check-licenses.mjs
       - name: Advisories in what we ship
         run: npm audit --omit=dev --audit-level=high
