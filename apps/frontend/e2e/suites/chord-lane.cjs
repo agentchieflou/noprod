@@ -64,14 +64,12 @@ module.exports = async (page, ctx) => {
   check('The other labels stay', after.chords.map((c, i) => i === 2 || c.text === before.chords[i].text).every(Boolean));
 
   // A fixed coach key wins over the clip's own
-  await page.evaluate(async () => {
-    const coach = await import('/src/audio/coach.ts');
-    coach.setCoachKey({ tonic: 9, mode: 'minor' });
-  });
+  await page.evaluate(async () => { window.__coach = await import('/src/audio/coach.ts'); return 1; }); // one import per call
+  await page.evaluate(() => { window.__coach.setCoachKey({ tonic: 9, mode: 'minor' }); return 1; });
   await ctx.sleep(200);
   const fixed = await lane();
   check('A fixed coach key shows in the lane', fixed.key === 'A minor' && fixed.chords[0].text === 'C III', `${fixed.key}: ${fixed.chords[0].text}`);
-  await page.evaluate(async () => (await import('/src/audio/coach.ts')).setCoachKey('auto'));
+  await page.evaluate(() => { window.__coach.setCoachKey('auto'); return 1; });
 
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080')); // no orchestrator here
   check('No page errors', errors.length === 0, errors.join(' / '));
