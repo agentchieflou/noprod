@@ -9,6 +9,7 @@
 //            [--data-dir DIR] [--new-token] [--null-audio] [--no-scan]
 //            [--add-scan-folder DIR] [--verbose] [--version]
 //   ghostdaw --scan-file FILE      (the scan worker: describes one plugin binary)
+//   ghostdaw --scan-au             (the scan worker: lists the Audio Units, macOS)
 //
 // Exit codes: 1 a bad argument or a port that is taken; 2 another
 // GhostDAW is already running.
@@ -23,6 +24,7 @@
 #include "platform/Process.h"
 #include "platform/Strings.h"
 #include "platform/WebSocketServer.h"
+#include "host/AuPlugin.h"
 #include "host/AudioDevice.h"
 #include "host/Control.h"
 #include "host/HapAudioEngine.h"
@@ -54,6 +56,7 @@ struct Arguments
     uint16_t editorPort = 8085;
     fs::path dataDir;
     fs::path scanFile;      // worker mode
+    bool scanAu = false;    // worker mode too: the Audio Unit listing
     fs::path addScanFolder; // settings
     bool newToken = false;
     bool nullAudio = false;
@@ -111,6 +114,7 @@ bool parseArguments (int argc, char** argv, Arguments& args, std::string& error)
             else if (arg == "--scan-file") args.scanFile = path;
             else args.addScanFolder = fs::absolute (path);
         }
+        else if (arg == "--scan-au") args.scanAu = true;
         else if (arg == "--new-token") args.newToken = true;
         else if (arg == "--null-audio") args.nullAudio = true;
         else if (arg == "--no-scan") args.noScan = true;
@@ -173,6 +177,15 @@ int main (int argc, char** argv)
         auto described = PluginScanner::describeFile (args.scanFile);
         std::cout << described.dump() << "\n";
         return described.has ("error") ? PluginScanner::notAPluginExitCode : 0;
+    }
+    if (args.scanAu)
+    {
+       #if GHOSTDAW_MAC
+        std::cout << describeAudioUnits().dump() << "\n";
+       #else
+        std::cout << Json::object ({ { "plugins", Json::array() } }).dump() << "\n";
+       #endif
+        return 0;
     }
 
     if (! createDirectories (args.dataDir))

@@ -58,10 +58,12 @@ ghostdaw_warnings(ghostdaw_platform)
 
 # The host: the mixer, the insert chains, the hap engine (headers in
 # src/host), the audio device over miniaudio (third_party/miniaudio,
-# public domain or MIT-0; see its README) and VST 3 hosting over the
-# SDK's interfaces (third_party/vst3/pluginterfaces, MIT; see its README)
+# public domain or MIT-0; see its README), VST 3 hosting over the SDK's
+# interfaces (third_party/vst3/pluginterfaces, MIT; see its README) and,
+# on macOS, Audio Units over AudioToolbox
 add_library(ghostdaw_host STATIC
     src/host/AudioDevice.cpp
+    src/host/AuPlugin.cpp
     src/host/PluginRegistry.cpp
     src/host/PluginScanner.cpp
     src/host/Vst3Iids.cpp
@@ -75,8 +77,9 @@ target_link_libraries(ghostdaw_host PUBLIC ghostdaw_platform)
 if(WIN32)
     # miniaudio links WASAPI and friends at run time
 elseif(APPLE)
-    # miniaudio links CoreAudio at run time; CoreFoundation for the device names
-    target_link_libraries(ghostdaw_host PUBLIC "-framework CoreFoundation")
+    # miniaudio links CoreAudio at run time; CoreFoundation for the device
+    # names and the VST 3 bundles; AudioToolbox for the Audio Units
+    target_link_libraries(ghostdaw_host PUBLIC "-framework CoreFoundation" "-framework AudioToolbox" "-framework CoreAudio")
 else()
     target_link_libraries(ghostdaw_host PUBLIC m ${CMAKE_DL_LIBS})
 endif()

@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 using namespace Steinberg;
@@ -64,6 +65,10 @@ namespace
 {
 
 constexpr ParamID kGainId = 0, kHostTempoId = 1;
+// A state with this gain (no parameter can set it: they are normalised)
+// tells the single-class variant to edit the gain from its own thread
+constexpr float kEditStormGain = -1.0f;
+constexpr int kEditStormCount = 2000;
 
 #if defined(TEST_VST3_SEPARATE_CONTROLLER)
 DECLARE_UID (kComponentUid, 0x4E6F5072, 0x6F645465, 0x73744761, 0x696E5343) // "NoPrTestGainSC"
@@ -235,7 +240,14 @@ public:
 
     // IPluginBase
     tresult PLUGIN_API initialize (FUnknown* context) override { return hostMessagesWork (context) ? kResultOk : kResultFalse; }
-    tresult PLUGIN_API terminate() override { return kResultOk; }
+    tresult PLUGIN_API terminate() override
+    {
+       #if ! defined(TEST_VST3_SEPARATE_CONTROLLER)
+        stopEditStorm();
+        componentHandler = nullptr;
+       #endif
+        return kResultOk;
+    }
 
     // IComponent
     tresult PLUGIN_API getControllerClassId (TUID classId) override
@@ -271,6 +283,22 @@ public:
         int32 read = 0;
         if (stream->read (&gain, sizeof (gain), &read) != kResultOk || read != sizeof (gain))
             return kResultFalse;
+       #if ! defined(TEST_VST3_SEPARATE_CONTROLLER)
+        // A gain no parameter can set (they are normalised) is the tests'
+        // cue: edit the gain from a thread of our own, as a plug-in's UI
+        // would, through the host's handler
+        if (gain == kEditStormGain)
+        {
+            stopEditStorm();
+            editStorm = std::thread ([this]
+            {
+                for (int i = 0; i < kEditStormCount && componentHandler != nullptr; ++i)
+                    componentHandler->performEdit (kGainId, (i % 100) / 100.0);
+                state.hostTempo.store (1.0); // done
+            });
+            return kResultOk;
+        }
+       #endif
         state.gain.store (gain);
         return kResultOk;
     }
@@ -354,7 +382,7 @@ public:
     ParamValue PLUGIN_API plainParamToNormalized (ParamID id, ParamValue value) override { return id == kHostTempoId ? value / 1000.0 : value; }
     ParamValue PLUGIN_API getParamNormalized (ParamID id) override { return controller.normalized (id); }
     tresult PLUGIN_API setParamNormalized (ParamID id, ParamValue value) override { return controller.setNormalized (id, value); }
-    tresult PLUGIN_API setComponentHandler (IComponentHandler*) override { return kResultOk; }
+    tresult PLUGIN_API setComponentHandler (IComponentHandler* handler) override { componentHandler = handler; return kResultOk; }
     IPlugView* PLUGIN_API createView (FIDString) override { return nullptr; }
    #endif
 
@@ -364,6 +392,16 @@ private:
     bool active = false;
     double sampleRate = 0.0;
     IConnectionPoint* peer = nullptr;
+   #if ! defined(TEST_VST3_SEPARATE_CONTROLLER)
+    IComponentHandler* componentHandler = nullptr;
+    std::thread editStorm;
+    void stopEditStorm()
+    {
+        if (editStorm.joinable())
+            editStorm.join();
+    }
+    ~GainComponent() override { stopEditStorm(); }
+   #endif
 };
 
 #if defined(TEST_VST3_SEPARATE_CONTROLLER)

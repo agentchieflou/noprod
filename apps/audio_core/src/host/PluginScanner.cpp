@@ -196,6 +196,28 @@ std::string PluginScanner::scan()
         }
     }
 
+   #if GHOSTDAW_MAC
+    // The Audio Units, from the system's registry rather than files (the
+    // listing loads no plugin code, so no dead man's pedal for it)
+    if (options.audioUnits)
+    {
+        auto result = runChildProcess (options.worker, { "--scan-au" }, options.timeoutMs);
+        auto parsed = result.started && ! result.timedOut && ! result.crashed && result.exitCode == 0 ? Json::parse (result.output) : std::nullopt;
+        if (! parsed || ! (*parsed)["plugins"].isArray())
+            Log::error ("plugin scan: the Audio Unit listing failed (" + (result.timedOut ? "timed out" : result.crashed ? "crashed" : "exit " + std::to_string (result.exitCode)) + "); none listed");
+        else
+        {
+            for (auto& p : (*parsed)["plugins"].elements())
+            {
+                if (p["pluginId"].toString().empty())
+                    continue;
+                found.push_back ({ p["pluginId"].toString(), p["name"].toString(), p["vendor"].toString(), "AU", p["pluginId"].toString(), 0 });
+                ++loaded;
+            }
+        }
+    }
+   #endif
+
     registry.replace (std::move (found), std::move (stillSkipped));
     auto summary = std::to_string (loaded) + " plugin" + (loaded == 1 ? "" : "s") + " loaded, " + std::to_string (kept) + " kept, "
                  + std::to_string (notPlugins) + " other binaries, " + std::to_string (newlySkipped) + " skipped";
