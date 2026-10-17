@@ -5,6 +5,7 @@
 //   npm run e2e:dist
 //   E2E_DIST_DIR=dist npm run e2e:dist   # test a build you made with NOPROD_BASE=/noprod/
 //
+//   E2E_THROTTLE=4 npm run e2e:dist       Chromium's CPU slowed 4x, like a busy CI runner
 //   E2E_BROWSER=firefox npm run e2e:dist   # Firefox, over WebDriver BiDi
 //   E2E_BROWSER=webkit npm run e2e:dist    # WebKit, through Playwright
 //
@@ -99,6 +100,8 @@ try {
 
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 1000 });
+  const throttle = Number(process.env.E2E_THROTTLE ?? 1);
+  if (throttle > 1 && which === 'chromium') await (await page.createCDPSession()).send('Emulation.setCPUThrottlingRate', { rate: throttle });
   const errors = [];
   const failedRequests = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -124,14 +127,26 @@ try {
   check('A click starts audio', (await state()) === 'running', String(await state()));
 
   // Add a library instrument from the Browser, turn on the computer keyboard
-  // with its toggle, and play a note on it
-  await page.evaluate(() => [...document.querySelectorAll('.browser-folder')].find((e) => e.textContent.trim().startsWith('Keys'))?.click());
-  await sleep(200);
+  // with its toggle, and play a note on it. Each step waits for what it needs
+  // (with a deadline) rather than sleeping: a slow runner gets the same test
+  const until = async (what, fn, ms = 15000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (await page.evaluate(fn)) return;
+      await sleep(50);
+    }
+    throw new Error(`timed out waiting for ${what}`);
+  };
+  const isKeys = (e) => e.textContent.trim().startsWith('Keys');
+  await until('the Keys folder', `[...document.querySelectorAll('.browser-folder')].some(${isKeys})`);
+  await page.evaluate((fn) => [...document.querySelectorAll('.browser-folder')].find(eval(fn))?.click(), String(isKeys));
+  await until('an instrument in the Browser', `!!document.querySelector('.browser-item')`);
   await page.evaluate(() => document.querySelector('.browser-item')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
-  await sleep(300);
-  await page.evaluate(() => [...document.querySelectorAll('.track-name')].find((e) => e.textContent === 'Grand Piano')?.click());
-  await page.click('button[title^="Computer MIDI keyboard"]');
-  await sleep(300);
+  const grand = `[...document.querySelectorAll('.track-name')].find((e) => e.textContent === 'Grand Piano')`;
+  await until('the Grand Piano track', `!!${grand}`);
+  await until('the Grand Piano track to be selected', `(${grand}.click(), ${grand}.closest('.track-header-box')?.classList.contains('selected'))`);
+  const toggle = 'button[title^="Computer MIDI keyboard"]';
+  await until('the computer keyboard to be on', `(document.querySelector('${toggle}').title.includes(' on:') || (document.querySelector('${toggle}').click(), false))`);
   const peak = page.evaluate(async () => {
     const an = window.__analysers[0];
     const buf = new Float32Array(an.fftSize);
@@ -140,14 +155,21 @@ try {
     while (performance.now() < end) {
       an.getFloatTimeDomainData(buf);
       for (const x of buf) peak = Math.max(peak, Math.abs(x));
+      window.__peak = peak;
       await new Promise((r) => setTimeout(r, 10));
     }
     return peak;
   });
+  // The first press can land before the instrument's first render is ready:
+  // press again until something is heard, inside the same 2.5 s window
   await sleep(200);
-  await page.keyboard.down('KeyZ');
-  await sleep(600);
-  await page.keyboard.up('KeyZ');
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.down('KeyZ');
+    await sleep(600);
+    await page.keyboard.up('KeyZ');
+    if ((await page.evaluate(() => window.__peak ?? 0)) > 0.01) break;
+    await sleep(100);
+  }
   const level = await peak;
   check('A library note is audible at the master', level > 0.01, `peak ${level.toFixed(3)}`);
   await page.screenshot({ path: join(shotDir, 'dist-noprod.png') });
