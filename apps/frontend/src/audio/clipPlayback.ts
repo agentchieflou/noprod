@@ -4,7 +4,7 @@
 // Clip properties (all optional):
 //   gain (dB), transpose (semitones), detune (cents)
 //   loopEnabled, loopStart / loopEnd (buffer seconds for audio, clip seconds for MIDI)
-//   warpEnabled, warpMode ('beats' | 'tones' | 'texture' | 'repitch'), originalBpm
+//   warpEnabled, warpMode ('complex' | 'beats' | 'tones' | 'texture' | 'repitch'), originalBpm
 //
 // `duration` is measured in source time (buffer seconds for audio, clip
 // seconds for MIDI). A clip consumes `clipRate()` source seconds per
@@ -14,6 +14,7 @@
 import { triggerNote } from './synth';
 import { dbToGain } from './devices';
 import { applyMidiEffects } from './midiEffects';
+import { stretchedBuffer } from './warp';
 
 type Stoppable = { stop: (when?: number) => void };
 
@@ -121,7 +122,12 @@ export function scheduleClip(
   if (!buffer) return sources;
   const rate = clipRate(clip, bpm);
 
-  if (isWarped(clip) && clip.warpMode !== 'repitch') {
+  // A warped clip plays its stretched render once that's ready (warp.ts);
+  // until then, and in Texture, grains
+  const stretching = isWarped(clip) && clip.warpMode !== 'repitch';
+  const stretched = stretching ? stretchedBuffer(clip, bpm) : null;
+
+  if (stretching && !stretched) {
     // Granular time-stretch: grains read the source at the tempo ratio and are
     // individually resampled by the transposition, so pitch and time are independent.
     const { grain, jitter } = WARP_GRAINS[clip.warpMode] || WARP_GRAINS.beats;
@@ -149,20 +155,25 @@ export function scheduleClip(
     return sources;
   }
 
-  // Plain playback (unwarped, or Re-Pitch): one resampled source, natively looped
+  // Plain playback (unwarped, Re-Pitch, or a stretched render): one source,
+  // natively looped. A render is the whole buffer, originalBpm / bpm times as
+  // long, played as it is.
+  const played = stretched ?? buffer;
+  const scale = stretched ? clip.originalBpm / bpm : 1; // played seconds per source second
+  const speed = stretched ? 1 : rate;
   const src = ctx.createBufferSource();
-  src.buffer = buffer;
-  src.playbackRate.value = rate;
+  src.buffer = played;
+  src.playbackRate.value = speed;
   if (loop) {
     src.loop = true;
-    src.loopStart = loop[0];
-    src.loopEnd = loop[1];
+    src.loopStart = loop[0] * scale;
+    src.loopEnd = loop[1] * scale;
   }
   src.connect(out);
-  const offset = sourcePosAt(clip, bpm, from);
-  if (!loop && offset >= buffer.duration) return sources;
+  const offset = sourcePosAt(clip, bpm, from) * scale;
+  if (!loop && offset >= played.duration) return sources;
   // start()'s duration counts buffer time, loops included
-  src.start(when, offset, (to - from) * rate);
+  src.start(when, offset, (to - from) * speed);
   sources.push(src);
   return sources;
 }
