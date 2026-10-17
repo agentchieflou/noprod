@@ -148,6 +148,9 @@ export class Engine {
     this.post({ type: 'forget', ids });
   }
 
+  // For the tests: the processor throws on its next block
+  crash() { this.post({ type: 'throw' }); }
+
   // For the tests: forget now; `force` even what is playing
   forget(ids: number[], force = false) {
     for (const id of ids) this.resident.delete(id);
@@ -157,7 +160,7 @@ export class Engine {
   post(m: EngineMessage) { this.node.port.postMessage(m); }
 
   span(span: SpanSpec) { this.post({ type: 'span', span }); }
-  closeSpan(id: number, at: number) { this.post({ type: 'closeSpan', id, at }); }
+  closeSpan(id: number, at: number, cut = false) { this.post({ type: 'closeSpan', id, at, cut }); }
   notes(notes: NoteEvent[]) { if (notes.length) this.post({ type: 'notes', notes }); }
   clips(clips: ClipEvent[]) { if (clips.length) this.post({ type: 'clips', clips }); }
   retract(keys: string[], at?: number) { if (keys.length) this.post({ type: 'retract', keys, at }); }

@@ -1,29 +1,27 @@
 // Session View launcher: quantized clip and scene launching on top of the
-// transport clock, looping session clips scheduled in short windows, scene
-// tempo / time-signature overrides and scene follow actions.
+// transport clock, each launched clip a span of the engine's scheduler on
+// its own clock (scheduler.ts), scene tempo / time-signature overrides and
+// scene follow actions.
 //
 // Store data: state.scenes[i] = { id, name, tempo, signature, follow }
 // and state.sessionClips[trackId][sceneIndex] = clip (same clip properties as
 // arrangement clips, looping by default). Runtime state lives here and is
 // exposed to React through subscribe()/getSessionSnapshot().
 
-import { audioContext, getStripInput } from './engine';
-import { scheduleClip, clipTimelineLength, clipLoop } from './clipPlayback';
+import { audioContext } from './engine';
+import { clipTimelineLength, clipLoop } from './clipPlayback';
 import {
   isPlaying as transportPlaying, nextQuantizedTime, releaseTrackFromArrangement,
-  sessionOwnedTracks, reschedule, onTransportChange, getPosition
+  sessionOwnedTracks, reschedule, onTransportChange, getPosition, getScheduler
 } from './transport';
+import type { Span } from './scheduler';
 import { barAt, barSeconds } from './timeline';
-
-type Stoppable = { stop: (when?: number) => void };
 
 interface PlayingClip {
   slot: number;
-  clip: any;
-  startCtx: number;     // context time the clip (re)starts from offset 0
-  cursor: number;       // clip-time offset scheduled up to
-  sources: Stoppable[];
-  stopAt: number | null;
+  startCtx: number;     // context time the clip started from offset 0
+  span: Span;           // its notes and audio, posted a window ahead
+  stopAt: number | null; // a one-shot clip's end
 }
 
 interface Pending { slot: number | null; atCtx: number } // slot null = stop
@@ -37,8 +35,8 @@ export interface SessionSnapshot {
   arrangementOverridden: boolean;    // some track is held by the session (Back to Arrangement lights up)
 }
 
-const LOOKAHEAD = 0.3;
-const CHUNK = 0.5;
+const LOOKAHEAD = 0.3;   // seconds: launches and stops are acted on this far ahead
+const POST_AHEAD = 1.0;  // seconds of a playing clip posted to the engine ahead
 const TICK_MS = 40;
 
 let getState: () => any = () => ({});
@@ -88,8 +86,9 @@ const ensureRunning = (atCtx?: number) => {
   return when;
 };
 
-const stopSources = (pc: PlayingClip, atCtx?: number) =>
-  pc.sources.forEach((s) => { try { s.stop(atCtx); } catch { /* already stopped */ } });
+// A clip stops at `atCtx`: nothing of its span starts after that, and what
+// is sounding stops then too
+const stopClip = (pc: PlayingClip, atCtx: number) => getScheduler()?.close(pc.span, atCtx, true);
 
 // Bars of the current signature, in seconds, at a given tempo
 const barLength = (st: any, bpm: number) => barSeconds(bpm, barAt(st.bpm || 120, getPosition(), st.timeSignatures));
@@ -139,8 +138,8 @@ export function stopAll() {
   emit();
 }
 
+// The transport stopped: its scheduler has already stopped every span
 function stopAllNow() {
-  playing.forEach((pc) => stopSources(pc));
   playing.clear();
   pending.clear();
   follow = null;
@@ -153,7 +152,8 @@ function stopAllNow() {
 
 // Give every track back to the arrangement
 export function backToArrangement() {
-  playing.forEach((pc) => stopSources(pc));
+  const now = audioContext.currentTime;
+  playing.forEach((pc) => stopClip(pc, now));
   playing.clear();
   pending.clear();
   follow = null;
@@ -220,6 +220,8 @@ function runFollowAction(fromScene: number, atCtx: number) {
 }
 
 function tick() {
+  const scheduler = getScheduler();
+  if (!scheduler) return; // the engine is still loading: the transport's play waits for it too
   const st = getState();
   const now = audioContext.currentTime;
   const horizon = now + LOOKAHEAD;
@@ -232,44 +234,29 @@ function tick() {
     applySceneSettings(queuedScene.index, queuedScene.atCtx);
   }
 
-  // Launches and stops whose time has come
+  // Launches and stops whose time has come: a clip plays on a span of its
+  // own, from clip time 0, for as long as it loops
   pending.forEach((pe, trackId) => {
     if (pe.atCtx > horizon) return;
     pending.delete(trackId);
     const prev = playing.get(trackId);
-    if (prev) { stopSources(prev, pe.atCtx); playing.delete(trackId); }
+    if (prev) { stopClip(prev, pe.atCtx); playing.delete(trackId); }
     if (pe.slot === null) return;
     const clip = clipAt(st, trackId, pe.slot);
     if (!clip) return;
     releaseTrackFromArrangement(trackId, pe.atCtx);
-    playing.set(trackId, { slot: pe.slot, clip, startCtx: pe.atCtx, cursor: 0, sources: [], stopAt: null });
+    const length = clipTimelineLength(clip, bpm);
+    const looping = !!clipLoop(clip);
+    const span = scheduler.open(pe.atCtx, 0, looping ? Infinity : length, true, { trackId, slot: pe.slot });
+    playing.set(trackId, { slot: pe.slot, startCtx: pe.atCtx, span, stopAt: looping ? null : pe.atCtx + length });
   });
 
-  // Schedule each playing clip a window ahead
-  const tracks = new Map((st.tracks || []).map((t: any) => [t.id, t]));
-  playing.forEach((pc, trackId) => {
-    const track: any = tracks.get(trackId);
-    // Edits in Clip View apply from the next window
-    const latest = clipAt(st, trackId, pc.slot);
-    if (latest) pc.clip = latest;
-    const length = clipTimelineLength(pc.clip, bpm);
-    const looping = !!clipLoop(pc.clip);
-    while (pc.startCtx + pc.cursor < horizon) {
-      const to = looping ? pc.cursor + CHUNK : Math.min(length, pc.cursor + CHUNK);
-      if (to <= pc.cursor) { // one-shot clip finished
-        pc.stopAt = pc.startCtx + length;
-        break;
-      }
-      pc.sources.push(...scheduleClip(
-        audioContext, pc.clip, track?.instrument?.parameters, getStripInput(trackId),
-        pc.startCtx + pc.cursor, pc.cursor, to, bpm, { noteStartsOnly: true, midiEffects: track?.midiEffects }
-      ));
-      pc.cursor = to;
-    }
-    // keep the source list from growing without bound
-    if (pc.sources.length > 400) pc.sources = pc.sources.slice(-200);
+  // Each playing clip a window ahead (edits in the Clip View reach what is
+  // posted next; the transport's resync takes back what changed)
+  playing.forEach((pc) => scheduler.advance(pc.span, now + POST_AHEAD - pc.startCtx));
+  playing.forEach((pc, id) => {
+    if (pc.stopAt !== null && pc.stopAt < now) { scheduler.close(pc.span, pc.stopAt); playing.delete(id); }
   });
-  playing.forEach((pc, id) => { if (pc.stopAt !== null && pc.stopAt < now) playing.delete(id); });
 
   if (playing.size === 0 && pending.size === 0 && !follow && !queuedScene && timer) {
     clearInterval(timer);

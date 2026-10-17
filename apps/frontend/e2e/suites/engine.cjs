@@ -449,6 +449,125 @@ module.exports = async (page, ctx) => {
     restarted.blocks === restarted.expected && restarted.started === 3 && restarted.late > 0.1 && restarted.errors === 0,
     `${restarted.blocks} of ${restarted.expected} blocks processed, ${restarted.started} started, peak after 1.5 s ${restarted.late}, ${restarted.errors} processor errors`);
 
+  // 13. Session clips play on spans of their own: a scene of two looping
+  // clips, launched with a follow action to the next scene after a bar,
+  // posts its notes pass after pass, the follow action retracts what the
+  // first scene had posted ahead, and the stop takes back the rest.
+  await page.evaluate(async () => { window.__session = await import('/src/audio/session.ts'); return 1; });
+  const session = await page.evaluate(async () => {
+    const store = () => window.__dawStore.getState();
+    window.__clear();
+    store().setBpm(120);
+    store().setLaunchQuantization('none');
+    const ids = [];
+    for (let t = 0; t < 2; t++) {
+      store().addMidiTrackWithInstrument({ name: 'Synth', type: 'instrument', parameters: { Waveform: 'sine', Attack: 0.001, Decay: 0.05, Sustain: 0.8, Release: 0.005, Gain: 0.4 } }, `E2E ${t}`);
+      ids.push(store().tracks.at(-1).id);
+    }
+    // a one-bar clip (2 s) of eighth notes, looping; scene 0 follows to scene 1 after a bar
+    const clip = (pitch) => ({ type: 'midi', file: 'c', audioBuffer: null, duration: 2, loopStart: 0, loopEnd: 2, notes: Array.from({ length: 8 }, (_, i) => ({ id: `n${i}`, pitch: pitch + (i % 4), start: i * 0.25, duration: 0.1, velocity: 0.8 })) });
+    for (const id of ids) { store().setSessionClip(id, 0, clip(60)); store().setSessionClip(id, 1, clip(72)); }
+    const scenes = store().scenes.map((sc, i) => (i === 0 ? { ...sc, follow: { enabled: true, action: 'next', bars: 1 } } : sc));
+    window.__dawStore.setState({ scenes });
+    for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(() => setTimeout(r)));
+    window.__tr.getScheduler().claim();
+    await window.__probe.reset();
+    const zero = await window.__stats();
+    const ctxA = window.__transport.audioContext;
+    const c0 = ctxA.currentTime;
+    window.__session.launchScene(0);
+    // scene 0 for a bar (2 s), then scene 1 for about a bar and a half
+    await new Promise((r) => setTimeout(r, 3600));
+    const snap = window.__session.getSessionSnapshot();
+    const mid = window.__since(zero, await window.__stats());
+    const elapsed = ctxA.currentTime - c0;
+    window.__session.stopAll();
+    await new Promise((r) => setTimeout(r, 500));
+    const after = window.__since(zero, await window.__stats());
+    const sessionSpans = (await window.__stats()).scheduler.sessionSpans;
+    store().togglePlayback();
+    await new Promise((r) => setTimeout(r, 200));
+    const times = await window.__probe.read();
+    store().setLaunchQuantization('1 bar');
+    return { snap, mid, after, elapsed, onsets: times.length, sessionSpans };
+  });
+  const sessionBeats = Math.ceil((session.elapsed - 0.05) * 4);
+  check('A launched scene plays its clips pass after pass, and its follow action moves to the next scene',
+    session.snap.playingScene === 1 && session.snap.playing && Object.keys(session.snap.playing).length === 2 && Math.abs(session.onsets - sessionBeats) <= 1,
+    `scene ${session.snap.playingScene} playing on ${Object.keys(session.snap.playing || {}).length} tracks after ${session.elapsed.toFixed(2)} s; ${session.onsets} onsets (${sessionBeats} beats)`);
+  check('…its notes are counted: posted = started + retracted, the follow action and the stop taking back what was ahead',
+    session.after.posted === session.after.started + session.after.retracted + session.after.dropped && session.after.dropped === 0 && session.mid.retracted >= 2 && session.after.retracted > session.mid.retracted && session.after.started >= 2 * sessionBeats - 4,
+    `${session.after.posted} posted = ${session.after.started} started + ${session.after.retracted} retracted (${session.mid.retracted} at the follow action) + ${session.after.dropped} dropped; ${session.after.late} late; ${session.sessionSpans} session spans left`);
+
+  // 14. A key let go before its render arrives still plays, for as long as
+  // it was held (WebKit's first press on a just-added instrument): a cold
+  // pitched note, pressed for 100 ms
+  const cold = await page.evaluate(async () => {
+    const store = () => window.__dawStore.getState();
+    window.__clear();
+    store().addMidiTrackWithInstrument(window.__lib.createLibraryInstrument(window.__sound.findSound('piano-grand')), 'E2E cold');
+    const t = store().tracks.at(-1);
+    const ctxA = window.__transport.audioContext;
+    const synth = await import('/src/audio/synth.ts');
+    const zero = await window.__stats();
+    const before = window.__lib.libraryStats().waits.length;
+    const t0 = performance.now();
+    const v = synth.startVoice(ctxA, window.__transport.getStripInput(t.id), t.instrument.parameters, 31, ctxA.currentTime, 0.8);
+    await new Promise((r) => setTimeout(r, 100));
+    v.release(ctxA.currentTime);
+    const an = window.__transport.masterAnalyser, buf = new Float32Array(an.fftSize);
+    let peak = 0, heardAt = null;
+    const end = performance.now() + 2500;
+    while (performance.now() < end) {
+      an.getFloatTimeDomainData(buf);
+      for (const x of buf) peak = Math.max(peak, Math.abs(x));
+      if (heardAt === null && peak > 0.01) heardAt = Math.round(performance.now() - t0);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    const s = window.__since(zero, await window.__stats());
+    const waits = window.__lib.libraryStats().waits.slice(before).map(Math.round);
+    return { peak: +peak.toFixed(3), heardAt, started: s.started, dropped: s.dropped, waits };
+  });
+  check('A key let go before its cold render arrives still plays, late, for as long as it was held',
+    cold.started === 1 && cold.dropped === 0 && cold.peak > 0.01 && cold.heardAt !== null && cold.waits.length === 1 && cold.heardAt >= cold.waits[0] - 50,
+    `render took ${cold.waits.join('/')} ms, heard at ${cold.heardAt} ms, peak ${cold.peak}; ${cold.started} started, ${cold.dropped} dropped`);
+
+  // 15. The engine failing twice in a row stops playback instead of starting
+  // over into the same failure (once, it is remade and playback starts over)
+  const crash = await page.evaluate(async () => {
+    const store = () => window.__dawStore.getState();
+    window.__synths(2, 8);
+    for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(() => setTimeout(r)));
+    window.__transport.setPosition(0);
+    store().togglePlayback();
+    await new Promise((r) => setTimeout(r, 400));
+    const zero = await window.__stats();
+    window.__tr.getEngine().crash();
+    await new Promise((r) => setTimeout(r, 400));
+    const once = { playing: store().isPlaying, ...(await window.__stats()) };
+    const an = window.__transport.masterAnalyser, buf = new Float32Array(an.fftSize);
+    let peak = 0;
+    const end = performance.now() + 600;
+    while (performance.now() < end) { an.getFloatTimeDomainData(buf); for (const x of buf) peak = Math.max(peak, Math.abs(x)); await new Promise((r) => setTimeout(r, 10)); }
+    window.__tr.getEngine().crash();
+    await new Promise((r) => setTimeout(r, 400));
+    const twice = { playing: store().isPlaying, ...(await window.__stats()) };
+    if (store().isPlaying) store().togglePlayback();
+    await new Promise((r) => setTimeout(r, 200));
+    return { once: { playing: once.playing, restarts: once.restarts - zero.restarts, halts: once.halts - zero.halts, peak: +peak.toFixed(3) }, twice: { playing: twice.playing, restarts: twice.restarts - zero.restarts, halts: twice.halts - zero.halts } };
+  });
+  check('The engine failing once is remade and playback starts over', crash.once.playing && crash.once.restarts === 1 && crash.once.halts === 0 && crash.once.peak > 0.05,
+    `${crash.once.restarts} restart, still playing, peak ${crash.once.peak} after`);
+  check('…failing again within 2 s stops playback instead', !crash.twice.playing && crash.twice.restarts === 2 && crash.twice.halts === 1,
+    `${crash.twice.restarts} restarts, ${crash.twice.halts} halt, playing ${crash.twice.playing}`);
+
+  // The two failures above were asked for: exactly their two reports are
+  // expected, and taken out of the log, so an engine failure anywhere else
+  // in the suite still fails "No page errors" below
+  const reported = ctx.logs.filter((l) => /^\[error\]/.test(l) && l.includes('The audio engine failed and was restarted'));
+  check('…and the two failures were reported, and no other', reported.length === 2, `${reported.length} reported`);
+  for (const l of reported.slice(0, 2)) ctx.logs.splice(ctx.logs.indexOf(l), 1);
+
   await ctx.shot('engine');
   const errors = ctx.logs.filter((l) => /^\[(pageerror|error)\]/.test(l) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

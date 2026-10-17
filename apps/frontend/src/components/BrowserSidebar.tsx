@@ -14,8 +14,9 @@ import { SOUND_PRESETS, DRUM_KIT_PRESETS, isDrumSample } from '../browser/preset
 import { getServices, subscribeServices, setServicesDialogOpen } from '../native/services';
 import { subscribeAudioCore, getAudioCore, findNativePlugin, nativeDeviceFor } from '../native/audioCore';
 import {
-  createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview
+  createLibraryInstrument, createLibraryKit, kitSounds
 } from '../audio/library';
+import { previewKit, previewSound, stopSoundPreview } from '../audio/previews';
 import { notify, guarded, errorMessage } from '../notify';
 import { subscribeUserSounds, getUserSounds, deleteUserSound } from '../audio/userSounds';
 

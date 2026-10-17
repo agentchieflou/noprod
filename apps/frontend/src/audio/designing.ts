@@ -5,7 +5,8 @@
 import type { RenderOptions, RenderedSound, SoundRecipe } from '@noprod/sound';
 import { v4 as uuidv4 } from 'uuid';
 import { audioContext } from './engine';
-import { designPool, previewGain } from './library';
+import { designPool } from './library';
+import { previewGain } from './previews';
 
 // Render off the main thread (on the Sound Designer's worker)
 export function renderSound(recipe: SoundRecipe, options: RenderOptions): Promise<RenderedSound> {

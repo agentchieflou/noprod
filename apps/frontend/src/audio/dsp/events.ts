@@ -59,7 +59,7 @@ export type EngineMessage =
   | { type: 'buffer'; id: number; l: Float32Array; r: Float32Array }
   | { type: 'forget'; ids: number[]; force?: boolean } // force: for the tests, even a buffer in use
   | { type: 'span'; span: SpanSpec }
-  | { type: 'closeSpan'; id: number; at: number }
+  | { type: 'closeSpan'; id: number; at: number; cut?: boolean } // cut: what is sounding stops then too
   | { type: 'notes'; notes: NoteEvent[] }
   | { type: 'clips'; clips: ClipEvent[] }
   | { type: 'retract'; keys: string[]; at?: number }
@@ -69,7 +69,8 @@ export type EngineMessage =
   | { type: 'silence'; strip: number; at: number }
   | { type: 'stop'; at: number }
   | { type: 'sync' }
-  | { type: 'stats' };
+  | { type: 'stats' }
+  | { type: 'throw' }; // for the tests: the next block throws, as a bug on the audio thread would
 
 // How the engine is doing: events started, started late (within the
 // budget) and dropped (past it), what's queued and sounding, and the
