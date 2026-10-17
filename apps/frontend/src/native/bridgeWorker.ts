@@ -5,7 +5,9 @@
 // blocks to the Audio Core's stream server and hands the processed blocks
 // back. Control messages (LOAD, SET_PARAM, ...) come from the main thread and
 // their replies go back there. A dropped connection is retried, re-sending
-// OPEN and the last LOAD.
+// OPEN and the last LOAD, after a delay that grows to a cap. `pause` stops
+// every connection and its retries (the service was turned off); `resume`
+// starts them again.
 
 interface LoadMessage {
   type: 'LOAD';
@@ -24,11 +26,16 @@ interface Stream {
   load: LoadMessage | null; // last LOAD with every later SET_PARAM folded in, replayed after a reconnect
   queue: unknown[];        // control messages waiting for the connection
   closed: boolean;
+  attempts: number;        // failed connections in a row
   retry: ReturnType<typeof setTimeout> | null;
 }
 
+import { backoffMs } from './backoff';
+
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const streams = new Map<string, Stream>();
+let paused = false;
+let warnedBadMessage = false;
 
 const post = (message: unknown) => ctx.postMessage(message);
 
@@ -39,6 +46,7 @@ function connect(s: Stream) {
   s.ready = false;
 
   ws.onopen = () => {
+    s.attempts = 0;
     ws.send(JSON.stringify({ type: 'OPEN', streamId: s.id, sampleRate: s.sampleRate, maxBlockSize: s.block }));
     if (s.load) ws.send(JSON.stringify(s.load));
     s.queue.forEach((m) => ws.send(JSON.stringify(m)));
@@ -47,7 +55,12 @@ function connect(s: Stream) {
 
   ws.onmessage = (e) => {
     if (typeof e.data === 'string') {
-      const message = JSON.parse(e.data);
+      let message: any;
+      try { message = JSON.parse(e.data); } catch { message = null; }
+      if (!message || typeof message.type !== 'string') {
+        if (!warnedBadMessage) { warnedBadMessage = true; console.warn('Ignoring a message from the Audio Core that is not a typed JSON object'); }
+        return;
+      }
       if (message.type === 'STREAM_OPENED') {
         s.ready = true;
         post({ type: 'status', streamId: s.id, connected: true });
@@ -67,7 +80,7 @@ function connect(s: Stream) {
     s.ready = false;
     if (s.closed) return;
     post({ type: 'status', streamId: s.id, connected: false });
-    s.retry = setTimeout(() => connect(s), 2000);
+    if (!paused) s.retry = setTimeout(() => connect(s), backoffMs(s.attempts++));
   };
   ws.onerror = () => { /* onclose follows */ };
 }
@@ -78,7 +91,7 @@ ctx.onmessage = (e: MessageEvent) => {
   if (msg.type === 'open') {
     const s: Stream = {
       id: msg.streamId, url: msg.url, sampleRate: msg.sampleRate, block: msg.block, port: msg.port,
-      ws: null, ready: false, load: null, queue: [], closed: false, retry: null
+      ws: null, ready: false, load: null, queue: [], closed: false, attempts: 0, retry: null
     };
     streams.set(s.id, s);
 
@@ -92,7 +105,25 @@ ctx.onmessage = (e: MessageEvent) => {
       // ws.send copied the bytes, so the buffer goes back to the worklet's pool
       s.port.postMessage({ block, buffer, processed: false }, [buffer]);
     };
-    connect(s);
+    if (!paused) connect(s);
+    return;
+  }
+
+  if (msg.type === 'pause') {
+    paused = true;
+    streams.forEach((s) => { if (s.retry) clearTimeout(s.retry); s.retry = null; s.ws?.close(); });
+    return;
+  }
+
+  if (msg.type === 'resume') {
+    paused = false;
+    streams.forEach((s) => {
+      if (s.retry) clearTimeout(s.retry);
+      s.retry = null;
+      s.attempts = 0;
+      if (msg.url !== s.url) { s.url = msg.url; s.ws?.close(); } // reconnects through the retry
+      if (!s.ws) connect(s);
+    });
     return;
   }
 

@@ -11,6 +11,7 @@ import {
   previewFile, stopPreview, decodeLibraryFile, type LibraryFolder, type LibraryFile
 } from '../browser/library';
 import { SOUND_PRESETS, DRUM_KIT_PRESETS, isDrumSample } from '../browser/presets';
+import { getServices, subscribeServices, setServicesDialogOpen } from '../native/services';
 import { subscribeAudioCore, getAudioCore, findNativePlugin, nativeDeviceFor } from '../native/audioCore';
 import {
   createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview
@@ -51,6 +52,7 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
   const places = useSyncExternalStore(subscribeLibrary, getPlaces);
   const mySounds = useSyncExternalStore(subscribeUserSounds, getUserSounds);
   const audioCore = useSyncExternalStore(subscribeAudioCore, getAudioCore);
+  const ghostdawOn = useSyncExternalStore(subscribeServices, getServices).ghostdaw.enabled;
   const [open, setOpen] = useState<Record<string, boolean>>({ library: true });
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState<string | null>(null);
@@ -172,7 +174,7 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
       // Plug-ins the Audio Core found (hostable on any track), then ones only
       // the browser's folder scan saw, which need scanning in the Audio Core
       id: 'plugins', label: 'Plug-ins', icon: <Plug size={13} />,
-      items: [
+      items: !ghostdawOn ? [] : [
         ...(audioCore.state?.availablePlugins ?? []).map((p) => ({
           key: `native:${p.path}:${p.pluginId}`, label: p.name, hint: `${p.format}${p.vendor ? ` · ${p.vendor}` : ''} · hosted by the Audio Core`,
           onLoad: () => loadAudioDevice(nativeDeviceFor(p))
@@ -182,7 +184,9 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
           onLoad: () => { flash('Scan this folder in the Audio Core first (VST Folders Scan tab)'); onShowPluginScan(); }
         }))
       ],
-      empty: <button className="browser-link" onClick={onShowPluginScan}>Scan plug-in folders…</button>
+      empty: ghostdawOn
+        ? <button className="browser-link" onClick={onShowPluginScan}>Scan plug-in folders…</button>
+        : <button className="browser-link" onClick={() => setServicesDialogOpen(true)}>Turn on GhostDAW to host plug-ins…</button>
     },
     {
       id: 'samples', label: 'Samples', icon: <Music size={13} />,
