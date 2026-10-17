@@ -23,8 +23,9 @@ npm run start:sequencer     # headless Strudel, on port 8081
 
 Run each command in its own terminal, then open http://localhost:5173.
 
-- The frontend works on its own. The other two services add dictation and
-  Strudel playback.
+- The frontend works on its own. The other two give dictation: the
+  orchestrator asks Gemini for Strudel code, and the sequencer turns it into
+  notes.
 - The orchestrator needs a Gemini key for dictation. Copy
   `apps/orchestrator/.env.example` to `apps/orchestrator/.env` and set
   `GEMINI_API_KEY`.
