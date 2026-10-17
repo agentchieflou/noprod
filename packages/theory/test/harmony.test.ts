@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  PROGRESSIONS, SEVENTHS, chordFamily, diatonicChords, nextChords, parseNumeral, romanNumeral, type ChordRef, type Key
+  PROGRESSIONS, SEVENTHS, chordFamily, chordNameInKey, diatonicChords, nextChords, parseNumeral, romanNumeral, type ChordRef, type Key
 } from '../src/index.ts';
 
 const C: Key = { tonic: 0, mode: 'major' };
@@ -94,3 +94,42 @@ test('suggestions are deterministic', () => {
   const history = chords(C, 'I', 'vi', 'IV');
   assert.deepEqual(nextChords(history, C), nextChords(history, C));
 });
+
+const NEW: { name: string; mode: 'major' | 'minor'; numerals: string[] }[] = [
+  { name: 'I–IV–vi–V', mode: 'major', numerals: ['I', 'IV', 'vi', 'V'] },
+  { name: 'Royal Road', mode: 'major', numerals: ['IV', 'V', 'iii', 'vi'] },
+  { name: 'I–bVII–IV–I', mode: 'major', numerals: ['I', 'bVII', 'IV', 'I'] },
+  { name: 'I–vi–ii–V', mode: 'major', numerals: ['I', 'vi', 'ii', 'V'] },
+  { name: 'i–iv–i–V', mode: 'minor', numerals: ['i', 'iv', 'i', 'V'] },
+  { name: 'i–VI–iv–V', mode: 'minor', numerals: ['i', 'VI', 'iv', 'V'] }
+];
+
+test('the six new progressions are in PROGRESSIONS, in their mode', () => {
+  for (const { name, mode, numerals } of NEW) {
+    const progression = PROGRESSIONS.find(p => p.name === name);
+    assert.ok(progression, name);
+    assert.equal(progression.mode, mode, name);
+    assert.deepEqual(progression.numerals, numerals, name);
+  }
+});
+
+test('Royal Road in C, I–bVII–IV–I in C, i–VI–iv–V in A minor name their chords', () => {
+  const names = (key: Key, ...numerals: string[]) => numerals.map(n => {
+    const { root, quality } = parseNumeral(n, key);
+    return chordNameInKey(root, quality, key);
+  });
+  assert.deepEqual(names(C, 'IV', 'V', 'iii', 'vi'), ['F', 'G', 'Em', 'Am']);
+  assert.deepEqual(names(C, 'I', 'bVII', 'IV', 'I'), ['C', 'Bb', 'F', 'C']);
+  assert.deepEqual(names(A_MINOR, 'i', 'VI', 'iv', 'V'), ['Am', 'F', 'Dm', 'E']);
+});
+
+// Each new progression, played for its first three chords, predicts its fourth
+for (const { name, mode, numerals } of NEW) {
+  test(`after ${numerals.slice(0, 3).join(' ')}, ${name} predicts ${numerals[3]} in the top three`, () => {
+    const key = mode === 'major' ? C : A_MINOR;
+    const { root, quality } = parseNumeral(numerals[3], key);
+    const top = nextChords(chords(key, ...numerals.slice(0, 3)), key, 3);
+    const hit = top.some(s => s.root === root && chordFamily(s.root, s.quality, key) === chordFamily(root, quality, key));
+    assert.ok(hit, `${name}: got ${top.map(s => s.name).join(' ')}`);
+  });
+}
