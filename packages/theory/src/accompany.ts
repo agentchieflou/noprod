@@ -135,6 +135,7 @@ export class Accompanist {
   private readonly voicings = new Map<number, Voicing>();   // by the beat their step starts
   private readonly committed = new Map<number, AccompanyNote>();
   private horizon: number | null = null;   // notes starting before this are committed
+  private forgotten = -Infinity;   // what came before this beat is forgotten
   private nextId = 1;
 
   constructor(style: AccompanyStyle, options: AccompanyOptions = {}) {
@@ -156,7 +157,7 @@ export class Accompanist {
     const chord = recognizeChord(held);
     const last = this.changes[this.changes.length - 1];
     if (!chord || (last && last.root === chord.root && last.quality === chord.quality)) return [];
-    const time = Math.max(at, last?.at ?? -Infinity);
+    const time = Math.max(at, last?.at ?? -Infinity, this.forgotten + this.beatsPerBar);
     this.changes.push({ at: time, root: chord.root, quality: chord.quality });
     const step = this.regular(time);
     if (time - step > EPSILON && time - step <= LATE_GRACE + EPSILON) this.late.push(time);
@@ -183,10 +184,28 @@ export class Accompanist {
   advance(now: number, until: number): AccompanyEvent[] {
     if (this.horizon === null) this.horizon = now;
     for (const [id, note] of this.committed) if (note.end <= now) this.committed.delete(id);
+    this.forget(now);
     if (until <= this.horizon) return [];
     const events = this.plan(this.horizon, until).map((n) => this.commit(n));
     this.horizon = until;
     return events;
+  }
+
+  // A band can play for hours: forget the chords and voicings from more
+  // than a bar before anything still sounding. The voicing of the step
+  // kept stays known, so the voice leading goes on exactly as before.
+  private forget(now: number) {
+    let from = now;
+    for (const note of this.committed.values()) from = Math.min(from, note.start);
+    const keep = (Math.floor(from / this.beatsPerBar + EPSILON) - 1) * this.beatsPerBar;
+    if (keep <= this.forgotten) return;
+    this.voicing(keep);
+    for (const beat of [...this.voicings.keys()]) if (beat < keep) this.voicings.delete(beat);
+    let last = 0;   // the change in force at `keep`
+    while (last + 1 < this.changes.length && this.changes[last + 1].at <= keep) last++;
+    this.changes.splice(0, last);
+    this.late.splice(0, this.late.filter((t) => t < keep).length);
+    this.forgotten = keep;
   }
 
   // Everything stops at `now`
