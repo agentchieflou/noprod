@@ -6,9 +6,9 @@ const C: Key = { tonic: 0, mode: 'major' };
 const A_MINOR: Key = { tonic: 9, mode: 'minor' };
 const sum = (xs: { weight: number }[]) => xs.reduce((s, x) => s + x.weight, 0);
 
-test('the corpus holds the ten public-domain tunes, in their keys', () => {
-  assert.equal(MELODIES.length, 10);
-  assert.equal(new Set(MELODIES.map(m => m.id)).size, 10);
+test('the corpus holds the eleven public-domain tunes, in their keys', () => {
+  assert.equal(MELODIES.length, 11);
+  assert.equal(new Set(MELODIES.map(m => m.id)).size, 11);
   for (const melody of MELODIES) {
     const pitches = melodyPitches(melody);
     assert.ok(pitches.length >= 20, melody.name);
