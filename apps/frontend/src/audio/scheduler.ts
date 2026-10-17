@@ -42,7 +42,12 @@ export interface Span {
   clips: Map<string, PostedClip>;
   clickCursor: number;       // the transport's metronome cursor
   engine: boolean;           // posted to the engine (a count-in span isn't)
+  source?: SessionSource;    // a session clip's span: positions are clip time, from 0
 }
+
+// A launched Session View clip (session.ts): the slot it plays from, read
+// from the store each time so edits in the Clip View reach what's posted next
+export interface SessionSource { trackId: string; slot: number }
 
 interface Note { key: string; trackId: string; pos: number; duration: number; params: any; pitch: number; velocity: number }
 
@@ -66,10 +71,47 @@ function firstFrom(notes: Expanded[], start: number) {
   return lo;
 }
 
+// A session clip loops for as long as it plays: pass 0 is the clip up to its
+// loop end, then [loopStart, loopEnd) again and again (expandMidiNotes does
+// the same within a clip's length). Each pass's notes, in clip time.
+const sessionPasses = new WeakMap<object, { effects: unknown; passes: Map<number, Expanded[]> }>();
+function sessionPass(clip: any, effects: unknown, pass: number): { start: number; notes: Expanded[] } | null {
+  const loop = clipLoop(clip);
+  if (!loop && pass > 0) return null;
+  const [ls, le] = loop ?? [0, clip.duration];
+  const len = le - ls;
+  if (loop && len <= 0) return null;
+  const start = pass === 0 ? 0 : le + (pass - 1) * len;
+  let hit = sessionPasses.get(clip);
+  if (!hit || hit.effects !== effects) sessionPasses.set(clip, (hit = { effects, passes: new Map() }));
+  let notes = hit.passes.get(pass);
+  if (!notes) {
+    const shift = Math.round(clip.transpose || 0);
+    const raw: Expanded[] = [];
+    for (const n of clip.notes || []) {
+      const inPass = pass === 0 ? n.start < le : n.start >= ls && n.start < le;
+      if (!inPass) continue;
+      const s = pass === 0 ? n.start : n.start - ls + start;
+      const e = Math.min(s + n.duration, pass === 0 ? (loop ? le : clip.duration) : start + len);
+      if (e > s) raw.push({ start: s, end: e, pitch: n.pitch + shift, velocity: n.velocity ?? 1, id: `${n.id}-${pass}` });
+    }
+    notes = [...applyMidiEffects(raw, effects as any)].sort((a, b) => a.start - b.start);
+    hit.passes.set(pass, notes);
+  }
+  return { start, notes };
+}
+// The pass of a session clip that clip time `t` falls in
+function sessionPassAt(clip: any, t: number) {
+  const loop = clipLoop(clip);
+  if (!loop || t < loop[1]) return 0;
+  return 1 + Math.floor((t - loop[1]) / (loop[1] - loop[0]));
+}
+
 let nextSpanId = 1;
 
 export class Scheduler {
-  spans: Span[] = [];
+  spans: Span[] = [];         // the arrangement's: the transport's segments
+  sessionSpans: Span[] = [];  // one per launched session clip
   // the tracks whose arrangement clips are silent (a session clip holds them)
   owned = new Set<string>();
   private generation = 0; // restarts of a clip get a key of their own
@@ -116,9 +158,9 @@ export class Scheduler {
 
   // ----------------------------------------------------------------- spans
 
-  open(ctxStart: number, posStart: number, posEnd: number, engine = true): Span {
-    const span: Span = { id: nextSpanId++, ctxStart, posStart, posEnd, cursor: posStart, notes: new Map(), clips: new Map(), clickCursor: posStart, engine };
-    this.spans.push(span);
+  open(ctxStart: number, posStart: number, posEnd: number, engine = true, source?: SessionSource): Span {
+    const span: Span = { id: nextSpanId++, ctxStart, posStart, posEnd, cursor: posStart, notes: new Map(), clips: new Map(), clickCursor: posStart, engine, source };
+    (source ? this.sessionSpans : this.spans).push(span);
     if (engine) {
       this.engine.span({ id: span.id, ctxStart, posStart, posEnd });
       this.postClips(span, posStart);
@@ -126,18 +168,23 @@ export class Scheduler {
     return span;
   }
 
-  // The span ends at `atCtx`: nothing of it starts after that
-  close(span: Span, atCtx: number) {
-    if (span.engine) this.engine.closeSpan(span.id, atCtx);
+  allSpans() { return [...this.spans, ...this.sessionSpans]; }
+
+  // The span ends at `atCtx`: nothing of it starts after that. With `cut`,
+  // what is sounding stops then too (a session clip stopped at the bar)
+  close(span: Span, atCtx: number, cut = false) {
+    if (span.engine) this.engine.closeSpan(span.id, atCtx, cut);
     for (const n of span.notes.values()) if (!n.posted) n.cancel(atCtx);
-    const i = this.spans.indexOf(span);
-    if (i >= 0) this.spans.splice(i, 1);
+    const list = span.source ? this.sessionSpans : this.spans;
+    const i = list.indexOf(span);
+    if (i >= 0) list.splice(i, 1);
   }
 
   // Everything stops at `atCtx`
   clear(atCtx: number) {
-    for (const span of this.spans) for (const n of span.notes.values()) if (!n.posted) n.cancel(atCtx);
+    for (const span of this.allSpans()) for (const n of span.notes.values()) if (!n.posted) n.cancel(atCtx);
     this.spans = [];
+    this.sessionSpans = [];
     this.engine.stopAll(atCtx);
   }
 
@@ -151,8 +198,9 @@ export class Scheduler {
 
   // ----------------------------------------------------------------- notes
 
-  // Every note a track's MIDI clips play in [from, to) of the timeline
-  private notesIn(st: any, from: number, to: number): Note[] {
+  // Every note a span plays in [from, to): the timeline's, or a session clip's
+  private notesIn(st: any, from: number, to: number, span?: Span): Note[] {
+    if (span?.source) return this.sessionNotesIn(st, span.source, from, to);
     const out: Note[] = [];
     const bpm = st.bpm || 120;
     const trackById = new Map(this.tracks(st).map((t: any) => [t.id, t]));
@@ -169,6 +217,24 @@ export class Scheduler {
         const pos = start + o.start;
         if (pos >= to || pos >= end) break;
         out.push({ key: `${region.id}:${o.id}`, trackId: region.trackId, pos, duration: Math.min(o.end, end - start) - o.start, params: track.instrument.parameters, pitch: o.pitch, velocity: o.velocity });
+      }
+    }
+    return out;
+  }
+
+  // A session clip's notes in [from, to) of clip time, pass by pass
+  private sessionNotesIn(st: any, source: SessionSource, from: number, to: number): Note[] {
+    const out: Note[] = [];
+    const track = (st.tracks || []).find((t: any) => t.id === source.trackId);
+    const clip = st.sessionClips?.[source.trackId]?.[source.slot];
+    if (!track?.instrument || !clip || clip.type !== 'midi' || !clip.notes) return out;
+    for (let pass = sessionPassAt(clip, from); ; pass++) {
+      const p = sessionPass(clip, track.midiEffects, pass);
+      if (!p || p.start >= to) break;
+      for (let i = firstFrom(p.notes, from); i < p.notes.length; i++) {
+        const o = p.notes[i];
+        if (o.start >= to) break;
+        out.push({ key: `${source.trackId}:${source.slot}:${o.id}`, trackId: source.trackId, pos: o.start, duration: o.end - o.start, params: track.instrument.parameters, pitch: o.pitch, velocity: o.velocity });
       }
     }
     return out;
@@ -217,7 +283,7 @@ export class Scheduler {
     const limit = Math.min(to, span.posEnd);
     if (limit <= span.cursor) return;
     const batch: NoteEvent[] = [];
-    for (const n of this.notesIn(this.getState(), span.cursor, limit)) this.postNote(span, n, batch);
+    for (const n of this.notesIn(this.getState(), span.cursor, limit, span)) this.postNote(span, n, batch);
     this.engine.notes(batch);
     span.cursor = limit;
   }
@@ -227,6 +293,16 @@ export class Scheduler {
   private clipEvents(st: any, span: Span, from: number): { key: string; signature: string; event: Omit<ClipEvent, 'key' | 'span'> }[] {
     const out: { key: string; signature: string; event: Omit<ClipEvent, 'key' | 'span'> }[] = [];
     const bpm = st.bpm || 120;
+    if (span.source) {
+      // a session clip: on its own clock from 0, for as long as its span
+      const { trackId, slot } = span.source;
+      const clip = st.sessionClips?.[trackId]?.[slot];
+      if (clip && clip.type !== 'midi' && clip.audioBuffer) {
+        const c = this.clipEvent(clip, trackId, bpm, 0, Math.max(from, 0), span.posEnd);
+        if (c) out.push({ key: `clip:${trackId}:${slot}`, ...c });
+      }
+      return out;
+    }
     const tracks = this.tracks(st);
     const trackById = new Map(tracks.map((t: any) => [t.id, t]));
     // Frozen tracks play their rendered buffer instead of live clips
@@ -245,36 +321,42 @@ export class Scheduler {
       if (!track || track.isFrozen || this.owned.has(region.trackId)) continue;
       const start = region.startTime;
       const end = start + clipTimelineLength(region, bpm);
-      const a = Math.max(from, start), b = Math.min(span.posEnd, end);
-      if (b <= a) continue;
-      const buffer: AudioBuffer = region.audioBuffer;
-      const rate = clipRate(region, bpm);
-      const loop = clipLoop(region);
-      const gain = dbToGain(region.gain || 0, -96);
-      const stretching = isWarped(region) && region.warpMode !== 'repitch';
-      const stretched = stretching ? stretchedBuffer(region, bpm) : null;
-      const strip = this.engine.output(region.trackId);
-      const x = a - start; // played seconds into the clip
-      let event: Omit<ClipEvent, 'key' | 'span'>;
-      if (stretching && !stretched) {
-        // grains until the render is ready: each read at the tempo ratio and pitched on its own
-        const { grain, jitter } = WARP_GRAINS[region.warpMode] || WARP_GRAINS.beats;
-        event = {
-          strip, pos: a, endPos: b, buf: this.engine.bufferId(buffer), offset: sourcePosAt(region, bpm, x), rate, loop, gain,
-          grains: { grain, hop: grain / 2, jitter, pitch: clipPitchRate(region) }
-        };
-      } else {
-        // plain playback, Re-Pitch, or the stretched render: one player, looped at the source
-        const played = stretched ?? buffer;
-        const scale = stretched ? region.originalBpm / bpm : 1;
-        event = {
-          strip, pos: a, endPos: b, buf: this.engine.bufferId(played), offset: sourcePosAt(region, bpm, x) * scale, rate: stretched ? 1 : rate,
-          loop: loop ? [loop[0] * scale, loop[1] * scale] : null, gain, grains: null
-        };
-      }
-      out.push({ key: `clip:${region.id}`, signature: JSON.stringify([start, end, event.buf, event.rate, event.loop, gain, event.grains, region.startOffset]), event });
+      const c = this.clipEvent(region, region.trackId, bpm, start, Math.max(from, start), Math.min(span.posEnd, end));
+      if (c) out.push({ key: `clip:${region.id}`, ...c });
     }
     return out;
+  }
+
+  // An audio clip starting at `start` (timeline, or 0 for a session clip),
+  // played over [a, b): its event and what it plays (a change restarts it)
+  private clipEvent(clip: any, trackId: string, bpm: number, start: number, a: number, b: number): { signature: string; event: Omit<ClipEvent, 'key' | 'span'> } | null {
+    if (b <= a) return null;
+    const buffer: AudioBuffer = clip.audioBuffer;
+    const rate = clipRate(clip, bpm);
+    const loop = clipLoop(clip);
+    const gain = dbToGain(clip.gain || 0, -96);
+    const stretching = isWarped(clip) && clip.warpMode !== 'repitch';
+    const stretched = stretching ? stretchedBuffer(clip, bpm) : null;
+    const strip = this.engine.output(trackId);
+    const x = a - start; // played seconds into the clip
+    let event: Omit<ClipEvent, 'key' | 'span'>;
+    if (stretching && !stretched) {
+      // grains until the render is ready: each read at the tempo ratio and pitched on its own
+      const { grain, jitter } = WARP_GRAINS[clip.warpMode] || WARP_GRAINS.beats;
+      event = {
+        strip, pos: a, endPos: b, buf: this.engine.bufferId(buffer), offset: sourcePosAt(clip, bpm, x), rate, loop, gain,
+        grains: { grain, hop: grain / 2, jitter, pitch: clipPitchRate(clip) }
+      };
+    } else {
+      // plain playback, Re-Pitch, or the stretched render: one player, looped at the source
+      const played = stretched ?? buffer;
+      const scale = stretched ? clip.originalBpm / bpm : 1;
+      event = {
+        strip, pos: a, endPos: b, buf: this.engine.bufferId(played), offset: sourcePosAt(clip, bpm, x) * scale, rate: stretched ? 1 : rate,
+        loop: loop ? [loop[0] * scale, loop[1] * scale] : null, gain, grains: null
+      };
+    }
+    return { signature: JSON.stringify([start, b, event.buf, event.rate, event.loop, gain, event.grains, clip.startOffset]), event };
   }
 
   private postClips(span: Span, from: number) {
@@ -299,7 +381,7 @@ export class Scheduler {
     const retract: string[] = [];
     // notes: everything in [now, cursor) should be posted, nothing else
     const want = new Map<string, Note>();
-    for (const n of this.notesIn(st, nowPos, span.cursor)) want.set(`${span.id}:${n.key}`, n);
+    for (const n of this.notesIn(st, nowPos, span.cursor, span)) want.set(`${span.id}:${n.key}`, n);
     for (const [key, posted] of span.notes) {
       if (posted.pos < nowPos || want.has(key)) continue;
       if (posted.posted) retract.push(key); else posted.cancel(nowCtx);

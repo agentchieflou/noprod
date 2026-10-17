@@ -10,7 +10,7 @@
 // sample-accurately. Metronome clicks and automation are scheduled with a
 // short lookahead from a timer, as nodes and AudioParam events.
 
-import { audioContext, getStripInput, getAutomationTargets, setAutomationPlaying, getCompensationSeconds, onCompensationChange, onStripInputChange, stripIdOf } from './engine';
+import { audioContext, inputOf, getAutomationTargets, setAutomationPlaying, getCompensationSeconds, onCompensationChange, onStripInputChange, stripIdOf } from './engine';
 import { initLiveEngine, liveEngine, type Engine } from './engineNode';
 import { Scheduler, type Span } from './scheduler';
 import { beatsBetween, barAt, barSeconds } from './timeline';
@@ -32,6 +32,14 @@ let countInEnd = 0;      // ctx time at which a count-in finishes (0 = none)
 let clickSources: Stoppable[] = [];
 let dropped = 0;         // events the engine dropped during this playback
 let droppedLate = 0;     // ...of which past the late budget (the rest had no buffer to play)
+// The engine failing: it is remade and playback starts over, unless it
+// failed again within RESTART_GAP of the last time, when playback stops
+// instead of starting over into the same failure
+const RESTART_GAP_MS = 2000;
+let lastEngineError = -Infinity;
+let engineHalted = false;
+let restarts = 0;        // for the tests: engine restarts, and
+let halts = 0;           // ...playbacks stopped by a repeated failure
 const listeners = new Set<() => void>();
 
 const spans = (): Span[] => scheduler?.spans ?? [];
@@ -75,11 +83,26 @@ const automationChanged = (st: any, prev: any) => {
 export function initTransport(store: { getState: () => any; subscribe: (fn: (s: any, prev: any) => void) => unknown }) {
   getState = store.getState;
   ready = initLiveEngine(audioContext, {
-    stripIdOf, getStripInput, onStripInputChange,
-    onReset: () => { if (playing) reschedule(); },
+    stripIdOf, getStripInput: inputOf, onStripInputChange,
+    onReset: () => {
+      if (!playing) return;
+      if (!engineHalted) { reschedule(); return; }
+      engineHalted = false;
+      halts++;
+      if (getState().isPlaying) getState().togglePlayback(); else stop();
+    },
     onError: (e) => {
+      const now = performance.now();
+      const again = now - lastEngineError < RESTART_GAP_MS;
+      lastEngineError = now;
+      restarts++;
       console.error('The audio engine failed and was restarted', e);
-      notify('The audio engine failed and was restarted; playback starts over from the playhead.', 'error');
+      if (again) {
+        engineHalted = true;
+        notify('The audio engine failed twice in a row, so playback stopped. Press Play to try again.', 'error');
+      } else {
+        notify('The audio engine failed and was restarted; playback starts over from the playhead.', 'error');
+      }
     },
     onDropped: (_key, _lateBy, reason) => { dropped++; if (reason === 'late') droppedLate++; }
   }).then((engine) => {
@@ -108,7 +131,7 @@ export function initTransport(store: { getState: () => any; subscribe: (fn: (s: 
       loopDebounce = setTimeout(reschedule, 60);
       return;
     }
-    if (st.regions !== prev.regions || st.bpm !== prev.bpm || frozenSig(st) !== frozenSig(prev) || st.tracks !== prev.tracks) {
+    if (st.regions !== prev.regions || st.sessionClips !== prev.sessionClips || st.bpm !== prev.bpm || frozenSig(st) !== frozenSig(prev) || st.tracks !== prev.tracks) {
       resync();
     }
     if (st.tracks !== prev.tracks && automationChanged(st, prev)) refreshAutomation();
@@ -264,7 +287,7 @@ function refreshAutomation() {
 function resync() {
   if (!playing || !scheduler || isCountingIn()) return;
   const now = audioContext.currentTime;
-  for (const span of spans()) if (span.engine) scheduler.resync(span, now);
+  for (const span of scheduler.allSpans()) if (span.engine) scheduler.resync(span, now);
 }
 
 function tick() {
@@ -407,5 +430,5 @@ export function reschedule() {
 // For the tests: what the engine has done and what the scheduler posted
 export async function engineStats() {
   const engine = liveEngine();
-  return { engine: engine ? await engine.stats() : null, scheduler: scheduler ? { ...scheduler.counts, spans: scheduler.spans.length } : null, dropped };
+  return { engine: engine ? await engine.stats() : null, scheduler: scheduler ? { ...scheduler.counts, spans: scheduler.spans.length, sessionSpans: scheduler.sessionSpans.length } : null, dropped, restarts, halts };
 }
