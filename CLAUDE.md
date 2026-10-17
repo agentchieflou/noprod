@@ -30,7 +30,7 @@ tracks, through `@noprod/pattern`), `components/KeyboardPanel.tsx`,
 ## Commands
 
 ```sh
-npm test                                   # packages/sound, theory, time and pattern
+npm test                                   # packages/sound, theory, time and pattern, and the frontend's project files
 cd packages/sound && ../../node_modules/.bin/tsc -p .     # typecheck a package
 cd apps/frontend && npx tsc -b && npx oxlint src && npx vite build
 node scripts/check-licenses.mjs            # the dependency rule below, enforced in CI

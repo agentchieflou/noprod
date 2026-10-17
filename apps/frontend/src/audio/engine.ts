@@ -14,7 +14,20 @@ import { createDeviceDSP, dspKind, resolvedParameters, loadDeviceWorklets, type 
 import { loadLiveModels } from './liveModels';
 import { onNativeLatencyChange } from '../native/trackBridge';
 
-export const audioContext: AudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+// Why audio can't run, or null. When the browser refuses a real context (no
+// device, a hardened browser) the app still loads on an offline one, which
+// makes no sound, and says so (see AudioStatus).
+export let audioError: string | null = null;
+const createContext = (): AudioContext => {
+  try {
+    return new (window.AudioContext || (window as any).webkitAudioContext)();
+  } catch (err) {
+    audioError = `Audio is unavailable: ${err instanceof Error ? err.message : err}. Check that an output device is connected and that this browser allows audio.`;
+    console.error('AudioContext failed', err);
+    return new OfflineAudioContext(2, 1, 44100) as unknown as AudioContext;
+  }
+};
+export const audioContext: AudioContext = createContext();
 
 // Master bus tail: limiter (brickwall-configured compressor) -> analyser -> output.
 // The analyser stays in the chain even when the limiter is bypassed so the
@@ -372,9 +385,18 @@ export async function initEngine(store: { getState: () => any; subscribe: (fn: (
   });
 }
 
-export const resumeAudio = () => {
-  if (audioContext.state !== 'running') return audioContext.resume();
-  return Promise.resolve();
+// 'interrupted' is iOS's state after a call or the screen locking
+export const audioNeedsStart = () => !audioError && (audioContext.state as string) !== 'running' && audioContext.state !== 'closed';
+
+// Resumes the context (from a user gesture, or when MIDI arrives). Never rejects.
+export const resumeAudio = (): Promise<void> => {
+  if (!audioNeedsStart()) return Promise.resolve();
+  return audioContext.resume().catch((err) => console.warn('Audio could not start', err));
+};
+
+export const onAudioStateChange = (fn: () => void) => {
+  audioContext.addEventListener('statechange', fn);
+  return () => audioContext.removeEventListener('statechange', fn);
 };
 
 // iOS Safari 'interrupts' the context (a call, the screen locking) and only

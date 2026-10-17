@@ -10,7 +10,8 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "e2e:dist": "node e2e/dist.mjs",
-    "e2e": "node e2e/run.mjs"
+    "e2e": "node e2e/run.mjs",
+    "test": "node --test test/*.test.ts"
   },
   "dependencies": {
     "@noprod/pattern": "*",

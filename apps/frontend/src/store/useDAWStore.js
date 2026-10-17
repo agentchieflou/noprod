@@ -5,6 +5,7 @@ import { clipTimelineLength } from '../audio/clipPlayback';
 import { mapDeviceAnywhere } from './deviceTree';
 import { resolveTarget, splitMappings, targetKey } from '../audio/midiTargets';
 import { sliceClip, cutRange, overlapping } from '../project/comping';
+import { reportStorageError } from '../project/storage';
 import { boundHistory } from './historyBudget';
 
 // Undo/redo: which slice of the store is history-tracked. Transport/selection/UI
@@ -267,8 +268,11 @@ export const useDAWStore = create((set, get) => ({
   // Plugins found by scanning real folders (persisted in localStorage, not per project).
   // [{ name, format, path }]
   scannedPlugins: (() => {
+    let saved = null;
+    try { saved = localStorage.getItem('noprod-scanned-plugins'); } catch (err) { reportStorageError('Plug-in list', err); }
     try {
-      return JSON.parse(localStorage.getItem('noprod-scanned-plugins') || '[]');
+      const list = JSON.parse(saved || '[]');
+      return Array.isArray(list) ? list : [];
     } catch {
       return [];
     }
@@ -473,7 +477,7 @@ export const useDAWStore = create((set, get) => ({
   setScannedPlugins: (scannedPlugins) => {
     try {
       localStorage.setItem('noprod-scanned-plugins', JSON.stringify(scannedPlugins));
-    } catch { /* storage full/unavailable: list still lives in memory */ }
+    } catch (err) { reportStorageError('Plug-in list', err); /* still lives in memory */ }
     set({ scannedPlugins });
   },
 

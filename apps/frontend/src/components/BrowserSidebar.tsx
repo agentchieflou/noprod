@@ -16,6 +16,7 @@ import { subscribeAudioCore, getAudioCore, findNativePlugin, nativeDeviceFor } f
 import {
   createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview
 } from '../audio/library';
+import { notify, guarded, errorMessage } from '../notify';
 import { subscribeUserSounds, getUserSounds, deleteUserSound } from '../audio/userSounds';
 
 export const SAMPLE_DRAG_TYPE = 'application/x-noprod-sample';
@@ -240,7 +241,8 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
                   e.stopPropagation();
                   flash(`Rendering ${group}…`);
                   import('../audio/designing').then((d) => d.exportZip(group, inGroup.flatMap((it) => (it.recipe ? [it.recipe] : []))))
-                    .then(() => flash(`${group}.zip downloaded`));
+                    .then(() => flash(`${group}.zip downloaded`))
+                    .catch((err) => notify(`Exporting ${group} failed: ${errorMessage(err)}`, 'error'));
                 }}>
                 <Download size={11} />
               </button>
@@ -309,7 +311,7 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
             {p.root ? renderFolder(p.root, 1, `place:${p.id}`) : (
               <div className="browser-folder" style={{ paddingLeft: 20 }}>
                 <Folder size={12} /> {p.name}
-                {p.status === 'needs-permission' && <button className="browser-link" onClick={() => reconnectPlace(p.id)}><RefreshCw size={10} /> reconnect</button>}
+                {p.status === 'needs-permission' && <button className="browser-link" onClick={guarded('Reconnecting the folder', () => reconnectPlace(p.id))}><RefreshCw size={10} /> reconnect</button>}
                 {p.status === 'scanning' && <span className="browser-count">scanning…</span>}
               </div>
             )}

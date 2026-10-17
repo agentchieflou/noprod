@@ -12,7 +12,9 @@ import { useDAWStore } from '../store/useDAWStore';
 import { libraryOf } from '../audio/library';
 import { renderSound, toAudioBuffer, playRendered, exportWav, resynthesizeBuffer } from '../audio/designing';
 import { saveUserSound, findAnySound } from '../audio/userSounds';
-import { audioContext, getStripInput } from '../audio/engine';
+import { describeStorageError } from '../project/storage';
+import { audioContext, getStripInput, resumeAudio } from '../audio/engine';
+import { guarded } from '../notify';
 import { getFile } from '../browser/library';
 import { midiNoteName } from '../audio/synth';
 import Spectrogram from './Spectrogram';
@@ -276,7 +278,7 @@ export default function SoundDesigner({ track, onOpenDspMap }: { track: any; onO
     if (!file) return;
     try {
       flash(`Resynthesizing ${file.name}…`);
-      if (audioContext.state === 'suspended') await audioContext.resume();
+      await resumeAudio();
       const buffer = await audioContext.decodeAudioData(await file.arrayBuffer());
       const next = await resynthesizeBuffer(buffer, file.name.replace(/\.[^.]+$/, ''));
       if (kit) update(next);
@@ -289,9 +291,13 @@ export default function SoundDesigner({ track, onOpenDspMap }: { track: any; onO
   const saveMine = async () => {
     // A built-in sound is saved as a new one of mine, sounding exactly the same
     const mine = recipe.id.startsWith('my-') ? recipe : withId(recipe, `my-${uuidv4().slice(0, 8)}`);
-    await saveUserSound(mine);
     if (mine !== recipe) update(mine);
-    flash(`Saved “${mine.name}” to My Sounds`);
+    try {
+      await saveUserSound(mine);
+      flash(`Saved “${mine.name}” to My Sounds`);
+    } catch (err) {
+      flash(`“${mine.name}” is in My Sounds until you close the page: ${describeStorageError(err)}`);
+    }
   };
 
   return (
@@ -339,7 +345,7 @@ export default function SoundDesigner({ track, onOpenDspMap }: { track: any; onO
         <Param label="Seed" value={recipe.seed} def={0} min={0} max={999} onChange={(v) => update({ ...recipe, seed: v === undefined ? undefined : Math.round(v) })} />
         <div className="designer-row designer-actions">
           <button className="designer-button" onClick={saveMine} title="Keep this sound in My Sounds, for every project"><Save size={11} /> Save</button>
-          <button className="designer-button" onClick={() => exportWav(recipe, playNote, velocity)} title="Download as a 24-bit WAV at this note"><Download size={11} /> WAV</button>
+          <button className="designer-button" onClick={guarded('Exporting the WAV', () => exportWav(recipe, playNote, velocity))} title="Download as a 24-bit WAV at this note"><Download size={11} /> WAV</button>
           <button className="designer-button" disabled={!original || original === recipe} onClick={() => original && update(original)}
             title={original ? `Back to the saved “${original.name}”` : 'Not a library sound'}><RotateCcw size={11} /> Revert</button>
           <button className="designer-button" onClick={() => fileInput.current?.click()}

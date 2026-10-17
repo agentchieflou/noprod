@@ -30,6 +30,64 @@ clients without an `Origin` header and pages served from `localhost`,
 `127.0.0.1` or `[::1]` get in. Add more origins with
 `NOPROD_ALLOWED_ORIGINS=https://example.com,...`.
 
+## The rebuild without JUCE (#134)
+
+GhostDAW is being rebuilt on its own platform layer, with no JUCE (AGPL or
+paid) in what we ship: see CLAUDE.md, "Dependencies: we own what we ship".
+The new host lives beside the old one until the switch:
+
+| Path | What |
+| --- | --- |
+| `src/platform/` | Sockets (loopback only) and the WebSocket server, the message loop and timers, files, dynamic libraries, logging, JSON, pairing, the single-instance lock and the crash handler |
+| `src/ghostdaw_main.cpp` | The new entry point, `ghostdaw` |
+| `tests/platform_tests.cpp` | Its tests, `ghostdaw_tests`: the WebSocket server over real sockets (handshake, framing, masking, fragmentation, limits, the token), JSON, the loop, pairing |
+| `src/*.h`, `src/main.cpp` | The JUCE host, `GhostDAW`, until the switch |
+
+```sh
+cmake -S apps/audio_core -B build/audio_core -G Ninja -DCMAKE_BUILD_TYPE=Release -DGHOSTDAW_BUILD_TESTS=ON -DGHOSTDAW_JUCE_HOST=OFF
+cmake --build build/audio_core
+build/audio_core/tests/ghostdaw_tests
+build/audio_core/ghostdaw --help
+```
+
+`ghostdaw` keeps its token, settings and log in `~/.config/NoProd/GhostDAW`
+(Linux), `~/Library/Application Support/NoProd/GhostDAW` (macOS) or
+`%APPDATA%\NoProd\GhostDAW` (Windows); `--data-dir` moves them. It exits 1
+when a port is taken and 2 when another GhostDAW already runs with that
+data folder. Crashes are written to `ghostdaw.log` there.
+
+### Secure by design
+
+- **Localhost only.** Every server binds `127.0.0.1`.
+- **Origin policy.** Browsers send an `Origin` with every WebSocket
+  handshake; only pages from `localhost`, `127.0.0.1` or `[::1]`, the
+  hosted web app (`https://agentchieflou.github.io`) and
+  `NOPROD_ALLOWED_ORIGINS` get a handshake, as before. A hosted page is an
+  https page opening `ws://localhost`: browsers allow that (loopback is a
+  secure context), and Chrome asks the user once for Local Network Access
+  before the page may reach a program on their own machine.
+- **Pairing.** GhostDAW keeps a 256-bit random token in `pairing-token`
+  (owner-only), created on first launch. Every connection on 8082, 8083 and
+  8085 presents it as `?token=<hex>` in its URL; a wrong or missing token
+  gets `403`. The web app gets the token by pairing: at each launch
+  GhostDAW prints a pairing code (8 symbols, about 40 bits) to the console
+  and the log; the web app's Audio Core panel asks for it, sends
+  `PAIR { code }` on a tokenless control connection (the one thing such a
+  connection may do), and gets `PAIRED { token }`, which it keeps in
+  `localStorage`. Five wrong codes lock pairing until GhostDAW restarts.
+  `ghostdaw --new-token`, or `ROTATE_PAIRING_TOKEN` from a paired client,
+  rotates the token; every other browser must pair again. The Orchestrator,
+  which runs as the same user, reads the token file. The token covers what
+  `Origin` cannot: other local pages and non-browser clients.
+- **Per-connection limits.** A connection cap per server (16 control, 64
+  stream, 8 editor connections), a 5 s handshake timeout, a message size
+  limit per server (1 MiB, 4 MiB, 64 KiB), client masking enforced,
+  fragmented messages reassembled, and the close codes RFC 6455 gives
+  protocol errors (1002, 1007, 1009).
+- **Plugins by id only** (from step 3): clients name a `pluginId` from the
+  scanned list, never a path, and scans cover the platform's plugin folders
+  plus the folders in GhostDAW's own settings, never folders a client sends.
+
 ## Build
 
 ```sh
