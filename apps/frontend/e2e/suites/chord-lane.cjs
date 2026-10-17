@@ -63,6 +63,16 @@ module.exports = async (page, ctx) => {
   check('Editing a note changes its label', after.chords.length === 4 && /^A /.test(after.chords[2].text), after.chords.map((c) => c.text).join(','));
   check('The other labels stay', after.chords.map((c, i) => i === 2 || c.text === before.chords[i].text).every(Boolean));
 
+  // A fixed coach key wins over the clip's own
+  await page.evaluate(async () => {
+    const coach = await import('/src/audio/coach.ts');
+    coach.setCoachKey({ tonic: 9, mode: 'minor' });
+  });
+  await ctx.sleep(200);
+  const fixed = await lane();
+  check('A fixed coach key shows in the lane', fixed.key === 'A minor' && fixed.chords[0].text === 'C III', `${fixed.key}: ${fixed.chords[0].text}`);
+  await page.evaluate(async () => (await import('/src/audio/coach.ts')).setCoachKey('auto'));
+
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080')); // no orchestrator here
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);

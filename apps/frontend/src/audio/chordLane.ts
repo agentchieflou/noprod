@@ -1,7 +1,7 @@
 // The chord lane over the piano roll: the chords a clip's notes spell, with
 // where each one sounds. Pure logic, notes in and segments out.
 
-import { findKey, recognizeChord, romanNumeral, chordNameInKey, spellInKey, type Chord, type Key } from '@noprod/theory';
+import { findKey, pc, recognizeChord, romanNumeral, chordNameInKey, type Chord, type Key } from '@noprod/theory';
 
 export interface LaneNote { pitch: number; start: number; duration: number }
 export interface LaneSegment { start: number; end: number; chord: Chord }
@@ -11,7 +11,7 @@ const EPS = 1e-6;
 // The key of the clip: pitch classes weighted by how long they sound
 export function clipKey(notes: LaneNote[]): Key {
   const histogram = new Array<number>(12).fill(0);
-  for (const n of notes) histogram[((n.pitch % 12) + 12) % 12] += n.duration;
+  for (const n of notes) histogram[pc(n.pitch)] += n.duration;
   return findKey(histogram).key;
 }
 
@@ -26,7 +26,7 @@ export function chordSegments(notes: LaneNote[], key: Key, minDuration: number):
     const [start, end] = [edges[i], edges[i + 1]];
     const mid = (start + end) / 2;
     const pitches = notes.filter(n => n.start < mid && mid < n.start + n.duration).map(n => n.pitch);
-    if (new Set(pitches.map(p => ((p % 12) + 12) % 12)).size < 3) continue;
+    if (new Set(pitches.map(pc)).size < 3) continue;
     const chord = recognizeChord(pitches, key);
     if (chord) raw.push({ start, end, chord });
   }
@@ -38,8 +38,6 @@ export function chordSegments(notes: LaneNote[], key: Key, minDuration: number):
   }
   return out;
 }
-
-export const keyName = (key: Key) => `${spellInKey(key.tonic, key)} ${key.mode}`;
 
 // 'Am vi': the chord without its inversion, and its numeral in the key
 export const chordLabel = ({ chord }: LaneSegment, key: Key) =>

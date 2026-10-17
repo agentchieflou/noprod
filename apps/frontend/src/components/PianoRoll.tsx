@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
 import { midiNoteName } from '../audio/synth';
-import { chordSegments, clipKey, keyName, chordLabel, chordTitle } from '../audio/chordLane';
+import { keyName } from '@noprod/theory';
+import { chordSegments, clipKey, chordLabel, chordTitle } from '../audio/chordLane';
 import { getCoachState, subscribeCoach } from '../audio/coach';
 
 const PITCH_TOP = 84;    // C6
