@@ -226,8 +226,8 @@ test('tempo', () => {
   fails('setcpm(-5); s("a")', /positive number/);
   fails('setcps(1000); s("a")', /outside 20 to 400/);
   fails('setcpm("fast"); s("a")', /setcpm wants a number/);
-  fails('setcpm(120)', /ends with a statement that makes no pattern/);
-  fails('setcpm(120).fast(2)', /on nothing/);
+  fails('setcpm(30)', /ends with a statement that makes no pattern/);
+  fails('setcpm(30).fast(2)', /on nothing/);
 });
 
 test('programs: statements, labels, comments, chains across lines', () => {
