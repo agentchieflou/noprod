@@ -73,3 +73,26 @@ test('refuses what a file cannot hold', () => {
   assert.throws(() => writeMidiFile({ ...note({}), meter: [{ bar: 0, numerator: 4, denominator: 3 }] }), RangeError);
   assert.throws(() => writeMidiFile({ ...note({}), tempo: [{ beat: 0, bpm: 0 }] }), RangeError);
 });
+
+test('a megabyte of marker text writes and reads back', () => {
+  const text = 'é'.repeat(512 * 1024);   // 1 MB in UTF-8
+  const back = readMidiFile(writeMidiFile({ markers: [{ beat: 1, text }], tracks: [empty('t'.repeat(1 << 20))] }, { ticksPerBeat: 96 }));
+  assert.equal(back.markers[0].text, text);
+  assert.equal(back.tracks[0].name.length, 1 << 20);
+});
+
+test('a track of 200,000 notes writes', () => {
+  const notes = Array.from({ length: 200000 }, (_, i) => ({ pitch: i % 128, start: i / 4, length: 0.25, velocity: 1, channel: i % 16 }));
+  assert.equal(readMidiFile(writeMidiFile({ tracks: [{ ...empty(), notes }] }, { ticksPerBeat: 4 })).tracks[0].notes.length, 200000);
+});
+
+test('a note contained in another of its pitch reads back first in, first out', () => {
+  // A runs 0..4 and B 1..3 on one pitch. A file has no names for notes, only on/off pairs, so the
+  // first off (at 3) ends the oldest note (A) and the second (at 4) ends B: A 0..3, B 1..4
+  const contained = { pitch: 60, channel: 0, velocity: 1 };
+  const back = readMidiFile(writeMidiFile({ tracks: [{ ...empty(), notes: [
+    { ...contained, start: 0, length: 4 },
+    { ...contained, start: 1, length: 2 },
+  ] }] }, { ticksPerBeat: 96 }));
+  assert.deepEqual(back.tracks[0].notes.map((n) => [n.start, n.length]), [[0, 3], [1, 3]]);
+});

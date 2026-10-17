@@ -35,7 +35,17 @@ function vlq(value: number): number[] {
   return out;
 }
 
-const meta = (type: number, data: ArrayLike<number>): number[] => [0xff, type, ...vlq(data.length), ...Array.from(data)];
+// Appended in a loop: spreading a megabyte of text into arguments overflows the stack
+function append(into: number[], bytes: ArrayLike<number>) {
+  for (let i = 0; i < bytes.length; i++) into.push(bytes[i]);
+}
+
+function meta(type: number, data: ArrayLike<number>): number[] {
+  const out = [0xff, type];
+  append(out, vlq(data.length));
+  append(out, data);
+  return out;
+}
 const textMeta = (type: number, text: string) => meta(type, new TextEncoder().encode(text));
 
 const u32 = (n: number) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
@@ -111,14 +121,14 @@ function trackChunk(events: Event[]): number[] {
   const body: number[] = [];
   let tick = 0, status = -1;
   for (const { e } of sorted) {
-    body.push(...vlq(e.tick - tick));
+    append(body, vlq(e.tick - tick));
     tick = e.tick;
     const first = e.bytes[0];
     if (first >= 0xf0) {
       status = -1;   // meta events cancel running status (§4)
-      body.push(...e.bytes);
+      append(body, e.bytes);
     } else {
-      body.push(...(first === status ? e.bytes.slice(1) : e.bytes));
+      for (let i = first === status ? 1 : 0; i < e.bytes.length; i++) body.push(e.bytes[i]);
       status = first;
     }
   }
