@@ -1,0 +1,397 @@
+{
+  "machine": {
+    "cores": 4,
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz"
+  },
+  "offline": [
+    {
+      "variant": "a-nodev",
+      "tracks": 32,
+      "seconds": 30,
+      "wallSeconds": 67.3237999999998,
+      "speed": 0.44560764543890996,
+      "load": 2.24412666666666,
+      "scheduleMs": 119.5,
+      "nodes": 99,
+      "sources": 3840,
+      "peak": 1.18062424659729,
+      "played": 3840,
+      "workletLoad": null
+    },
+    {
+      "variant": "b-nodev",
+      "tracks": 32,
+      "seconds": 30,
+      "wallSeconds": 1.4908000000000465,
+      "speed": 20.1234236651456,
+      "load": 0.04969333333333489,
+      "scheduleMs": 3.1000000000931323,
+      "nodes": 2,
+      "sources": 0,
+      "peak": 1.4662580490112305,
+      "played": 3840,
+      "workletLoad": 0.0470663820626935
+    },
+    {
+      "variant": "c",
+      "tracks": 32,
+      "seconds": 30,
+      "wallSeconds": 117.04580000000004,
+      "speed": 0.2563099231241103,
+      "load": 3.901526666666668,
+      "scheduleMs": 3.800000000046566,
+      "nodes": 1411,
+      "sources": 0,
+      "peak": 1.0885580778121948,
+      "played": 3840,
+      "workletLoad": null
+    },
+    {
+      "variant": "a",
+      "tracks": 32,
+      "seconds": 30,
+      "wallSeconds": 193.0965,
+      "speed": 0.15536273314120141,
+      "load": 6.4365499999999995,
+      "scheduleMs": 310.5,
+      "nodes": 1379,
+      "sources": 3840,
+      "peak": 1.0955820083618164,
+      "played": 3840,
+      "workletLoad": null
+    },
+    {
+      "variant": "a-fdn",
+      "tracks": 32,
+      "seconds": 30,
+      "wallSeconds": 159.2706000000001,
+      "speed": 0.18835868013305646,
+      "load": 5.309020000000003,
+      "scheduleMs": 119,
+      "nodes": 1251,
+      "sources": 3840,
+      "peak": 1.1444822549819946,
+      "played": 3840,
+      "workletLoad": null
+    },
+    {
+      "variant": "c-fdn",
+      "tracks": 32,
+      "seconds": 30,
+      "wallSeconds": 82.48979999999982,
+      "speed": 0.3636813278732651,
+      "load": 2.7496599999999938,
+      "scheduleMs": 7.600000000093132,
+      "nodes": 1283,
+      "sources": 0,
+      "peak": 1.1444822549819946,
+      "played": 3840,
+      "workletLoad": null
+    },
+    {
+      "variant": "b",
+      "tracks": 32,
+      "seconds": 30,
+      "wallSeconds": 25.652,
+      "speed": 1.169499454233588,
+      "load": 0.8550666666666668,
+      "scheduleMs": 1.3999999999068677,
+      "nodes": 2,
+      "sources": 0,
+      "peak": 1.4450294971466064,
+      "played": 3840,
+      "workletLoad": 0.8419949085719814
+    },
+    {
+      "variant": "a",
+      "tracks": 64,
+      "seconds": 30,
+      "wallSeconds": 414.2465,
+      "speed": 0.07242064809237977,
+      "load": 13.808216666666668,
+      "scheduleMs": 649.5,
+      "nodes": 2755,
+      "sources": 7680,
+      "peak": 1.2073562145233154,
+      "played": 7680,
+      "workletLoad": null
+    },
+    {
+      "variant": "a-fdn",
+      "tracks": 64,
+      "seconds": 30,
+      "wallSeconds": 333.01829999999984,
+      "speed": 0.0900851394653087,
+      "load": 11.100609999999994,
+      "scheduleMs": 359.5,
+      "nodes": 2499,
+      "sources": 7680,
+      "peak": 1.2918150424957275,
+      "played": 7680,
+      "workletLoad": null
+    },
+    {
+      "variant": "b",
+      "tracks": 64,
+      "seconds": 30,
+      "wallSeconds": 54.474899999999906,
+      "speed": 0.5507123464200954,
+      "load": 1.815829999999997,
+      "scheduleMs": 5.7999999998137355,
+      "nodes": 2,
+      "sources": 0,
+      "peak": 1.7898985147476196,
+      "played": 7320,
+      "workletLoad": 1.7893225135448916
+    }
+  ],
+  "realtime": [
+    {
+      "variant": "a",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 0.25,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 384,
+      "behindMs": 14391.904659487493,
+      "behindBlocks": 1464,
+      "driftMs": 11756.720408163454,
+      "tickMs": 0.06967984931017299,
+      "worstTickMs": 11.700000000186265,
+      "ticks": 531,
+      "maxLive": 144,
+      "nodes": 1379,
+      "workletLoad": null
+    },
+    {
+      "variant": "a",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 1,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 448,
+      "behindMs": 15221.904736992452,
+      "behindBlocks": 1378,
+      "driftMs": 11903.850113378592,
+      "tickMs": 0.07099811672785525,
+      "worstTickMs": 10.799999999813735,
+      "ticks": 531,
+      "maxLive": 240,
+      "nodes": 1379,
+      "workletLoad": null
+    },
+    {
+      "variant": "c",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 0.25,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 320,
+      "behindMs": 15303.95454610881,
+      "behindBlocks": 1359,
+      "driftMs": 11957.415192743858,
+      "tickMs": 0.026226415074834565,
+      "worstTickMs": 0.7000000001862645,
+      "ticks": 530,
+      "maxLive": 0,
+      "nodes": 1411,
+      "workletLoad": null
+    },
+    {
+      "variant": "c",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 1,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 320,
+      "behindMs": 15046.322007090595,
+      "behindBlocks": 1359,
+      "driftMs": 11915.597732426399,
+      "tickMs": 0.031261770261658564,
+      "worstTickMs": 0.6000000000931323,
+      "ticks": 531,
+      "maxLive": 0,
+      "nodes": 1411,
+      "workletLoad": null
+    },
+    {
+      "variant": "b",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 1,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 1728,
+      "behindMs": 1033.210859441433,
+      "behindBlocks": 4477,
+      "driftMs": 1019.803854875283,
+      "tickMs": 0.046327683586178246,
+      "worstTickMs": 1.1000000000931323,
+      "ticks": 531,
+      "maxLive": 0,
+      "nodes": 2,
+      "workletLoad": 1.0045421742584746
+    },
+    {
+      "variant": "a-fdn",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 0.25,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 608,
+      "behindMs": 10023.93198441486,
+      "behindBlocks": 1651,
+      "driftMs": 9897.796598639734,
+      "tickMs": 0.16610169491209723,
+      "worstTickMs": 55.60000000009313,
+      "ticks": 531,
+      "maxLive": 144,
+      "nodes": 1251,
+      "workletLoad": null
+    }
+  ],
+  "latency": [
+    {
+      "variant": "a",
+      "loaded": false,
+      "triggers": 12,
+      "measured": 1,
+      "minMs": 0,
+      "medianMs": 0,
+      "maxMs": 0,
+      "baseLatencyMs": 10,
+      "quantumMs": 2.9024943310657596
+    },
+    {
+      "variant": "a",
+      "loaded": true,
+      "triggers": 12,
+      "measured": 1,
+      "minMs": 2.902494331065597,
+      "medianMs": 2.902494331065597,
+      "maxMs": 2.902494331065597,
+      "baseLatencyMs": 10,
+      "quantumMs": 2.9024943310657596
+    },
+    {
+      "variant": "c",
+      "loaded": false,
+      "triggers": 12,
+      "measured": 12,
+      "minMs": 0,
+      "medianMs": 0,
+      "maxMs": 11.609977324263276,
+      "baseLatencyMs": 10,
+      "quantumMs": 2.9024943310657596
+    },
+    {
+      "variant": "c",
+      "loaded": true,
+      "triggers": 12,
+      "measured": 5,
+      "minMs": 11.609977324262832,
+      "medianMs": 142.22222222222226,
+      "maxMs": 153.83219954648507,
+      "baseLatencyMs": 10,
+      "quantumMs": 2.9024943310657596
+    },
+    {
+      "variant": "b",
+      "loaded": false,
+      "triggers": 12,
+      "measured": 12,
+      "minMs": 0,
+      "medianMs": 0,
+      "maxMs": 0,
+      "baseLatencyMs": 10,
+      "quantumMs": 2.9024943310657596
+    },
+    {
+      "variant": "b",
+      "loaded": true,
+      "triggers": 12,
+      "measured": 12,
+      "minMs": 2.902494331065819,
+      "medianMs": 8.707482993197235,
+      "maxMs": 11.609977324263054,
+      "baseLatencyMs": 10,
+      "quantumMs": 2.9024943310657596
+    }
+  ],
+  "nodes": {
+    "count": 10000,
+    "ms": 2005.0999999996275,
+    "perThousandMs": 200.50999999996276,
+    "stopMs": 4.699999999720603
+  },
+  "prepare": {
+    "buffers": 32,
+    "totalSeconds": 24.640068027210884,
+    "ms": 786.8000000000466
+  }
+}
