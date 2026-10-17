@@ -38,6 +38,13 @@ namespace
 
 constexpr double rate = 48000.0;
 
+// Paths from the scan against the build's: on Windows, CMake writes them with
+// forward slashes and the scan with backslashes
+bool samePath (const std::string& a, const std::string& b)
+{
+    return pathFromUtf8 (a).lexically_normal() == pathFromUtf8 (b).lexically_normal();
+}
+
 fs::path tempDir (const char* name)
 {
     auto dir = fs::temp_directory_path() / ("ghostdaw-tests-" + std::string (name) + "-" + secureRandomHex (4));
@@ -1178,12 +1185,12 @@ void testScanner()
     auto crashedOrFailed = [] (const std::string& reason) { return reason.find ("crashed") != std::string::npos || reason.find ("worker failed") != std::string::npos; };
     for (auto& s : skipped)
     {
-        auto isCrash = s.path == LPI_TEST_CRASH_PATH, isHang = s.path == LPI_TEST_HANG_PATH;
+        auto isCrash = samePath (s.path, LPI_TEST_CRASH_PATH), isHang = samePath (s.path, LPI_TEST_HANG_PATH);
         CHECK (isCrash || isHang);
         CHECK (isCrash ? crashedOrFailed (s.reason) : s.reason.find ("hung") != std::string::npos);
     }
     KnownPlugin found;
-    CHECK (registry.find ("com.noprod.test.gain", found) && found.path == LPI_TEST_GAIN_PATH);
+    CHECK (registry.find ("com.noprod.test.gain", found) && samePath (found.path, LPI_TEST_GAIN_PATH));
     CHECK (! registry.find ("com.noprod.nope", found));
 
     section ("Scanner: the next scan keeps what it knows and skips what crashed, without loading them again");
@@ -1211,7 +1218,7 @@ void testScanner()
     CHECK (skippedNow.size() == 3);
     bool pedal = false;
     for (auto& s : skippedNow)
-        pedal = pedal || (s.path == LPI_TEST_GAIN_PATH && s.reason.find ("did not survive") != std::string::npos);
+        pedal = pedal || (samePath (s.path, LPI_TEST_GAIN_PATH) && s.reason.find ("did not survive") != std::string::npos);
     CHECK (pedal);
     // ...until the binary changes: its real modification time differs from the one written down, so the next scan tries it again
     PluginScanner rescanner (recovered, loop, options);
