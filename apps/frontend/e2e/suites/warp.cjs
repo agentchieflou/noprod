@@ -94,6 +94,54 @@ module.exports = async (page, ctx) => {
   check('Transposed +7, it plays a fifth up at the same length', Math.abs(1200 * Math.log2(shifted.pitch / want)) < 5 && Math.abs(shifted.length - 2.5) < 1e-9,
     `${shifted.pitch.toFixed(2)} Hz (want ${want.toFixed(2)}), ${shifted.length} s`);
 
+  // A tempo that moves continuously (the Tempo Follower, a drag): 30 changes in
+  // a second render each clip at most twice, and the final tempo's render plays
+  const flood = await page.evaluate(async () => {
+    const { stretchedBuffer } = window.__warp;
+    const { scheduleClip } = window.__clips;
+    let posted = 0;
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (m, t) { if (m && m.channels && m.options) posted++; return post.call(this, m, t); };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    for (let i = 0; i < 30; i++) { window.__dawStore.getState().setBpmLive(100 + i); await sleep(33); }
+    const bpm = 129;
+    const region = window.__dawStore.getState().regions.at(-1);
+    const start = performance.now();
+    while (!stretchedBuffer(region, bpm) && performance.now() - start < 10000) await sleep(50);
+    await sleep(500); // anything still queued would post by now
+    Worker.prototype.postMessage = post;
+    const rendered = stretchedBuffer(region, bpm);
+    const offline = new OfflineAudioContext(2, 48000, 48000);
+    const sources = scheduleClip(offline, region, null, offline.destination, 0, 0, 1, bpm).length;
+    return { posted, duration: rendered ? rendered.duration : 0, sources };
+  });
+  check('30 tempo changes in a second render the clip at most twice', flood.posted <= 2, `${flood.posted} renders`);
+  check('...and the final tempo\'s render plays', flood.sources === 1 && Math.abs(flood.duration - 2 * 120 / 129) < 0.001,
+    `${flood.sources} sources, render ${flood.duration.toFixed(3)} s`);
+
+  // Renders are kept within a memory budget, the least recently used dropped
+  const memory = await page.evaluate(async () => {
+    const { stretchedBuffer, stretchStats, setStretchBudget } = window.__warp;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const region = () => window.__dawStore.getState().regions.at(-1);
+    const first = stretchedBuffer(region(), 129);
+    const each = first.length * first.numberOfChannels * 4;
+    const normal = stretchStats().budget;
+    setStretchBudget(Math.floor(each * 2.5));
+    let worst = 0;
+    for (const bpm of [90, 100, 110]) {
+      window.__dawStore.getState().setBpmLive(bpm);
+      const start = performance.now();
+      while (!stretchedBuffer(region(), bpm) && performance.now() - start < 10000) await sleep(50);
+      worst = Math.max(worst, stretchStats().bytes);
+    }
+    const after = stretchStats();
+    setStretchBudget(normal);
+    return { worst, budget: Math.floor(each * 2.5), renders: after.renders, normal };
+  });
+  check('Renders stay within their memory budget, the oldest dropped', memory.worst <= memory.budget && memory.renders === 2,
+    `${(memory.worst / 1e6).toFixed(2)} MB held of ${(memory.budget / 1e6).toFixed(2)} MB, ${memory.renders} kept (the app's budget: ${(memory.normal / 2 ** 20).toFixed(0)} MB)`);
+
   // Played by the transport, it's audible on the master
   const heard = await page.evaluate(async () => {
     const st = window.__dawStore.getState();

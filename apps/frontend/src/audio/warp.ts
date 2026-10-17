@@ -51,10 +51,24 @@ export function estimateBpm(transients: number[], fallback = 120): number {
 // The warp modes the stretcher renders, as its modes
 const RENDERED: Record<string, StretchMode> = { complex: 'complex', beats: 'beats', tones: 'tones' };
 
-// Each source buffer's renders by settings (null while rendering, or if it
-// failed); the latest few are kept
-const renders = new WeakMap<AudioBuffer, Map<string, AudioBuffer | null>>();
-const KEEP = 3;
+// Finished renders, least recently used first, within a memory budget: about
+// 32 MB per GB of device memory
+const ready = new Map<string, { buffer: AudioBuffer; bytes: number }>();
+let budget = 32 * 2 ** 20 * ((navigator as any).deviceMemory || 4);
+let held = 0;
+
+// Each source buffer's work: at most one render in flight, and the latest
+// settings asked for, started once the tempo has settled (a tempo that
+// moves continuously, as the Tempo Follower's or a drag, asks for a render
+// at every step; the ones it overtakes are dropped)
+type Job = {
+  id: number; busy: string | null; want: (StretchOptions & { key: string }) | null;
+  timer: ReturnType<typeof setTimeout> | null; failed: Set<string>;
+};
+const jobs = new WeakMap<AudioBuffer, Job>();
+let sourceIds = 0;
+const SETTLE_MS = 250;
+let started = 0;
 const readyListeners = new Set<() => void>();
 
 // Called whenever a render becomes ready
@@ -62,6 +76,21 @@ export const onStretchReady = (fn: () => void) => {
   readyListeners.add(fn);
   return () => { readyListeners.delete(fn); };
 };
+
+// For the tests: renders started, bytes held, and the budget (settable)
+export const stretchStats = () => ({ started, bytes: held, budget, renders: ready.size });
+export function setStretchBudget(bytes: number) {
+  budget = bytes;
+  evict();
+}
+
+function evict() {
+  for (const [key, r] of ready) {
+    if (held <= budget) break;
+    ready.delete(key);
+    held -= r.bytes;
+  }
+}
 
 function settings(clip: any, bpm: number): StretchOptions & { key: string } | null {
   const mode = RENDERED[clip.warpMode];
@@ -78,19 +107,43 @@ export function stretchedBuffer(clip: any, bpm: number): AudioBuffer | null {
   const s = settings(clip, bpm);
   if (!s) return null;
   const source: AudioBuffer = clip.audioBuffer;
-  let byKey = renders.get(source);
-  if (!byKey) renders.set(source, (byKey = new Map()));
-  if (byKey.has(s.key)) return byKey.get(s.key)!;
-  if (byKey.size >= KEEP) byKey.delete(byKey.keys().next().value!);
-  byKey.set(s.key, null);
-  const { key, ...options } = s;
-  const held = byKey;
-  ask(source, options).then((buffer) => {
-    if (!held.has(key)) return; // dropped meanwhile
-    held.set(key, buffer);
-    readyListeners.forEach((fn) => fn());
-  }, () => { /* stays on grains */ });
+  let job = jobs.get(source);
+  if (!job) jobs.set(source, (job = { id: sourceIds++, busy: null, want: null, timer: null, failed: new Set() }));
+  const id = `${job.id} ${s.key}`;
+  const hit = ready.get(id);
+  if (hit) {
+    ready.delete(id); // most recently used
+    ready.set(id, hit);
+    return hit.buffer;
+  }
+  if (job.busy !== s.key && job.want?.key !== s.key && !job.failed.has(s.key)) {
+    job.want = s;
+    if (job.timer) clearTimeout(job.timer);
+    const j = job;
+    job.timer = setTimeout(() => { j.timer = null; start(source, j); }, SETTLE_MS);
+  }
   return null;
+}
+
+function start(source: AudioBuffer, job: Job) {
+  if (job.busy || !job.want) return;
+  const { key, ...options } = job.want;
+  job.want = null;
+  if (ready.has(`${job.id} ${key}`)) return;
+  job.busy = key;
+  started++;
+  const done = () => {
+    job.busy = null;
+    if (!job.timer) start(source, job); // a request that came in meanwhile, settled
+  };
+  ask(source, options).then((buffer) => {
+    const bytes = buffer.length * buffer.numberOfChannels * 4;
+    ready.set(`${job.id} ${key}`, { buffer, bytes });
+    held += bytes;
+    evict();
+    done();
+    readyListeners.forEach((fn) => fn());
+  }, () => { job.failed.add(key); done(); }); // a failed render stays on grains
 }
 
 // Renders every warped clip at the project tempo, as soon as either changes
