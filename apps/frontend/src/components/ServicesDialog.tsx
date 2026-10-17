@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
 import { getServices, subscribeServices, setService, isWebSocketUrl, setServicesDialogOpen, type ServiceName } from '../native/services';
 import { getOrchestratorStatus, subscribeOrchestrator, type ConnectionStatus } from '../native/orchestrator';
@@ -10,9 +10,7 @@ function ServiceRow({ name, title, blurb, addressLabel, status }: {
   name: ServiceName; title: string; blurb: string; addressLabel: string; status: ConnectionStatus;
 }) {
   const setting = useSyncExternalStore(subscribeServices, getServices)[name];
-  const [address, setAddress] = useState(setting.url);
-  useEffect(() => setAddress(setting.url), [setting.url]);
-  const valid = isWebSocketUrl(address.trim());
+  const [invalid, setInvalid] = useState(false);
 
   return (
     <div className="service-row" data-service={name}>
@@ -25,10 +23,14 @@ function ServiceRow({ name, title, blurb, addressLabel, status }: {
       <label className="service-address">
         {addressLabel}
         <input
-          className="vst-path-input" value={address} spellCheck={false}
-          style={valid ? undefined : { borderColor: 'var(--accent-red)' }}
-          onChange={(e) => setAddress(e.target.value)}
-          onBlur={() => { if (valid) setService(name, { url: address }); else setAddress(setting.url); }}
+          key={setting.url} className="vst-path-input" defaultValue={setting.url} spellCheck={false}
+          style={invalid ? { borderColor: 'var(--accent-red)' } : undefined}
+          onChange={(e) => setInvalid(!isWebSocketUrl(e.target.value.trim()))}
+          onBlur={(e) => {
+            if (isWebSocketUrl(e.target.value.trim())) setService(name, { url: e.target.value });
+            else e.target.value = setting.url;
+            setInvalid(false);
+          }}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         />
       </label>

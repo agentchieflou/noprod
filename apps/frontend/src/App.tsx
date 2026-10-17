@@ -175,7 +175,7 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggedOverTrack, setDraggedOverTrack] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'dspmap' | 'vst-paths' | 'dictation'>('devices');
+  const [chosenTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'dspmap' | 'vst-paths' | 'dictation'>('devices');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [showIO, setShowIO] = useState(false);
@@ -191,6 +191,8 @@ function App() {
   const orchestratorConnected = useSyncExternalStore(subscribeOrchestrator, getOrchestratorStatus) === 'connected';
   const dictationOn = services.dictation.enabled;
   const ghostdawOn = services.ghostdaw.enabled;
+  // A tab for a service that is off isn't there to stay on
+  const activeTab = (chosenTab === 'dictation' && !dictationOn) || (chosenTab === 'vst-paths' && !ghostdawOn) ? 'devices' : chosenTab;
   const [dictationInput, setDictationInput] = useState('');
   const [dictationStatus, setDictationStatus] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
   const [dictationCode, setDictationCode] = useState<string | null>(null);
@@ -214,11 +216,6 @@ function App() {
       setDictationStatus('error');
     }
   }), []);
-
-  // A tab for a service that is off isn't there to stay on
-  useEffect(() => {
-    if ((activeTab === 'dictation' && !dictationOn) || (activeTab === 'vst-paths' && !ghostdawOn)) setActiveTab('devices');
-  }, [activeTab, dictationOn, ghostdawOn]);
 
   const handleSendDictation = () => {
     if (!dictationInput.trim() || !orchestratorConnected) return;
