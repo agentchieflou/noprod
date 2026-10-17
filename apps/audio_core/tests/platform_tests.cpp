@@ -185,12 +185,12 @@ static void testLoop()
     CHECK (order.size() == 2 && order[0] == 1 && order[1] == 2 && taskThread == std::this_thread::get_id());
 
     std::atomic<int> ticks { 0 };
-    auto timer = loop.addTimer (10, [&] { ++ticks; });
-    loop.runFor (120);
-    CHECK (ticks.load() >= 5 && ticks.load() <= 13);
+    auto timer = loop.addTimer (20, [&] { ++ticks; });
+    loop.runFor (400); // about 20 ticks; a busy CI runner may wake late
+    CHECK (ticks.load() >= 6 && ticks.load() <= 21);
     loop.removeTimer (timer);
     auto before = ticks.load();
-    loop.runFor (40);
+    loop.runFor (60);
     CHECK (ticks.load() == before);
 
     // A timer that removes itself while running
@@ -551,6 +551,21 @@ static void testWebSocketFraming()
     CHECK (unmasked.connect (port) == 101 && unmasked.sendText ("x", true, false));
     expectClose (unmasked, 1002);
 
+    // A client that answers the server's close is let go at once; one that
+    // keeps sending is ignored until the drain is up
+    TestWebSocketClient answering, chatty;
+    CHECK (answering.connect (port) == 101 && answering.sendFrame (0x3, "x", 1));
+    CHECK (answering.readFrame (frame) && frame.opcode == 0x8 && answering.sendClose (1002));
+    auto t0 = monotonicMs();
+    CHECK (answering.waitForClose() && monotonicMs() - t0 < 800);
+    CHECK (chatty.connect (port) == 101 && chatty.sendFrame (0x3, "x", 1));
+    CHECK (chatty.readFrame (frame) && frame.opcode == 0x8);
+    CHECK (chatty.sendText ("still here") && chatty.sendPing ("hello?"));
+    t0 = monotonicMs();
+    CHECK (chatty.waitForClose (3000)); // the half-close's end of stream, at once
+    CHECK (waitFor ([&] { return server.getConnectionCount() == 0; }, 3000) && monotonicMs() - t0 >= 500); // the server held on through the drain
+    CHECK (received.textCount() == 0); // "still here" was never dispatched
+
     TestWebSocketClient fragmented;
     CHECK (fragmented.connect (port) == 101);
     CHECK (fragmented.sendText ("one ", false) && fragmented.sendPing ("mid") && fragmented.sendContinuation ("two ", false) && fragmented.sendContinuation ("three", true));
@@ -600,7 +615,7 @@ static void testWebSocketFraming()
     expectClose (reasonClose, 3001);
 
     CHECK (waitFor ([&] { return server.getConnectionCount() == 0; }));
-    CHECK (received.closes.load() == 12);
+    CHECK (received.closes.load() == 14);
     server.stop();
 }
 

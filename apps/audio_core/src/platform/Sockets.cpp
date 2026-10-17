@@ -283,6 +283,17 @@ void TcpSocket::shutdown()
    #endif
 }
 
+void TcpSocket::shutdownWrite()
+{
+    if (handle == none || closing.load())
+        return;
+   #if GHOSTDAW_WINDOWS
+    ::shutdown (native (handle), SD_SEND);
+   #else
+    ::shutdown (native (handle), SHUT_WR);
+   #endif
+}
+
 std::string TcpSocket::peerName() const
 {
     if (handle == none)

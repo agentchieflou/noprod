@@ -48,6 +48,10 @@ public:
     // thread returns. The handle is closed by the destructor.
     void shutdown();
 
+    // Any thread: no more writes (the peer sees end-of-stream after what
+    // was sent), reads go on. A graceful close starts here.
+    void shutdownWrite();
+
     bool isOpen() const { return handle != none && ! closing.load(); }
     intptr_t nativeHandle() const { return handle; }
 

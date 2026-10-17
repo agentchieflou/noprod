@@ -43,7 +43,10 @@ public:
         bool sendText (const std::string& text);
         bool sendBinary (const void* data, size_t size);
 
-        // Sends a close frame and ends the connection (any thread)
+        // Ends the connection (any thread): sends a close frame, stops
+        // writing, and lets the connection's thread read on for up to a
+        // second (the client's own close frame, or its end of stream)
+        // before the socket goes, so the close frame always gets there
         void close (uint16_t code = 1000, const std::string& reason = {});
 
         bool isAuthenticated() const { return authenticated.load(); }
@@ -61,7 +64,9 @@ public:
         std::unique_ptr<TcpSocket> socket;
         std::mutex writeLock;
         std::atomic<bool> authenticated { false };
+        std::atomic<bool> admitted { false };   // the handshake succeeded
         std::atomic<bool> closeSent { false };
+        std::atomic<double> drainUntil { 0.0 }; // set by close(): read until then, then shut down
         std::string path, origin;
         std::vector<uint8_t> message; // the message being assembled, reused
         std::atomic<bool> finished { false }; // its thread is done: join it

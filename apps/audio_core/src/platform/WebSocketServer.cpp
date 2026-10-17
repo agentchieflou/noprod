@@ -16,7 +16,8 @@ namespace
 {
 constexpr const char* websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 constexpr size_t maxRequestBytes = 16 * 1024;
-constexpr int readSliceMs = 500; // how often a blocked read checks for shutdown
+constexpr int readSliceMs = 200;  // how often a blocked read checks for a close in progress
+constexpr double drainMs = 1000.0; // how long a closed connection reads on for the client's close
 
 enum Opcode : uint8_t { continuation = 0x0, text = 0x1, binary = 0x2, closeFrame = 0x8, ping = 0x9, pong = 0xA };
 
@@ -72,16 +73,25 @@ void WebSocketServer::Connection::close (uint16_t code, const std::string& reaso
 {
     if (socket == nullptr)
         return;
-    if (! closeSent.exchange (true))
+    if (! admitted.load())
     {
-        std::vector<uint8_t> payload;
-        payload.push_back (static_cast<uint8_t> (code >> 8));
-        payload.push_back (static_cast<uint8_t> (code & 0xFF));
-        auto text = reason.substr (0, 123);
-        payload.insert (payload.end(), text.begin(), text.end());
-        sendFrame (Opcode::closeFrame, payload.data(), payload.size());
+        socket->shutdown(); // still in the handshake: nothing to say
+        return;
     }
-    socket->shutdown();
+    if (closeSent.exchange (true))
+        return;
+
+    std::vector<uint8_t> payload;
+    payload.push_back (static_cast<uint8_t> (code >> 8));
+    payload.push_back (static_cast<uint8_t> (code & 0xFF));
+    auto text = reason.substr (0, 123);
+    payload.insert (payload.end(), text.begin(), text.end());
+    sendFrame (Opcode::closeFrame, payload.data(), payload.size());
+
+    // The connection's thread drains and shuts down (readLoop); a close
+    // from that thread itself takes the same path once it returns
+    drainUntil.store (monotonicMs() + drainMs);
+    socket->shutdownWrite();
 }
 
 // Server-to-client frames are never masked (RFC 6455 5.1)
@@ -380,7 +390,7 @@ bool WebSocketServer::performHandshake (Connection& connection)
     while (! endsWith (request, "\r\n\r\n"))
     {
         auto remaining = static_cast<int> (deadline - monotonicMs());
-        if (remaining <= 0 || stopping.load())
+        if (remaining <= 0)
         {
             Log::warn (options.name + ": " + connection.getPeerName() + " did not finish the handshake in time");
             return false;
@@ -449,9 +459,14 @@ bool WebSocketServer::performHandshake (Connection& connection)
                     "Upgrade: websocket\r\n"
                     "Connection: Upgrade\r\n"
                     "Sec-WebSocket-Accept: " + base64Encode (digest.data(), digest.size()) + "\r\n\r\n";
-    return socket.writeAll (response.data(), response.size());
+    if (! socket.writeAll (response.data(), response.size()))
+        return false;
+    connection.admitted.store (true);
+    return ! stopping.load();
 }
 
+// A stopping server doesn't end reads by itself: close() does, through
+// the socket, after the close frame has gone out
 bool WebSocketServer::readFully (Connection& connection, void* buffer, size_t bytes, int timeoutMs)
 {
     auto* out = static_cast<uint8_t*> (buffer);
@@ -459,8 +474,9 @@ bool WebSocketServer::readFully (Connection& connection, void* buffer, size_t by
     auto deadline = timeoutMs < 0 ? 0.0 : monotonicMs() + timeoutMs;
     while (have < bytes)
     {
-        if (stopping.load())
-            return false;
+        auto drain = connection.drainUntil.load();
+        if (drain != 0.0 && monotonicMs() > drain)
+            return false; // the client never answered our close
         auto slice = readSliceMs;
         if (timeoutMs >= 0)
         {
@@ -487,12 +503,21 @@ void WebSocketServer::readLoop (const ConnectionPtr& connectionPtr)
     bool messageInProgress = false;
     uint8_t messageOpcode = 0;
 
-    // A protocol failure: tell the client why, then drop it
+    // A protocol failure: tell the client why, then read and discard (the
+    // stream can't be parsed any more) until the client closes or the
+    // drain is up, so the close frame gets through before the socket goes
     auto fail = [&] (uint16_t code, const char* why)
     {
         Log::warn (options.name + ": closing " + connection.getPeerName() + ": " + why);
         connection.close (code, why);
+        uint8_t discard[1024];
+        while (connection.socket->read (discard, sizeof (discard), readSliceMs) != 0)
+            if (monotonicMs() > connection.drainUntil.load() || ! connection.socket->isOpen())
+                break;
     };
+    // After a close from elsewhere (the server stopping), frames still
+    // parse, but nothing is dispatched and only the client's close matters
+    auto draining = [&] { return connection.drainUntil.load() != 0.0; };
 
     for (;;)
     {
@@ -507,7 +532,10 @@ void WebSocketServer::readLoop (const ConnectionPtr& connectionPtr)
         uint64_t length = header[1] & 0x7F;
 
         if (rsv)
-            return fail (1002, "reserved bits set (no extension was negotiated)");
+        {
+            fail (1002, "reserved bits set (no extension was negotiated)");
+            return;
+        }
 
         if (length == 126)
         {
@@ -525,12 +553,18 @@ void WebSocketServer::readLoop (const ConnectionPtr& connectionPtr)
             for (int i = 0; i < 8; ++i)
                 length = (length << 8) | ext[i];
             if ((length >> 63) != 0)
-                return fail (1002, "bad frame length");
+            {
+                fail (1002, "bad frame length");
+                return;
+            }
         }
 
         // Clients must mask every frame (RFC 6455 5.1)
         if (! masked)
-            return fail (1002, "client frame not masked");
+        {
+            fail (1002, "client frame not masked");
+            return;
+        }
         uint8_t mask[4];
         if (! readFully (connection, mask, 4, 10000))
             return;
@@ -539,9 +573,15 @@ void WebSocketServer::readLoop (const ConnectionPtr& connectionPtr)
         if (isControl)
         {
             if (! fin || length > 125)
-                return fail (1002, "bad control frame");
+            {
+                fail (1002, "bad control frame");
+                return;
+            }
             if (opcode != Opcode::closeFrame && opcode != Opcode::ping && opcode != Opcode::pong)
-                return fail (1002, "unknown control opcode");
+            {
+                fail (1002, "unknown control opcode");
+                return;
+            }
 
             uint8_t payload[125];
             if (length > 0 && ! readFully (connection, payload, static_cast<size_t> (length), 10000))
@@ -551,38 +591,71 @@ void WebSocketServer::readLoop (const ConnectionPtr& connectionPtr)
 
             if (opcode == Opcode::ping)
             {
-                connection.sendFrame (Opcode::pong, payload, static_cast<size_t> (length));
+                if (! draining())
+                    connection.sendFrame (Opcode::pong, payload, static_cast<size_t> (length));
                 continue;
             }
             if (opcode == Opcode::pong)
                 continue;
 
-            // Close: echo the code back, then drop the connection
+            // Close. The client answering ours: done. The client's own:
+            // echo the code back, then drop the connection.
+            if (draining())
+                return;
             uint16_t code = 1000;
             if (length == 1)
-                return fail (1002, "close frame with a one-byte payload");
+            {
+                fail (1002, "close frame with a one-byte payload");
+                return;
+            }
             if (length >= 2)
             {
                 code = static_cast<uint16_t> ((payload[0] << 8) | payload[1]);
                 if (! isValidCloseCode (code))
-                    return fail (1002, "bad close code");
+                {
+                    fail (1002, "bad close code");
+                    return;
+                }
                 if (! isValidUtf8 (reinterpret_cast<const char*> (payload + 2), static_cast<size_t> (length - 2)))
-                    return fail (1007, "close reason is not UTF-8");
+                {
+                    fail (1007, "close reason is not UTF-8");
+                    return;
+                }
             }
             connection.close (code);
             return;
         }
 
         if (opcode != Opcode::continuation && opcode != Opcode::text && opcode != Opcode::binary)
-            return fail (1002, "unknown opcode");
+        {
+            fail (1002, "unknown opcode");
+            return;
+        }
+        if (draining())
+        {
+            // Skip the payload; nothing is dispatched after our close
+            std::vector<uint8_t> skipped (static_cast<size_t> (std::min<uint64_t> (length, options.maxMessageBytes)));
+            if (length > options.maxMessageBytes || (length > 0 && ! readFully (connection, skipped.data(), skipped.size(), 10000)))
+                return;
+            continue;
+        }
         if (opcode == Opcode::continuation && ! messageInProgress)
-            return fail (1002, "continuation frame without a message");
+        {
+            fail (1002, "continuation frame without a message");
+            return;
+        }
         if (opcode != Opcode::continuation && messageInProgress)
-            return fail (1002, "new message while another is in progress");
+        {
+            fail (1002, "new message while another is in progress");
+            return;
+        }
 
         auto already = message.size();
         if (length > options.maxMessageBytes || already + length > options.maxMessageBytes)
-            return fail (1009, "message too big");
+        {
+            fail (1009, "message too big");
+            return;
+        }
 
         if (! messageInProgress)
         {
@@ -603,7 +676,10 @@ void WebSocketServer::readLoop (const ConnectionPtr& connectionPtr)
         if (messageOpcode == Opcode::text)
         {
             if (! isValidUtf8 (reinterpret_cast<const char*> (message.data()), message.size()))
-                return fail (1007, "text is not UTF-8");
+            {
+                fail (1007, "text is not UTF-8");
+                return;
+            }
             if (handlers.onText)
                 handlers.onText (connectionPtr, std::string (message.begin(), message.end()));
         }
