@@ -231,7 +231,7 @@ export async function offline(variant: Variant, seconds: number, tracks: number,
   const d = out.getChannelData(0);
   for (let i = 0; i < d.length; i += 7) peak = Math.max(peak, Math.abs(d[i]));
   const stats = await workletStats(g).catch(() => null);
-  return { variant, tracks, seconds, wallSeconds: wall, speed: seconds / wall, load: wall / seconds, scheduleMs: scheduled, nodes: g.nodes, sources: g.sourcesMade, peak, played: stats?.played ?? null, workletLoad: stats?.load ?? null };
+  return { variant, tracks, seconds, wallSeconds: wall, speed: seconds / wall, load: wall / seconds, scheduleMs: scheduled, nodes: g.nodes, sources: g.sourcesMade, peak, played: stats?.played ?? null, workletLoad: stats?.load ?? null, perTrack: stats?.perTrack ?? null, pendingLeft: stats?.pendingLeft ?? null, messages: stats?.messages ?? null, late: stats?.late ?? null };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

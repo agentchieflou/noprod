@@ -35,6 +35,7 @@ export class VoiceQueue {
   retractFrom(from: number) { this.pending = this.pending.filter((p) => p.frame < from); }
 
   get sounding() { return this.voices.length; }
+  get pendingCount() { return this.pending.length; }
 
   // Mix every voice sounding in [frame, frame + BLOCK) into l/r
   render(frame: number, l: Float32Array, r: Float32Array) {

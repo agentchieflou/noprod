@@ -20,6 +20,7 @@ class EngineProcessor extends AudioWorkletProcessor {
   private tracks: Track[];
   private buffers = new Map<number, Buf>();
   private limiter = new Limiter(sampleRate);
+  private messages = 0; // note messages received
   private busy = 0;   // ms spent in process()
   private blocks = 0;
   constructor(options: { processorOptions: { tracks: number; devices: boolean } }) {
@@ -34,12 +35,15 @@ class EngineProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (e: MessageEvent<Message>) => {
       const m = e.data;
       if (m.type === 'buffer') { const buf = { l: m.l, r: m.r }; this.buffers.set(m.id, buf); for (const t of this.tracks) t.queue.addBuffer(m.id, buf); }
-      else if (m.type === 'notes') for (const n of m.notes) this.tracks[m.track].queue.add(n, currentFrame);
+      else if (m.type === 'notes') { this.messages++; for (const n of m.notes) this.tracks[m.track].queue.add(n, currentFrame); }
       else if (m.type === 'stats') this.port.postMessage({
         type: 'stats',
         late: this.tracks.reduce((s, t) => s + t.queue.late, 0),
         worstLateMs: 1000 * Math.max(...this.tracks.map((t) => t.queue.worstLate)) / sampleRate,
         played: this.tracks.reduce((s, t) => s + t.queue.played, 0),
+        perTrack: this.tracks.map((t) => t.queue.played),
+        pendingLeft: this.tracks.map((t) => t.queue.pendingCount),
+        messages: this.messages,
         load: this.blocks ? this.busy / (this.blocks * 1000 * BLOCK / sampleRate) : 0
       });
     };
