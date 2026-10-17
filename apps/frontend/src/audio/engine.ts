@@ -13,6 +13,8 @@ import { getAudioInputNode, isMonitoring, onInputsChange } from './inputs';
 import { createDeviceDSP, dspKind, resolvedParameters, loadDeviceWorklets, type DeviceDSP, type ParamTarget } from './devices';
 import { loadLiveModels } from './liveModels';
 import { onNativeLatencyChange } from '../native/trackBridge';
+import { analysis } from '@noprod/sound';
+import meterProcessorUrl from './worklets/meter-processor.js?url';
 
 export const audioContext: AudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
 
@@ -32,6 +34,28 @@ masterAnalyser.connect(audioContext.destination);
 
 export const MASTER_ID = 'master';
 
+// Level meters: each strip is tapped post-fader and post-mute by a pair of
+// analysers (left, right). The master's pair sits after the limiter, so it
+// shows what reaches the speakers.
+export interface MeterTap { source: AudioNode; split: ChannelSplitterNode; left: AnalyserNode; right: AnalyserNode }
+
+const createMeterTap = (source: AudioNode): MeterTap => {
+  const split = audioContext.createChannelSplitter(2);
+  const left = audioContext.createAnalyser();
+  const right = audioContext.createAnalyser();
+  left.fftSize = right.fftSize = 2048;
+  left.smoothingTimeConstant = right.smoothingTimeConstant = 0;
+  source.connect(split);
+  split.connect(left, 0);
+  split.connect(right, 1);
+  return { source, split, left, right };
+};
+
+const masterTap = createMeterTap(masterAnalyser);
+
+// Master loudness (BS.1770-4) over the same signal, fed by a worklet
+export const masterLoudness = new analysis.LoudnessMeter(audioContext.sampleRate);
+
 const MAX_COMPENSATION = 2; // seconds of latency compensation a strip can apply
 
 interface Strip {
@@ -46,6 +70,7 @@ interface Strip {
   chainOutputs: AudioNode[];    // outputs of the devices currently wired, for teardown
   outputTarget: string | null;
   monitorSource: AudioNode | null; // live audio input being monitored into this strip
+  meter: MeterTap;
 }
 
 const strips = new Map<string, Strip>();
@@ -62,7 +87,8 @@ const createStrip = (id: string): Strip => {
   panner.connect(fader);
   fader.connect(mute);
   // chainSig starts unmatched so the first wireChain always patches input -> compensation
-  const strip = { id, input, compensation, panner, fader, mute, sends: new Map(), chainSig: '<unwired>', chainOutputs: [], outputTarget: null, monitorSource: null };
+  const meter = createMeterTap(mute);
+  const strip = { id, input, compensation, panner, fader, mute, sends: new Map(), chainSig: '<unwired>', chainOutputs: [], outputTarget: null, monitorSource: null, meter };
   strips.set(id, strip);
   return strip;
 };
@@ -76,6 +102,7 @@ const destroyStrip = (strip: Strip) => {
   strip.fader.disconnect();
   strip.mute.disconnect();
   strip.sends.forEach((g) => g.disconnect());
+  strip.meter.split.disconnect();
   strips.delete(strip.id);
 };
 
@@ -124,6 +151,7 @@ const wireChain = (strip: Strip, plugins: any[], skipUpdates?: Set<string>) => {
 const routeStrip = (strip: Strip, targetId: string) => {
   if (strip.outputTarget === targetId) return;
   strip.mute.disconnect();
+  strip.mute.connect(strip.meter.split); // disconnect() above drops the meter tap too
   if (targetId === 'destination') {
     strip.mute.connect(masterAnalyser);
   } else if (targetId === 'limiter') {
@@ -346,6 +374,9 @@ export function setAutomationPlaying(on: boolean, state?: any) {
 // Where sources for a track (clips, notes, frozen audio) should connect.
 export const getStripInput = (id: string): AudioNode => (strips.get(id) || strips.get(MASTER_ID))!.input;
 
+// The meter for a track / return, or for the master (after the limiter)
+export const getMeterTap = (id: string): MeterTap | undefined => (id === MASTER_ID ? masterTap : strips.get(id)?.meter);
+
 export const getDeviceDSP = (deviceId: string): DeviceDSP | undefined => dsps.get(deviceId);
 
 // Register worklet-based devices, then keep the graph in step with the store.
@@ -355,6 +386,14 @@ export async function initEngine(store: { getState: () => any; subscribe: (fn: (
     await loadDeviceWorklets(audioContext);
   } catch (err) {
     console.warn('Audio worklets unavailable; dynamics devices will pass audio through', err);
+  }
+  try {
+    await audioContext.audioWorklet.addModule(meterProcessorUrl);
+    const node = new AudioWorkletNode(audioContext, 'noprod-meter', { numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' });
+    node.port.onmessage = (e) => masterLoudness.push(e.data[0], e.data[1]);
+    masterAnalyser.connect(node);
+  } catch (err) {
+    console.warn('Loudness meter unavailable', err);
   }
   // physical models played live; without it they play rendered notes
   loadLiveModels(audioContext).catch((err) => console.warn('Live physical models unavailable; they will play rendered notes', err));
