@@ -2,13 +2,14 @@ import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { createDevice } from '../audio/devices';
 import { clipTimelineLength } from '../audio/clipPlayback';
+import { resolveTarget, splitMappings, targetKey } from '../audio/midiTargets';
 import { sliceClip, cutRange, overlapping } from '../project/comping';
 
 // Undo/redo: which slice of the store is history-tracked. Transport/selection/UI
 // state stays out so undoing never yanks the playhead or flips the view.
 const UNDOABLE_KEYS = [
   'tracks', 'regions', 'sessionClips', 'bpm', 'vstScanPaths',
-  'masterVolume', 'masterPan', 'returns', 'masterPlugins', 'locators', 'timeSignatures', 'scenes'
+  'masterVolume', 'masterPan', 'returns', 'masterPlugins', 'locators', 'timeSignatures', 'scenes', 'midiMappings'
 ];
 const HISTORY_LIMIT = 100;
 // Continuous gestures (fader/dial/param drags) coalesce into one entry as long
@@ -16,6 +17,11 @@ const HISTORY_LIMIT = 100;
 // Device params coalesce per device, since one gesture can move several
 // params at once (e.g. dragging an EQ band changes its Freq and Gain).
 const COALESCE_MS = 800;
+
+// A controller gesture (MIDI learn) is one undo step: 300 ms without a
+// change ends it.
+const MIDI_GESTURE_MS = 300;
+let midiGestureTimer = null;
 
 let lastCoalesceKey = null;
 let lastCoalesceTime = 0;
@@ -263,6 +269,9 @@ export const createDefaultProject = () => ({
 
   // Saved Audio Effect Rack presets, reusable across tracks
   savedRacks: [],
+
+  // MIDI learn: controller -> control mappings (see audio/midiTargets.ts)
+  midiMappings: [],
 });
 
 export const PROJECT_KEYS = Object.keys(createDefaultProject());
@@ -349,8 +358,13 @@ export const useDAWStore = create((set, get) => ({
   // history and selection, and marks the result as saved.
   loadProject: (project, projectName = 'Untitled') => set((state) => {
     const next = { ...createDefaultProject(), ...project };
+    // A mapping to a track or device the project lacks is dropped (and said so once)
+    const { kept, dropped } = splitMappings(next, next.midiMappings);
+    next.midiMappings = kept;
+    if (dropped.length) console.warn(`MIDI learn: dropped ${dropped.length} mapping(s) to missing tracks or devices`);
     return {
       ...next,
+      midiLearn: { active: false, pending: null, dropped: dropped.length },
       projectName,
       savedSnapshot: projectSlice(next),
       past: [],
@@ -375,6 +389,38 @@ export const useDAWStore = create((set, get) => ({
   toggleMetronome: () => set((state) => ({ isMetronomeEnabled: !state.isMetronomeEnabled })),
   setViewMode: (mode) => set({ viewMode: mode }),
   setPlaybackPosition: (pos) => set({ playbackPosition: pos }),
+  // MIDI learn (not saved): learn mode, the control waiting for a controller,
+  // and how many mappings the last load dropped
+  midiLearn: { active: false, pending: null, dropped: 0 },
+  setMidiLearn: (patch) => set((state) => ({ midiLearn: { ...state.midiLearn, ...patch } })),
+
+  // Mappings are project state, so these undo and save. One mapping per control.
+  addMidiMapping: (target, source) => { get().record(); set((state) => ({
+    midiMappings: [
+      ...state.midiMappings.filter(m => targetKey(m.target) !== targetKey(target)),
+      { id: uuidv4(), target, source, min: 0, max: 1, mode: 'jump', invert: false }
+    ],
+    midiLearn: { ...state.midiLearn, pending: null }
+  })); },
+  updateMidiMapping: (id, patch) => { get().record(`midi-mapping-${id}`); set((state) => ({
+    midiMappings: state.midiMappings.map(m => m.id === id ? { ...m, ...patch } : m)
+  })); },
+  removeMidiMapping: (id) => { get().record(); set((state) => ({
+    midiMappings: state.midiMappings.filter(m => m.id !== id)
+  })); },
+
+  // A controller moved a mapped control (0..1 of its range). Applies at once
+  // and records history only when a gesture starts.
+  applyMidiValue: (target, norm) => {
+    const state = get();
+    const resolved = resolveTarget(state, target);
+    if (!resolved || Math.abs(resolved.norm - norm) < 1e-6) return;
+    if (!midiGestureTimer) get().record();
+    clearTimeout(midiGestureTimer);
+    midiGestureTimer = setTimeout(() => { midiGestureTimer = null; }, MIDI_GESTURE_MS);
+    set(resolved.apply(state, norm));
+  },
+
   setBpm: (bpm) => { get().record('bpm'); set({ bpm: Math.max(20, Math.min(999, bpm)) }); },
   // Tempo set by the tempo follower: continuous, so kept out of undo history
   setBpmLive: (bpm) => set({ bpm: Math.max(20, Math.min(999, bpm)) }),

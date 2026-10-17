@@ -6,6 +6,7 @@ import { initEngine } from './audio/engine'
 import { initTransport } from './audio/transport'
 import { initSession } from './audio/session'
 import { initLiveMidi } from './audio/inputs'
+import { initMidiLearn } from './audio/midiLearn'
 import { initRecorder } from './audio/recorder'
 import { initCapture } from './audio/capture'
 import { initComputerKeyboard } from './audio/computerKeyboard'
@@ -18,6 +19,7 @@ import { useDAWStore } from './store/useDAWStore'
 initTransport(useDAWStore)
 initSession(useDAWStore)
 initLiveMidi(useDAWStore)
+initMidiLearn(useDAWStore)
 initRecorder(useDAWStore)
 initCapture(useDAWStore)
 initComputerKeyboard(useDAWStore)
