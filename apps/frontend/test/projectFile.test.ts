@@ -108,6 +108,29 @@ test('v1 files load into v2, keys they predate filled in', async () => {
   assert.ok(sameSamples(pcm[0].channels[1], take));
 });
 
+test('without CompressionStream, project.json is stored plain, and both v1 forms load', async () => {
+  const pcm: Pcm[] = [{ sampleRate: 48000, channels: [tone(100, 440)] }];
+  const project = defaults();
+  project.regions = [{ id: 'r', trackId: 't1', file: 'a', audioBuffer: { $audioBuffer: 'b0' }, startTime: 0, duration: 0.002 }];
+  const plain = await writeProjectFile(docJson(project, pcm), pcm, false);
+  const head = new Uint8Array(await plain.slice(16, 32).arrayBuffer());
+  assert.equal(new DataView(head.buffer).getUint32(4, true), 0, 'JSON chunk flags: plain');
+  assert.equal(String.fromCharCode(...new Uint8Array(await plain.slice(32, 33).arrayBuffer())), '{');
+  const back = await readProjectFile(plain, defaults());
+  assert.deepEqual(back.doc.project, project);
+  assert.ok(sameSamples(back.pcm[0].channels[0], pcm[0].channels[0]));
+  const gzipped = await writeProjectFile(docJson(project, pcm), pcm);
+  assert.equal(new DataView((await gzipped.slice(16, 32).arrayBuffer())).getUint32(4, true), 1, 'JSON chunk flags: gzip');
+  // v1 as written by a browser without CompressionStream: plain JSON
+  const v1gz = await v1File(project, { b0: { sampleRate: 48000, channels: pcm[0].channels } });
+  const v1plain = new Blob([await new Response(v1gz.stream().pipeThrough(new DecompressionStream('gzip'))).text()]);
+  const fromPlain = await readProjectFile(v1plain, defaults());
+  assert.deepEqual(fromPlain.doc.project.regions, project.regions);
+  assert.ok(sameSamples(fromPlain.pcm[0].channels[0], pcm[0].channels[0]));
+  // a JSON chunk stored some way this version doesn't know
+  await refuses(new Blob([header(), ...chunk('JSON', new TextEncoder().encode('{}'), 2, 2), ...chunk('END ', new Uint8Array(0))] as BlobPart[]), /needs a newer NoProd/);
+});
+
 test('v1 files that are damaged are refused', async () => {
   const { tracks: _t, ...noTracks } = defaults();
   await refuses(await v1File(noTracks, {}), /project\.tracks: missing/);
@@ -123,14 +146,16 @@ test('v1 files that are damaged are refused', async () => {
 });
 
 // ---- hand-built v2 files
-const chunk = (tag: string, payload: Uint8Array, length = payload.length) => {
+const chunk = (tag: string, payload: Uint8Array, length = payload.length, flags = 0) => {
   const h = new Uint8Array(16);
   const v = new DataView(h.buffer);
   h.set([...tag].map((c) => c.charCodeAt(0)));
+  v.setUint32(4, flags, true);
   v.setUint32(8, length % 2 ** 32, true);
   v.setUint32(12, Math.floor(length / 2 ** 32), true);
   return [h, payload];
 };
+const chunkGz = (tag: string, payload: Uint8Array) => chunk(tag, payload, payload.length, 1);
 const header = (version = 1) => {
   const h = new Uint8Array(16);
   h.set(MAGIC);
@@ -150,7 +175,7 @@ const pcmChunk = (index: number, channel: number, first: number, samples: Float3
   return chunk('PCM ', out);
 };
 const file = async (doc: any, ...rest: Uint8Array[][]) =>
-  new Blob([header(), ...chunk('JSON', await gzipBytes(typeof doc === 'string' ? doc : JSON.stringify(doc))), ...rest.flat(), ...chunk('END ', new Uint8Array(0))] as BlobPart[]);
+  new Blob([header(), ...chunkGz('JSON', await gzipBytes(typeof doc === 'string' ? doc : JSON.stringify(doc))), ...rest.flat(), ...chunk('END ', new Uint8Array(0))] as BlobPart[]);
 const v2 = (project: any = defaults(), buffers: any[] = []) => ({ format: 'noprod-project', version: 2, buffers, project });
 
 test('files with wrong types are refused, naming the field', async () => {

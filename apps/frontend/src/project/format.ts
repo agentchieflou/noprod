@@ -1,7 +1,7 @@
 // The .noprod file format (see README.md): a chunked binary container that
-// holds project.json (gzip) and each AudioBuffer as raw Float32 PCM chunks,
-// so no audio ever goes through a string. Also reads v1 files (one gzipped
-// JSON string with base64 audio). Pure: no DOM or Web Audio, so it runs in
+// holds project.json (gzip'd where the browser can) and each AudioBuffer as
+// raw Float32 PCM chunks, so no audio ever goes through a string. Also reads
+// v1 files (one JSON string with base64 audio, usually gzip'd). Pure: no DOM or Web Audio, so it runs in
 // the project worker and in Node's tests.
 
 import { migrate, validateDoc, knownKeys, ProjectFileError, BUFFER_LIMITS, type ProjectDoc, type BufferInfo } from './schema.ts';
@@ -35,11 +35,15 @@ const littleEndian = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 
 const tagBytes = (tag: string) => Uint8Array.from(tag, (c) => c.charCodeAt(0));
 
-const chunkHeader = (tag: string, length: number) => {
+// JSON chunk flag: its payload is gzip'd (else plain UTF-8, for browsers
+// without CompressionStream)
+const GZIPPED = 1;
+
+const chunkHeader = (tag: string, length: number, flags = 0) => {
   const b = new Uint8Array(CHUNK_HEADER);
   const v = new DataView(b.buffer);
   b.set(tagBytes(tag), 0);
-  v.setUint32(4, 0, true);
+  v.setUint32(4, flags, true);
   v.setUint32(8, length % 2 ** 32, true);
   v.setUint32(12, Math.floor(length / 2 ** 32), true);
   return b;
@@ -48,9 +52,12 @@ const chunkHeader = (tag: string, length: number) => {
 const gzip = async (text: string) =>
   new Uint8Array(await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
 
-// Decompresses, refusing to inflate past `limit` bytes (a gzip bomb)
-async function gunzipText(data: Blob, limit: number) {
-  const reader = data.stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+// Decompresses (if gzipped), refusing to inflate past `limit` bytes (a gzip bomb)
+async function readText(data: Blob, limit: number, gzipped: boolean) {
+  if (gzipped && typeof DecompressionStream === 'undefined') fail("This browser can't open compressed project files; update it");
+  if (!gzipped && data.size > limit) fail('The project data is larger than NoProd accepts');
+  const stream = gzipped ? data.stream().pipeThrough(new DecompressionStream('gzip')) : data.stream();
+  const reader = stream.getReader();
   const parts: Uint8Array[] = [];
   let size = 0;
   try {
@@ -74,14 +81,14 @@ const parseJson = (text: string) => {
 };
 
 // project.json (with `buffers` describing each entry of `pcm`, in order)
-// -> a .noprod v2 file
-export async function writeProjectFile(json: string, pcm: Pcm[]): Promise<Blob> {
+// -> a .noprod v2 file. project.json is gzip'd where the browser can.
+export async function writeProjectFile(json: string, pcm: Pcm[], compress = typeof CompressionStream !== 'undefined'): Promise<Blob> {
   if (!littleEndian) fail('Saving needs a little-endian machine');
   const head = new Uint8Array(HEADER);
   head.set(MAGIC, 0);
   new DataView(head.buffer).setUint32(8, CONTAINER_VERSION, true);
-  const doc = await gzip(json);
-  const parts: BlobPart[] = [head, chunkHeader('JSON', doc.length), doc];
+  const doc = compress ? await gzip(json) : new TextEncoder().encode(json);
+  const parts: BlobPart[] = [head, chunkHeader('JSON', doc.length, compress ? GZIPPED : 0), doc];
   pcm.forEach((buf, index) => {
     buf.channels.forEach((data, channel) => {
       for (let at = 0; at < data.length; at += PCM_CHUNK_FRAMES) {
@@ -117,7 +124,8 @@ const u64 = (v: DataView, at: number) => {
 export async function readProjectFile(blob: Blob, defaults: Record<string, unknown>): Promise<{ doc: ProjectDoc; pcm: Pcm[] }> {
   if (blob.size < 2) fail('Not a NoProd project file');
   const sig = await bytesAt(blob, 0, Math.min(blob.size, HEADER));
-  if (sig[0] === 0x1f && sig[1] === 0x8b) return readV1(blob, defaults);
+  if (sig[0] === 0x1f && sig[1] === 0x8b) return readV1(blob, defaults, true);
+  if (sig[0] === 0x7b) return readV1(blob, defaults, false); // '{': v1 saved without CompressionStream
   if (sig.length < HEADER || MAGIC.some((b, i) => sig[i] !== b)) fail('Not a NoProd project file');
   const version = new DataView(sig.buffer).getUint32(8, true);
   if (version > CONTAINER_VERSION) fail(`This project was saved by a newer NoProd (container v${version}); update NoProd to open it`);
@@ -132,6 +140,7 @@ export async function readProjectFile(blob: Blob, defaults: Record<string, unkno
     const h = await bytesAt(blob, at, CHUNK_HEADER);
     const v = new DataView(h.buffer);
     const tag = String.fromCharCode(...h.subarray(0, 4));
+    const flags = v.getUint32(4, true);
     const length = u64(v, 8);
     const start = at + CHUNK_HEADER;
     if (start + length > blob.size) fail('The file is truncated');
@@ -140,7 +149,8 @@ export async function readProjectFile(blob: Blob, defaults: Record<string, unkno
     if (tag === 'JSON') {
       if (doc) fail('The file holds two projects');
       if (length > LIMITS.jsonBytes) fail('The project data is larger than NoProd accepts');
-      const raw = parseJson(await gunzipText(blob.slice(start, start + length), LIMITS.jsonBytes));
+      if (flags & ~GZIPPED) fail('This project needs a newer NoProd (its project data is stored in a way this one does not know)');
+      const raw = parseJson(await readText(blob.slice(start, start + length), LIMITS.jsonBytes, !!(flags & GZIPPED)));
       doc = checkDoc(raw, defaults);
       infos = doc.buffers;
       // Every sample must be in the file, so declared sizes are bounded by it
@@ -184,12 +194,13 @@ export function checkDoc(raw: unknown, defaults: Record<string, unknown>): Proje
   return { ...doc, project: knownKeys(doc.project) };
 }
 
-// v1: gzip(JSON) with each buffer's channels as base64 Float32 bytes in
+// v1: JSON (gzip'd, or plain where the browser had no CompressionStream)
+// with each buffer's channels as base64 Float32 bytes in
 // doc.buffers = { [id]: { sampleRate, length, channels: string[] } }
-async function readV1(blob: Blob, defaults: Record<string, unknown>) {
-  const raw = parseJson(await gunzipText(blob, LIMITS.v1Bytes));
+async function readV1(blob: Blob, defaults: Record<string, unknown>, gzipped: boolean) {
+  const raw = parseJson(await readText(blob, LIMITS.v1Bytes, gzipped));
   if (!raw || typeof raw !== 'object' || raw.format !== 'noprod-project') fail('Not a NoProd project file');
-  if (typeof raw.version !== 'number' || raw.version !== 1) fail(`A gzip project must be v1, not v${raw.version}`);
+  if (typeof raw.version !== 'number' || raw.version !== 1) fail(`A JSON project file must be v1, not v${raw.version}`);
   const table = raw.buffers ?? {};
   if (typeof table !== 'object' || Array.isArray(table)) fail('This project file is damaged: buffers: expected an object');
   const ids = Object.keys(table);
