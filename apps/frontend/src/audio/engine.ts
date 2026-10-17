@@ -373,6 +373,11 @@ export async function initEngine(store: { getState: () => any; subscribe: (fn: (
 }
 
 export const resumeAudio = () => {
-  if (audioContext.state === 'suspended') return audioContext.resume();
+  if (audioContext.state !== 'running') return audioContext.resume();
   return Promise.resolve();
 };
+
+// iOS Safari 'interrupts' the context (a call, the screen locking) and only
+// a user gesture starts it again
+['pointerdown', 'keydown', 'touchend'].forEach((type) =>
+  window.addEventListener(type, () => { if (audioContext.state !== 'running') audioContext.resume().catch(() => {}); }, { capture: true, passive: true }));

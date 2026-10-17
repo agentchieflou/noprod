@@ -38,6 +38,8 @@ import ArrangementRuler from './components/ArrangementRuler';
 import TempoControls from './components/TempoControls';
 import FileMenu from './components/FileMenu';
 import AutomationLane from './components/AutomationLane';
+import { SmallScreenNotice, LatencyInfo } from './components/BrowserNotes';
+import { canScanFolders, FOLDER_SCAN_REASON } from './platform/support';
 import { automationParams } from './audio/automation';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
 import { DEVICE_DEFS, createDevice } from './audio/devices';
@@ -546,10 +548,7 @@ function App() {
 
   const handleScanPluginFolder = async () => {
     const picker = (window as any).showDirectoryPicker;
-    if (!picker) {
-      alert('Folder scanning needs the File System Access API (Chromium-based browser).');
-      return;
-    }
+    if (!picker) return;
     try {
       setIsScanning(true);
       const dirHandle = await picker.call(window, { mode: 'read' });
@@ -707,6 +706,7 @@ function App() {
 
   return (
     <div className="daw-container">
+      <SmallScreenNotice />
       {/* Ableton-style Control Bar */}
       <div className="control-bar">
         <div className="logo-section">NoProd</div>
@@ -1434,14 +1434,19 @@ function App() {
                 ))}
               </div>
               
-              <button
-                className="btn-add-track"
-                style={{ backgroundColor: 'var(--accent-green)', marginTop: '10px' }}
-                onClick={handleScanPluginFolder}
-                disabled={isScanning}
-              >
-                {isScanning ? 'Scanning…' : 'Scan Folder for Plugins…'}
-              </button>
+              {canScanFolders() ? (
+                <button
+                  className="btn-add-track"
+                  style={{ backgroundColor: 'var(--accent-green)', marginTop: '10px' }}
+                  onClick={handleScanPluginFolder}
+                  disabled={isScanning}
+                >
+                  {isScanning ? 'Scanning…' : 'Scan Folder for Plugins…'}
+                </button>
+              ) : (
+                <p className="browser-note" style={{ marginTop: '10px' }}>{FOLDER_SCAN_REASON}</p>
+              )}
+              <LatencyInfo />
 
               {scannedPlugins.length > 0 && (
                 <div style={{ marginTop: '10px' }}>

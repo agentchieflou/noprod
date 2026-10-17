@@ -34,6 +34,26 @@ Run each command in its own terminal, then open http://localhost:5173.
   from [apps/audio_core/README.md](apps/audio_core/README.md), which covers
   its JUCE submodule and its platform packages.
 
+## Browser support
+
+noprod supports the **last two versions of Chrome, Edge, Firefox and Safari**
+(desktop). The smoke test of the built app (`npm run e2e:dist`) runs in
+Chromium, Firefox and WebKit in CI; the full suites run in Chromium.
+
+- A browser without AudioWorklet, or a page that isn't a secure context
+  (https, or localhost), gets a page saying why noprod can't run.
+- Under 900 px wide, noprod shows a notice that it is built for larger
+  screens, with "Continue anyway".
+- Safari has no `outputLatency`: recordings are placed by the base latency
+  plus an estimate you can change (VST Folders Scan tab).
+- Firefox asks for its site-permission add-on before WebMIDI works, and can't
+  list a plugin folder from a page, so plugin scanning is off there (add the
+  folder's path for GhostDAW instead).
+- Project files are gzipped; where `CompressionStream` is missing they are
+  saved as plain JSON, which loads everywhere.
+- The build target (`apps/frontend/vite.config.ts`) is a syntax floor below
+  that policy; APIs aren't polyfilled.
+
 ## Layout
 
 | Path | What it is |
@@ -51,6 +71,7 @@ Run each command in its own terminal, then open http://localhost:5173.
 ```sh
 npm test       # unit tests for packages/sound and packages/theory
 npm run e2e    # browser suites, about two minutes
+E2E_BROWSER=firefox npm run e2e:dist   # the built-app smoke test in Firefox (or webkit)
 ```
 
 `npm run e2e` starts the frontend itself and runs each suite in a headless
