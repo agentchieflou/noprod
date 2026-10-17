@@ -3,6 +3,7 @@
 // normalized value (0..1) and the state change that sets a new one. No store
 // import, so the store can use it.
 
+import { findDevice, mapDeviceAnywhere } from '../store/deviceTree';
 import { getParamSpecs, resolvedParameters, sliderToValue, valueToSlider, SLIDER_STEPS, type ParamSpec } from './devices';
 
 export type MidiTarget =
@@ -68,40 +69,6 @@ const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 const lerp = (lo: number, hi: number, n: number) => lo + clamp01(n) * (hi - lo);
 const unlerp = (lo: number, hi: number, v: number) => clamp01((v - lo) / (hi - lo));
 
-// A device anywhere: any strip's chain, or inside a rack
-export function findDevice(state: any, deviceId: string): any | null {
-  const search = (plugins: any[] = []): any => {
-    for (const p of plugins) {
-      if (p.id === deviceId) return p;
-      if (p.type === 'rack') { const hit = search(p.devices); if (hit) return hit; }
-    }
-    return null;
-  };
-  for (const strip of [...state.tracks, ...state.returns]) { const hit = search(strip.plugins); if (hit) return hit; }
-  return search(state.masterPlugins);
-}
-
-// Updates the device with this id wherever it sits (mirrors the store's mapDeviceAnywhere)
-const patchDevice = (state: any, deviceId: string, fn: (d: any) => any) => {
-  const inList = (plugins: any[] = []): any[] => {
-    let changed = false;
-    const next = plugins.map((p) => {
-      if (p.id === deviceId) { changed = true; return fn(p); }
-      if (p.type === 'rack') {
-        const devices = inList(p.devices);
-        if (devices !== p.devices) { changed = true; return { ...p, devices }; }
-      }
-      return p;
-    });
-    return changed ? next : plugins;
-  };
-  const inStrips = (strips: any[]) => strips.map((s) => {
-    const plugins = s.plugins && inList(s.plugins);
-    return plugins === s.plugins ? s : { ...s, plugins };
-  });
-  return { tracks: inStrips(state.tracks), returns: inStrips(state.returns), masterPlugins: inList(state.masterPlugins) };
-};
-
 export function resolveTarget(state: any, t: MidiTarget): ResolvedTarget | null {
   const track = 'trackId' in t ? state.tracks.find((x: any) => x.id === t.trackId) : null;
   const patchTrack = (patch: (tr: any) => any) => ({
@@ -136,7 +103,7 @@ export function resolveTarget(state: any, t: MidiTarget): ResolvedTarget | null 
     case 'device': {
       const device = findDevice(state, t.deviceId);
       if (!device) return null;
-      const set = (v: number | boolean) => patchDevice(state, t.deviceId, (d) => ({ ...d, parameters: { ...d.parameters, [t.param]: v } }));
+      const set = (v: number | boolean) => mapDeviceAnywhere(state, t.deviceId, (d: any) => ({ ...d, parameters: { ...d.parameters, [t.param]: v } }));
       const specs = getParamSpecs(device);
       const spec: ParamSpec | undefined = specs?.find((s) => s.name === t.param);
       const params = resolvedParameters(device);
