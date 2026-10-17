@@ -170,14 +170,20 @@ std::vector<fs::path> listBundles (const fs::path& dir, const std::string& exten
 
     size_t visited = 0;
     auto wanted = lowerCase (extension);
-    for (fs::directory_iterator it (dir, fs::directory_options::skip_permission_denied, ec), end; ! ec && it != end && visited < limit; it.increment (ec))
+    for (fs::recursive_directory_iterator it (dir, fs::directory_options::skip_permission_denied, ec), end; ! ec && it != end && visited < limit; it.increment (ec))
     {
         ++visited;
-        if (! it->is_directory (ec))
+        if (! it->is_directory (ec) || it->is_symlink (ec))
+        {
+            it.disable_recursion_pending();
             continue;
+        }
         auto name = lowerCase (pathToUtf8 (it->path().filename()));
         if (name.size() > wanted.size() && name.compare (name.size() - wanted.size(), wanted.size(), wanted) == 0)
+        {
             result.push_back (it->path());
+            it.disable_recursion_pending(); // what a bundle holds is its own
+        }
     }
     std::sort (result.begin(), result.end());
     return result;

@@ -10,10 +10,12 @@
 #include "Mixer.h"
 #include "PluginRegistry.h"
 #include "TrackStreams.h"
+#include "Vst3Plugin.h"
 #include "editor/LpiEditor.h"
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -612,6 +614,23 @@ private:
             return library != nullptr ? std::make_unique<LpiInsert> (library) : nullptr;
         }
 
+        if (equalsIgnoreCase (known.format, "VST3"))
+        {
+            // Instances of one module share it, so its binary loads once
+            auto module = vst3Modules[known.path].lock();
+            if (module == nullptr)
+            {
+                module = Vst3Module::open (pathFromUtf8 (known.path), error);
+                if (module == nullptr)
+                    return nullptr;
+                vst3Modules[known.path] = module;
+            }
+            auto insert = Vst3Insert::create (module, pluginId, error);
+            if (insert == nullptr)
+                return nullptr;
+            return insert;
+        }
+
         error = "This build can't host " + known.format + " plugins yet";
         return nullptr;
     }
@@ -761,6 +780,7 @@ private:
     Mixer& mixer;
     MessageLoop& loop;
     PluginRegistry& registry;
+    std::map<std::string, std::weak_ptr<Vst3Module>> vst3Modules; // by path
     fs::path stateFile;
     bool stateDirty = false;
     MessageLoop::TimerId garbageTimer = 0, saveTimer = 0;

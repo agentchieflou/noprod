@@ -1,8 +1,9 @@
-// Tests for plugin hosting (#134, step 3): LPI loading, the command path
-// (plugins by id only), saved bus state, track streams, editors and their
-// keyboard, the transport and latency extensions, and the scanner's child
-// process surviving a plugin that crashes or hangs. Ported from the JUCE
-// host's tests, with the security rules added.
+// Tests for plugin hosting (#134, steps 3 and 4): LPI loading, the command
+// path (plugins by id only), saved bus state, track streams, editors and
+// their keyboard, the transport and latency extensions, the scanner's
+// child process surviving a plugin that crashes or hangs, and VST 3
+// through the SDK's interfaces. Ported from the JUCE host's tests, with
+// the security rules added.
 
 #include "Check.h"
 #include "host/HapAudioEngine.h"
@@ -13,6 +14,7 @@
 #include "host/PluginRegistry.h"
 #include "host/PluginScanner.h"
 #include "host/TrackStreams.h"
+#include "host/Vst3Plugin.h"
 #include "host/editor/LpiEditor.h"
 #include "platform/ChildProcess.h"
 #include "platform/Files.h"
@@ -1148,13 +1150,19 @@ void testScanner()
     CHECK (registry.addUserScanFolder (badFolder));
     CHECK (registry.getUserScanFolders().size() == 2 && registry.getScanFolders().size() == PluginRegistry::defaultScanFolders().size() + 2);
 
-    // The candidates: every shared library there, nothing inside a .vst3 bundle
+    // The candidates: every shared library there, and a .vst3 bundle as
+    // one candidate, whatever is inside it
     createDirectories (pluginFolder / "Fake.vst3" / "Contents");
     writeFile (pluginFolder / "Fake.vst3" / "Contents" / ("inside" + std::string (sharedLibraryExtension)), "");
     auto candidates = PluginScanner::candidates ({ pluginFolder, badFolder });
-    CHECK (candidates.size() == 9); // gain x3, gui x4, crash, hang
+    CHECK (candidates.size() == 10); // gain x3, gui x4, crash, hang, the bundle
+    int bundles = 0;
     for (auto& c : candidates)
-        CHECK (pathToUtf8 (c).find ("Fake.vst3") == std::string::npos);
+    {
+        CHECK (pathToUtf8 (c).find ("inside") == std::string::npos);
+        bundles += c.filename() == "Fake.vst3";
+    }
+    CHECK (bundles == 1);
     fs::remove_all (pluginFolder / "Fake.vst3");
 
     PluginScanner::Options options;
@@ -1247,6 +1255,243 @@ void testScanner()
     fs::remove_all (dir);
 }
 
+// ------------------------------------------------------------------ VST 3
+
+// Registers the two VST 3 test bundles the way a scan would, and returns
+// their class ids
+std::pair<std::string, std::string> registerVst3 (PluginRegistry& registry)
+{
+    auto known = registry.getPlugins();
+    std::vector<std::string> ids;
+    for (auto* path : { VST3_TEST_GAIN_PATH, VST3_TEST_GAIN_SEPARATE_PATH })
+    {
+        auto described = PluginScanner::describeFile (pathFromUtf8 (path));
+        for (auto& p : described["plugins"].elements())
+        {
+            known.push_back ({ p["pluginId"].toString(), p["name"].toString(), p["vendor"].toString(), p["format"].toString(), path,
+                               PluginRegistry::modificationTime (pathFromUtf8 (path)) });
+            ids.push_back (p["pluginId"].toString());
+        }
+    }
+    registry.replace (known, {});
+    return { ids.size() > 0 ? ids[0] : "", ids.size() > 1 ? ids[1] : "" };
+}
+
+void testVst3()
+{
+    section ("VST3: a module's classes, and what is not a module");
+    std::string error;
+    auto module = Vst3Module::open (pathFromUtf8 (VST3_TEST_GAIN_PATH), error);
+    CHECK (module != nullptr);
+    if (module == nullptr)
+    {
+        std::cerr << "  " << error << std::endl;
+        return;
+    }
+    CHECK (module->getAudioEffects().size() == 1);
+    auto& effect = module->getAudioEffects()[0];
+    CHECK (effect.name == "NoProd Test Gain" && effect.vendor == "NoProd" && effect.version == "1.0.0");
+    CHECK (effect.classId.size() == 32 && containsOnly (effect.classId, "0123456789ABCDEF"));
+    CHECK (effect.subCategories.find ("Fx") != std::string::npos);
+    CHECK (fileExists (Vst3Module::binaryPathFor (pathFromUtf8 (VST3_TEST_GAIN_PATH))));
+
+    auto separate = Vst3Module::open (pathFromUtf8 (VST3_TEST_GAIN_SEPARATE_PATH), error);
+    CHECK (separate != nullptr && separate->getAudioEffects().size() == 1); // the controller class is not an effect
+    CHECK (separate != nullptr && separate->getAudioEffects()[0].classId != effect.classId);
+
+    CHECK (Vst3Module::open (pathFromUtf8 (LPI_TEST_GAIN_PATH), error) == nullptr && error.find ("GetPluginFactory") != std::string::npos);
+    CHECK (Vst3Module::open (pathFromUtf8 (VST3_TEST_GAIN_PATH) / "nope.vst3", error) == nullptr && ! error.empty());
+    CHECK (Vst3Insert::create (module, "00000000000000000000000000000000", error) == nullptr && error.find ("No audio effect") != std::string::npos);
+
+    section ("VST3: an insert processes audio and takes parameter changes, with the plug-in's text");
+    auto signal = makeSignal (512);
+    for (auto& [bundle, name] : { std::pair<std::shared_ptr<Vst3Module>, const char*> { module, "NoProd Test Gain" },
+                                  { separate, "NoProd Test Gain (separate controller)" } })
+    {
+        auto insert = Vst3Insert::create (bundle, bundle->getAudioEffects()[0].classId, error);
+        CHECK (insert != nullptr);
+        if (insert == nullptr)
+        {
+            std::cerr << "  " << error << std::endl;
+            continue;
+        }
+        CHECK (insert->getName() == name && insert->getFormat() == "VST3" && insert->getPluginId() == bundle->getAudioEffects()[0].classId);
+        CHECK (insert->getPath() == pathToUtf8 (bundle->getPath()));
+        auto params = insert->getParameters();
+        CHECK (params.size() == 2);
+        CHECK (params[0].name == "Gain" && params[0].id == "0" && ! params[0].readOnly && params[0].defaultValue == 1.0f);
+        CHECK (params[1].name == "Host tempo" && params[1].readOnly);
+        CHECK (insert->prepare (rate, 512, error));
+        CHECK (insert->getLatencySamples() == 0);
+        CHECK (errorAgainst (runProcessor (*insert, signal), signal, 1.0f) < 1e-6f);
+
+        CHECK (insert->setParameterValue (0, 0.5f));
+        CHECK_NEAR (insert->getParameterValue (0), 0.5f, 1e-6f);
+        CHECK (startsWith (insert->getParameterText (0), "0.5"));
+        runProcessor (*insert, signal); // the change reaches the processor with the next block
+        CHECK (errorAgainst (runProcessor (*insert, signal), signal, 0.5f) < 1e-6f);
+        CHECK (! insert->setParameterValue (1, 0.3f)); // read-only
+        CHECK (! insert->setParameterValue (7, 0.3f));
+
+        // The transport reaches the plug-in's ProcessContext; it reports the
+        // tempo back through its output parameter changes
+        TransportInfo transport;
+        transport.tempoBpm = 133.0;
+        transport.ppqPosition = 4.0;
+        transport.flags = TransportInfo::playing | TransportInfo::tempoValid | TransportInfo::ppqValid;
+        insert->setTransport (transport);
+        runProcessor (*insert, signal);
+        runProcessor (*insert, signal);
+        CHECK_NEAR (insert->getParameterValue (1), 0.133f, 1e-4f);
+
+        // State round trip: the gain, as the component saves it, restored
+        // in the controller and the processor both
+        std::vector<uint8_t> state;
+        CHECK (insert->getState (state) && state.size() == sizeof (float));
+        CHECK (insert->setParameterValue (0, 0.25f));
+        runProcessor (*insert, signal);
+        CHECK (errorAgainst (runProcessor (*insert, signal), signal, 0.25f) < 1e-6f);
+        CHECK (insert->setState (state));
+        CHECK_NEAR (insert->getParameterValue (0), 0.5f, 1e-6f);
+        CHECK (errorAgainst (runProcessor (*insert, signal), signal, 0.5f) < 1e-6f);
+
+        // Re-prepared at another rate, it still works
+        CHECK (insert->prepare (44100.0, 256, error));
+        auto shorter = makeSignal (256);
+        runProcessor (*insert, shorter);
+        CHECK (errorAgainst (runProcessor (*insert, shorter), shorter, 0.5f) < 1e-6f);
+    }
+
+    section ("VST3: through the host, by id, in a chain with an LPI insert");
+    Rig rig;
+    auto [gainId, separateId] = registerVst3 (rig.registry);
+    CHECK (gainId == effect.classId && ! separateId.empty());
+    auto& host = rig.host;
+    auto& chain = rig.mixer.getMasterChain();
+    chain.audioStarted (PluginHost::defaultSampleRate);
+    auto state = host.getState();
+    CHECK (state["availablePlugins"].size() == 7);
+    CHECK (findByName (state["availablePlugins"], "NoProd Test Gain (separate controller)")["format"].toString() == "VST3");
+
+    state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "pluginId", "com.noprod.test.gain" } }));
+    auto lpiId = masterInserts (state)[0]["slotId"].toString();
+    host.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", lpiId }, { "parameterId", "gain" }, { "value", 0.5 } }));
+    state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "pluginId", gainId }, { "index", 0 } }));
+    CHECK (state["type"].toString() == "AUDIO_CORE_STATE" && masterInserts (state).size() == 2);
+    if (masterInserts (state).size() != 2)
+    {
+        std::cerr << "  " << state["message"].toString() << std::endl;
+        return;
+    }
+    auto vst3Slot = masterInserts (state)[0];
+    CHECK (vst3Slot["format"].toString() == "VST3" && vst3Slot["name"].toString() == "NoProd Test Gain" && vst3Slot["pluginId"].toString() == gainId);
+    CHECK (vst3Slot["path"].toString() == VST3_TEST_GAIN_PATH);
+    auto gainParam = findByName (vst3Slot["parameters"], "Gain");
+    CHECK (! gainParam.isNull() && gainParam["id"].toString() == "0");
+    CHECK (findByName (vst3Slot["parameters"], "Host tempo")["readOnly"].toBool());
+    auto vst3Id = vst3Slot["slotId"].toString();
+
+    // VST3 at unity, LPI at 0.5
+    CHECK (errorAgainst (runChain (chain, signal), signal, 0.5f) < 1e-5f);
+    auto changed = host.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", vst3Id },
+                                                  { "parameterIndex", gainParam["index"].toInt() }, { "value", 0.5 } }));
+    CHECK (changed["type"].toString() == "PLUGIN_PARAMETER_CHANGED");
+    CHECK (startsWith (changed["text"].toString(), "0.5"));
+    runChain (chain, signal); // VST3 parameter changes arrive with the next block
+    CHECK (errorAgainst (runChain (chain, signal), signal, 0.25f) < 1e-5f);
+
+    // A second instance of the same module, and the other bundle, on a track bus
+    state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "pluginId", gainId }, { "bus", 2 } }));
+    state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "pluginId", separateId }, { "bus", 2 } }));
+    CHECK (busInserts (state, 2).size() == 2 && busInserts (state, 2)[1]["name"].toString() == "NoProd Test Gain (separate controller)");
+
+    state = host.handleCommand (command ({ { "type", "REMOVE_PLUGIN" }, { "slotId", vst3Id } }));
+    CHECK (masterInserts (state).size() == 1 && masterInserts (state)[0]["slotId"].toString() == lpiId);
+    chain.audioStopped();
+
+    section ("VST3: a track stream's transport reaches the plug-in's ProcessContext");
+    auto stream = std::make_shared<TrackStream>();
+    stream->id = "device-v";
+    stream->sampleRate = 48000.0;
+    stream->maxBlockSize = 256;
+    std::vector<std::string> errors;
+    stream->chain.prepare (stream->sampleRate, stream->maxBlockSize, errors);
+    stream->chain.audioStarted (stream->sampleRate);
+    host.registerStream (stream);
+    state = host.handleStreamCommand (*stream, command ({ { "type", "LOAD" }, { "pluginId", separateId } }));
+    CHECK (state["insert"]["format"].toString() == "VST3");
+    constexpr uint32_t playing = TransportInfo::playing, tempoValid = TransportInfo::tempoValid, ppqValid = TransportInfo::ppqValid;
+    auto block = makeSignal (256);
+    for (int i = 0; i < 3; ++i) // the plug-in's answer reaches the host with the following block
+    {
+        auto frame = streamFrameWithTransport (static_cast<uint32_t> (10 + i), block, 133.0, 0.0, playing | tempoValid | ppqValid);
+        stream->processFrame (frame.data(), frame.size());
+    }
+    auto hostTempo = findByName (host.handleStreamCommand (*stream, command ({ { "type", "GET_STATE" } }))["insert"]["parameters"], "Host tempo");
+    CHECK_NEAR (static_cast<float> (hostTempo["value"].toDouble()), 0.133f, 1e-4f);
+    stream->chain.audioStopped();
+    host.closeStream (stream);
+
+    section ("VST3: bus state comes back after a restart, by class id");
+    {
+        auto dir = tempDir ("vst3state");
+        MessageLoop loop;
+        HapAudioEngine engine;
+        Mixer mixer (engine);
+        PluginRegistry registry (dir);
+        TestPlugins::registerAll (registry);
+        registerVst3 (registry);
+        {
+            PluginHost saver (mixer, loop, registry, dir / "state.json");
+            auto s = saver.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "pluginId", gainId } }));
+            auto slotId = masterInserts (s)[0]["slotId"].toString();
+            saver.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", slotId }, { "parameterId", "0" }, { "value", 0.75 } }));
+            loop.runFor (1200);
+            CHECK (fileExists (dir / "state.json"));
+            saver.clearAllInserts();
+        }
+        HapAudioEngine engine2;
+        Mixer mixer2 (engine2);
+        PluginHost reloaded (mixer2, loop, registry, dir / "state.json");
+        CHECK (reloaded.restoreState().find ("1 insert restored") != std::string::npos);
+        auto s = reloaded.getState();
+        CHECK (masterInserts (s).size() == 1 && masterInserts (s)[0]["pluginId"].toString() == gainId);
+        CHECK_NEAR (static_cast<float> (findByName (masterInserts (s)[0]["parameters"], "Gain")["value"].toDouble()), 0.75f, 1e-6f);
+        reloaded.clearAllInserts();
+        fs::remove_all (dir);
+    }
+
+    section ("VST3: the scan finds bundles, in the worker");
+    {
+        auto dir = tempDir ("vst3scan");
+        auto vst3Folder = pathFromUtf8 (VST3_TEST_GAIN_PATH).parent_path();
+        MessageLoop loop;
+        PluginRegistry registry (dir);
+        CHECK (registry.addUserScanFolder (vst3Folder));
+        auto candidates = PluginScanner::candidates ({ vst3Folder });
+        CHECK (candidates.size() == 2);
+        PluginScanner::Options options;
+        options.worker = pathFromUtf8 (GHOSTDAW_EXE_PATH);
+        options.timeoutMs = 20000;
+        PluginScanner scanner (registry, loop, options);
+        std::string summary;
+        CHECK (scanner.start ([&] (const std::string& s) { summary = s; }));
+        CHECK (loop.runUntil ([&] { return ! summary.empty(); }, 60000));
+        std::cout << "  " << summary << std::endl;
+        CHECK (summary.find ("2 plugins loaded") != std::string::npos && summary.find ("0 skipped") != std::string::npos);
+        int vst3Found = 0;
+        for (auto& p : registry.getPlugins())
+            vst3Found += p.format == "VST3" && p.vendor == "NoProd" && p.pluginId.size() == 32;
+        CHECK (vst3Found == 2);
+        KnownPlugin found;
+        CHECK (registry.find (separateId, found) && samePath (found.path, VST3_TEST_GAIN_SEPARATE_PATH));
+
+        auto result = runChildProcess (options.worker, { "--scan-file", VST3_TEST_GAIN_PATH }, 20000);
+        CHECK (result.started && result.exitCode == 0 && result.output.find (gainId) != std::string::npos);
+        fs::remove_all (dir);
+    }
+}
+
 } // namespace
 
 void pluginTests()
@@ -1261,4 +1506,5 @@ void pluginTests()
     testLatencyFollowsParameters();
     testTransport();
     testScanner();
+    testVst3();
 }

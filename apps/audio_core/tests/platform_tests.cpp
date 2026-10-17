@@ -235,6 +235,10 @@ static void testFiles()
     CHECK (found.size() == 2 && found[0].filename() == "q.DLL" && found[1].filename() == "p.so");
     CHECK (listFiles (dir, { ".so" }, 1).size() <= 1);
     CHECK (createDirectories (dir / "Thing.vst3") && createDirectories (dir / "Other.VST3") && listBundles (dir, ".vst3").size() == 2);
+    // Bundles in a vendor's subfolder count; one inside another bundle doesn't
+    CHECK (createDirectories (dir / "Vendor" / "Deep.vst3") && createDirectories (dir / "Thing.vst3" / "Contents" / "Inner.vst3"));
+    auto bundles = listBundles (dir, ".vst3");
+    CHECK (bundles.size() == 3 && bundles[2].filename() == "Deep.vst3");
     CHECK (listFiles (dir / "nope", { ".so" }).empty() && listBundles (dir / "nope", ".vst3").empty());
     CHECK (restrictToOwner (dir / "a.txt"));
    #if ! GHOSTDAW_WINDOWS
