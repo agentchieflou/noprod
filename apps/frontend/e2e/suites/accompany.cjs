@@ -75,6 +75,7 @@ module.exports = async (page, ctx) => {
 
   // 1. Accompany sits in the coach's Chords mode
   await page.click('.coach-toggle');
+  await page.waitForSelector('.kb-coach', { timeout: 15000 }).catch(() => {}); // the coach loads when first opened
   await ctx.sleep(200);
   const inChords = await page.evaluate(() => !!document.querySelector('.coach-accompany'));
   await page.evaluate(() => [...document.querySelectorAll('.coach-modes button')].find((b) => b.textContent === 'Melody').click());

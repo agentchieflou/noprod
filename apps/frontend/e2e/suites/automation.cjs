@@ -33,6 +33,7 @@ module.exports = async (page, ctx) => {
   // 1. The Activity button on the track shows a volume lane
   const trackIndex = await page.evaluate((id) => window.__dawStore.getState().tracks.findIndex((t) => t.id === id), trackId);
   await page.evaluate((i) => { document.querySelectorAll('button[title="Show automation lanes"]')[i]?.click(); return 1; }, trackIndex);
+  await page.waitForSelector('svg.automation-lane', { timeout: 15000 }).catch(() => {}); // the lane loads when first shown
   await ctx.sleep(200);
   const lane = await page.evaluate(() => ({
     header: document.querySelectorAll('.automation-lane-header').length,
