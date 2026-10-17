@@ -1,5 +1,11 @@
 // #137: no sound rendering on the main thread, workers that can't stall,
 // and caches that keep to their memory budgets
+//
+// Reliability bar (#200): the suite passes under E2E_THROTTLE=2 (Chromium's CPU
+// at half speed, about a slow shared CI runner). The 50 ms bound is held in
+// React's development build, whose App redraws on every playhead frame; at 3x
+// and slower that redraw alone crosses the bound. That is a re-render problem
+// (#158), not something this check measures.
 module.exports = async (page, ctx) => {
   const results = [];
   const check = (name, ok, detail = '') => { const line = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`; results.push(line); console.log(line); };
