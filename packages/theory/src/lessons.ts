@@ -2,7 +2,8 @@
 // passed by holding all of its notes; any octave counts unless a step says
 // otherwise.
 
-import { chordNameInKey, parseNumeral, romanNumeral } from './chords.ts';
+import { chordNameInKey, parseNumeral, recognizeChord, romanNumeral } from './chords.ts';
+import { findKey } from './keys.ts';
 import { MELODIES, melodyPitches } from './melody.ts';
 import { pc } from './notes.ts';
 import { spellInKey, type Key } from './scales.ts';
@@ -44,6 +45,48 @@ function melodyLesson(id: string, description: string): Lesson {
   const melody = MELODIES.find(m => m.id === id)!;
   const steps = melodyPitches(melody).map(p => ({ pitches: [p], label: noteNameInKey(p, melody.key) }));
   return { id, name: melody.name, kind: 'melody', key: melody.key, description, steps };
+}
+
+// Notes (seconds) closer than this to each other start together; a longer
+// overlap makes the clip chords
+const TOGETHER = 0.03;
+
+// A lesson from a clip's notes. With no two overlapping by more than 30 ms
+// it's a melody, a step per note. Otherwise the notes starting together form
+// the steps: two or more are a chord, a note alone is a melody step.
+export function lessonFromNotes(notes: { pitch: number; start: number; duration: number }[], name: string): Lesson {
+  const sorted = [...notes].sort((a, b) => a.start - b.start || a.pitch - b.pitch);
+  const histogram = new Array<number>(12).fill(0);
+  for (const n of sorted) histogram[pc(n.pitch)] += n.duration;
+  const key = findKey(histogram).key;
+
+  const overlaps = sorted.some((a, i) => sorted.slice(i + 1).some(b => Math.min(a.start + a.duration, b.start + b.duration) - b.start > TOGETHER));
+  const groups: number[][] = [];
+  if (overlaps) {
+    let onset = -Infinity;
+    for (const n of sorted) {
+      if (n.start - onset > TOGETHER) {
+        groups.push([]);
+        onset = n.start;
+      }
+      groups[groups.length - 1].push(n.pitch);
+    }
+  } else {
+    for (const n of sorted) groups.push([n.pitch]);
+  }
+
+  const steps = groups.map((group): LessonStep => {
+    const pitches = [...new Set(group)].sort((a, b) => a - b);
+    const chord = recognizeChord(pitches, key);
+    if (chord) return { pitches, label: `${chordNameInKey(chord.root, chord.quality, key)} (${romanNumeral(chord.root, chord.quality, key)})` };
+    return { pitches, label: pitches.map(p => noteNameInKey(p, key)).join(' ') };
+  });
+  const chords = steps.some(s => s.pitches.length > 1);
+  return {
+    id: 'clip', name, kind: chords ? 'chords' : 'melody', key,
+    description: `Play the ${chords ? 'chords and notes' : 'notes'} of ${name}, step by step.`,
+    steps
+  };
 }
 
 const C_MAJOR: Key = { tonic: 0, mode: 'major' };
