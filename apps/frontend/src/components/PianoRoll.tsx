@@ -1,6 +1,9 @@
-import { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
 import { midiNoteName } from '../audio/synth';
+import { keyName } from '@noprod/theory';
+import { chordSegments, clipKey, chordLabel, chordTitle } from '../audio/chordLane';
+import { getCoachState, subscribeCoach } from '../audio/coach';
 
 const PITCH_TOP = 84;    // C6
 const PITCH_BOTTOM = 36; // C2
@@ -34,6 +37,14 @@ export default function PianoRoll({ region, trackColor, bpm, onAudition, onNotes
   const totalBeats = Math.max(1, Math.ceil(region.duration / secPerBeat));
   const gridW = totalBeats * PX_PER_BEAT;
   const notes = region.notes || [];
+
+  // The coach's key if it's fixed, else the clip's own
+  const coachKey = useSyncExternalStore(subscribeCoach, () => getCoachState().key);
+  const lane = useMemo(() => {
+    const clipNotes = region.notes || [];
+    const key = coachKey === 'auto' ? clipKey(clipNotes) : coachKey;
+    return { key, segments: chordSegments(clipNotes, key, secPerBeat / 4) };
+  }, [region.notes, coachKey, secPerBeat]);
 
   const rows: number[] = [];
   for (let p = PITCH_TOP; p >= PITCH_BOTTOM; p--) rows.push(p);
@@ -162,6 +173,20 @@ export default function PianoRoll({ region, trackColor, bpm, onAudition, onNotes
         </span>
       </div>
       <div className="pr-scroll">
+        {/* Chord lane: inside the scroller, so it follows scroll and zoom */}
+        <div className="pr-chords" style={{ width: gridW + 44 }}>
+          <div className="pr-chords-key">{notes.length ? keyName(lane.key) : ''}</div>
+          {lane.segments.map((seg) => (
+            <div
+              key={seg.start}
+              className="pr-chord"
+              title={chordTitle(seg, lane.key)}
+              style={{ left: 44 + timeToX(seg.start), width: Math.max(2, timeToX(seg.end - seg.start) - 1) }}
+            >
+              {chordLabel(seg, lane.key)}
+            </div>
+          ))}
+        </div>
         <div className="pr-body" style={{ width: gridW + 44 }}>
           {/* Key labels */}
           <div className="pr-keys" style={{ height: gridH }}>
