@@ -15,13 +15,13 @@ export const deviceMemoryGB = () => {
   return typeof gb === 'number' && gb > 0 ? Math.min(8, Math.max(0.5, gb)) : 4;
 };
 
-export interface Budgets { renders: number; decoded: number; history: number; stretched: number }
+export interface Budgets { renders: number; decoded: number; history: number; stretch: number }
 
 export const budgets = (gb = deviceMemoryGB()): Budgets => ({
   renders: Math.round(16 * MB * gb),
   decoded: Math.round(6 * MB * gb),
   history: Math.round(8 * MB * gb),
-  stretched: Math.round(32 * MB * gb)
+  stretch: Math.round(32 * MB * gb)
 });
 
 export const bufferBytes = (b: AudioBuffer) => b.length * b.numberOfChannels * 4;

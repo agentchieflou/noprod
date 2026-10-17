@@ -54,7 +54,7 @@ export function estimateBpm(transients: number[], fallback = 120): number {
 const RENDERED: Record<string, StretchMode> = { complex: 'complex', beats: 'beats', tones: 'tones' };
 
 // Finished renders, least recently used out first, within their memory budget
-const ready = new LruBytes<string, AudioBuffer>(budgets().stretched, bufferBytes);
+const ready = new LruBytes<string, AudioBuffer>(budgets().stretch, bufferBytes);
 
 // Each source buffer's work: at most one render in flight, and the latest
 // settings asked for, started once the tempo has settled (a tempo that

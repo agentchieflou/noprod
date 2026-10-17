@@ -142,6 +142,35 @@ module.exports = async (page, ctx) => {
   check('Renders stay within their memory budget, the oldest dropped', memory.worst <= memory.budget && memory.renders === 2,
     `${(memory.worst / 1e6).toFixed(2)} MB held of ${(memory.budget / 1e6).toFixed(2)} MB, ${memory.renders} kept (the app's budget: ${(memory.normal / 2 ** 20).toFixed(0)} MB)`);
 
+  // A render bigger than the whole budget is kept (the newest always is):
+  // it plays, and isn't rendered again while the clip plays
+  const big = await page.evaluate(async () => {
+    const { stretchedBuffer, stretchStats, setStretchBudget } = window.__warp;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const region = () => window.__dawStore.getState().regions.at(-1);
+    const normal = stretchStats().budget;
+    setStretchBudget(1000);
+    const before = stretchStats().started;
+    window.__dawStore.getState().setBpmLive(105);
+    const start = performance.now();
+    while (!stretchedBuffer(region(), 105) && performance.now() - start < 10000) await sleep(50);
+    window.__transport.setPosition(0);
+    window.__dawStore.getState().togglePlayback();
+    await sleep(1000);
+    const a = window.__transport.masterAnalyser;
+    const data = new Float32Array(a.fftSize);
+    a.getFloatTimeDomainData(data);
+    const level = Math.sqrt(data.reduce((s, v) => s + v * v, 0) / data.length);
+    await sleep(2000);
+    window.__dawStore.getState().togglePlayback();
+    const ready = !!stretchedBuffer(region(), 105);
+    const started = stretchStats().started - before;
+    setStretchBudget(normal);
+    return { started, ready, level };
+  });
+  check('A render bigger than the budget plays, and is rendered once', big.started === 1 && big.ready && big.level > 0.005,
+    `${big.started} renders over 3 s of playback, ${big.ready ? 'kept' : 'gone'}, RMS ${big.level.toFixed(4)}`);
+
   // Played by the transport, it's audible on the master
   const heard = await page.evaluate(async () => {
     const st = window.__dawStore.getState();
