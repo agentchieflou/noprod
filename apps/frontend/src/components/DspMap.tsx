@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
-import { Play, Power, X } from 'lucide-react';
+import { Pencil, Play, Power, X } from 'lucide-react';
 import {
   BLOCKS, CATEGORY_NAMES, LIBRARY, STAGES, addBlock, branchesFor, chainOf, removeBlock, setBlockOn, setKindOn, sharedBlocks,
   type Block, type BlockKind, type Category, type Chain, type Layer, type SharedBlock, type SoundRecipe, type Stage
@@ -154,8 +154,8 @@ function BlockParams({ layer, id, onChange, onRemove }: { layer: Layer; id: stri
 
 // ------------------------------------------------------------------- map
 
-export default function DspMap() {
-  const { tracks, selectedTrackId, updateInstrumentParameter, addMidiTrackWithInstrument } = useDAWStore();
+export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void }) {
+  const { tracks, selectedTrackId, setSelectedTrackId, updateInstrumentParameter, addMidiTrackWithInstrument } = useDAWStore();
   const [columns, setColumns] = useState<MapColumn[]>(savedColumns);
   useEffect(() => saveColumns(columns), [columns]);
   const [note, setNote] = useState(savedNote);
@@ -370,6 +370,9 @@ export default function DspMap() {
                 <div className="designer-row">
                   <button className="btn-icon designer-play" title={`Play ${midiNoteName(note)}`} onClick={() => play(c)}><Play size={12} /></button>
                   <span className="dsp-head-name" title={c.name}>{c.name}</span>
+                  {c.track && onOpenDesigner && (
+                    <button className="btn-icon" title="Edit in the Sound Designer" onClick={() => { setSelectedTrackId(c.track.id); onOpenDesigner(); }}><Pencil size={11} /></button>
+                  )}
                   {c.column && <button className="btn-icon" title="Take off the map" onClick={() => remove(c)}><X size={11} /></button>}
                 </div>
                 <div className="dsp-head-source">

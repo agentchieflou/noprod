@@ -204,6 +204,32 @@ module.exports = async (page, ctx) => {
   await page.evaluate(() => document.querySelector('.dsp-map-grid').scrollIntoView());
   await ctx.shot('dspmap_branches');
 
+  // 13. The links to the Sound Designer (#98): its DSP Map button, and a track column's pencil
+  const violin = await page.evaluate(() => window.__dawStore.getState().tracks.find((t) => t.name === 'Violin').id);
+  const select = (id) => page.evaluate((id) => window.__dawStore.getState().setSelectedTrackId(id), id);
+  const activeTab = () => page.evaluate(() => document.querySelector('.detail-tab.active')?.textContent);
+  await select(violin);
+  await page.evaluate(() => [...document.querySelectorAll('.detail-tab')].find((b) => b.textContent === 'Sound Designer').click());
+  await ctx.sleep(300);
+  await page.evaluate(() => [...document.querySelectorAll('.designer-button')].find((b) => b.textContent === 'DSP Map').click());
+  await ctx.sleep(300);
+  check('The Sound Designer\'s DSP Map button switches to the DSP Map tab', (await activeTab()) === 'DSP Map' && (await page.$('.dsp-map')) !== null, `tab ${await activeTab()}`);
+
+  // The pencil is on a track's column only. The violin comes back from the picker, since it's no longer the selected track
+  const other = await page.evaluate((v) => window.__dawStore.getState().tracks.find((t) => t.type === 'midi' && t.id !== v && t.instrument?.parameters?.Library).id, violin);
+  await select(other);
+  await setSel('.dsp-map-picker', `track:${violin}`);
+  await ctx.sleep(200);
+  const pencils = await page.evaluate((v, s) => ({
+    track: !!document.querySelector(`.dsp-map-head[data-col="track:${v}"] button[title="Edit in the Sound Designer"]`),
+    scratch: !!document.querySelector(`.dsp-map-head[data-col="${s}"] button[title="Edit in the Sound Designer"]`)
+  }), violin, scol);
+  check('A track column has the pencil, a library scratch column does not', pencils.track && !pencils.scratch, JSON.stringify(pencils));
+  await page.click(`.dsp-map-head[data-col="track:${violin}"] button[title="Edit in the Sound Designer"]`);
+  await ctx.sleep(300);
+  const pencilled = await page.evaluate(() => ({ tab: document.querySelector('.detail-tab.active')?.textContent, name: document.querySelector('.designer-name')?.value, selected: window.__dawStore.getState().selectedTrackId }));
+  check('The pencil selects that track and opens the Sound Designer on its sound', pencilled.tab === 'Sound Designer' && pencilled.name === 'Violin' && pencilled.selected === violin, JSON.stringify(pencilled));
+
   await ctx.sleep(500);
   const el = await page.$('.bottom-detail-panel');
   await el.screenshot({ path: require('path').join(ctx.shotDir, 'dspmap_end.png') });
