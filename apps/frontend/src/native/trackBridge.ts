@@ -6,13 +6,20 @@
 // on the other tracks.
 //
 // Device objects look like
-//   { id, name, type: 'vst', pluginId, pluginPath, format, parameters: { [parameterId]: value } }
+//   { id, name, type: 'vst', pluginId, pluginPath, format, parameters: { [parameterId]: value }, state?: base64 }
 // (pluginId is what GhostDAW loads by; the path is for showing) and keep
 // their parameter values by the plugin's own parameter ids, so a project
 // reloads them into the plugin. Changes made in the plug-in's own
 // editor (#44 B6) come back to the device through onNativeEditorParameter.
+//
+// `state` is the plug-in's whole state as GhostDAW gives it (what a preset
+// holds, parameters included), so what no parameter sets survives too. It
+// goes out with LOAD, and comes back through onNativeDeviceState after a
+// change: a parameter change, the editor closing. The chunk the project
+// holds stands until the plug-in changes something.
 
 import type { DeviceDSP, ParamValue } from '../audio/devices';
+import { NATIVE_STATE_CHARS } from '../project/schema';
 import { nativePluginIdOf, nativeStreamUrl, subscribeAudioCore, type NativeInsert } from './audioCore';
 import { hidePluginEditor, showPluginEditor } from './pluginEditor';
 import { getServices, subscribeServices } from './services';
@@ -31,6 +38,7 @@ export const isNativeDevice = (device: any) => device?.type === 'vst'
 export interface NativeDeviceState {
   connected: boolean;
   insert: NativeInsert | null;  // the loaded plugin, its parameters and latency
+  state: string | null;         // the plug-in's own state as it last reported it (base64)
   error: string | null;
   latencyFrames: number;        // bridge + plugin latency
   stats: { sent: number; returned: number; late: number; minSlack: number | null } | null;
@@ -59,6 +67,33 @@ let editorParameterListener: EditorParameterListener | null = null;
 export const onNativeEditorParameter = (fn: EditorParameterListener) => {
   editorParameterListener = fn;
   return () => { if (editorParameterListener === fn) editorParameterListener = null; };
+};
+
+// The plug-in reported its state after a change: the owner of the device
+// (the store) keeps the chunk, so the project carries it
+type DeviceStateListener = (deviceId: string, state: string) => void;
+let deviceStateListener: DeviceStateListener | null = null;
+export const onNativeDeviceState = (fn: DeviceStateListener) => {
+  deviceStateListener = fn;
+  return () => { if (deviceStateListener === fn) deviceStateListener = null; };
+};
+
+// A chunk as the project may hold it
+const isStateChunk = (chunk: unknown): chunk is string => typeof chunk === 'string' && chunk.length > 0 && chunk.length <= NATIVE_STATE_CHARS;
+
+// Asks the plug-in for its state. After a LOAD, the answer only confirms
+// what the device holds (a project just opened mustn't count as changed);
+// after a change, the device takes it.
+const stateReads = new Map<string, 'load' | 'change'>();
+const stateTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const hadState = new Map<string, boolean>(); // whether the device came with a chunk
+const readState = (streamId: string, reason: 'load' | 'change') => {
+  if (stateReads.get(streamId) !== 'change') stateReads.set(streamId, reason);
+  worker?.postMessage({ type: 'command', streamId, message: { type: 'GET_PLUGIN_STATE' } });
+};
+const readStateSoon = (streamId: string) => {
+  clearTimeout(stateTimers.get(streamId));
+  stateTimers.set(streamId, setTimeout(() => { stateTimers.delete(streamId); readState(streamId, 'change'); }, 300));
 };
 
 // Opens the device's plug-in editor in the Audio Core; EDITOR_OPENED shows it
@@ -90,7 +125,19 @@ const getWorker = () => {
         insert, error: null,
         latencyFrames: (sampleRates.get(streamId) ? bridgeLatencyFrames(sampleRates.get(streamId)!) : 0) + (insert?.latencySamples || 0)
       });
+      if (insert) readState(streamId, 'load');
+      else updateState(streamId, { state: null });
+    } else if (message?.type === 'STREAM_PLUGIN_STATE') {
+      const reason = stateReads.get(streamId) ?? 'change';
+      stateReads.delete(streamId);
+      const chunk = isStateChunk(message.state) ? message.state : null;
+      if (message.message) console.warn(`The plug-in's state is not saved with the project: ${message.message}`);
+      updateState(streamId, { state: chunk });
+      if (!chunk) return;
+      worker?.postMessage({ type: 'rememberState', streamId, state: chunk }); // for a reconnect's LOAD
+      if (reason === 'change' || !hadState.get(streamId)) deviceStateListener?.(streamId, chunk);
     } else if (message?.type === 'PLUGIN_PARAMETER_CHANGED' && state.insert) {
+      readStateSoon(streamId);
       updateState(streamId, {
         insert: {
           ...state.insert,
@@ -108,6 +155,7 @@ const getWorker = () => {
       showPluginEditor(message, () => worker?.postMessage({ type: 'command', streamId, message: { type: 'CLOSE_EDITOR' } }), state.connected);
     } else if (message?.type === 'EDITOR_CLOSED') {
       hidePluginEditor(message.editorId);
+      readState(streamId, 'change'); // whatever it did to the plug-in's state
     } else if (message?.type === 'AUDIO_CORE_ERROR') {
       updateState(streamId, { error: message.message });
     }
@@ -145,9 +193,14 @@ subscribeAudioCore(() => {
     const pluginId = nativePluginIdOf(device);
     if (!pluginId) return;
     awaitingId.delete(streamId);
-    worker?.postMessage({ type: 'command', streamId, message: { type: 'LOAD', pluginId, parameters: sentValues.get(streamId) } });
+    worker?.postMessage({ type: 'command', streamId, message: loadMessage(device, pluginId, sentValues.get(streamId)) });
   });
 });
+
+// The LOAD for a device: its plug-in by id, its parameter values and, when
+// it holds one, its plug-in's state
+const loadMessage = (device: any, pluginId: string, parameters: Record<string, ParamValue> | undefined) =>
+  ({ type: 'LOAD', pluginId, parameters, ...(isStateChunk(device.state) ? { state: device.state } : {}) });
 
 // A native device may load (or no longer may): the engine looks again
 export const refreshNativeDevices = () => latencyListeners.forEach((fn) => fn());
@@ -183,7 +236,8 @@ export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): Devic
   sampleRates.set(streamId, ctx.sampleRate);
   nodes.set(streamId, node);
   if (transportSource) node.port.postMessage({ type: 'transport', transport: transportSource() });
-  states.set(streamId, { connected: false, insert: null, error: null, latencyFrames: latency, stats: null });
+  states.set(streamId, { connected: false, insert: null, state: null, error: null, latencyFrames: latency, stats: null });
+  hadState.set(streamId, isStateChunk(device.state));
   emit();
   latencyListeners.forEach((fn) => fn());
 
@@ -203,7 +257,7 @@ export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): Devic
   // The plug-in loads by its id only (GhostDAW refuses a path)
   sentValues.set(streamId, { ...(device.parameters || {}) });
   const pluginId = nativePluginIdOf(device);
-  if (pluginId) w.postMessage({ type: 'command', streamId, message: { type: 'LOAD', pluginId, parameters: sentValues.get(streamId) } });
+  if (pluginId) w.postMessage({ type: 'command', streamId, message: loadMessage(device, pluginId, sentValues.get(streamId)) });
   else awaitingId.set(streamId, device);
 
   return {
@@ -235,6 +289,10 @@ export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): Devic
       sampleRates.delete(streamId);
       sentValues.delete(streamId);
       nodes.delete(streamId);
+      clearTimeout(stateTimers.get(streamId));
+      stateTimers.delete(streamId);
+      stateReads.delete(streamId);
+      hadState.delete(streamId);
       emit();
       latencyListeners.forEach((fn) => fn());
     }

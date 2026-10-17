@@ -11,7 +11,9 @@
 
 #include <lpi/lpi.h>
 
+#include <algorithm>
 #include <atomic>
+#include <string>
 #include <cstring>
 #include <new>
 
@@ -25,6 +27,7 @@ struct Instance
     uint32_t maxBlockSize = 0;
     std::atomic<float> requested[kNumParams] { { 1.0f }, { 0.0f } };
     float applied[kNumParams] { 1.0f, 0.0f };
+    std::string presetName; // in the state after the values: what no parameter sets (control thread)
 };
 
 Instance* self (lpi_plugin* p) { return reinterpret_cast<Instance*> (p); }
@@ -99,15 +102,19 @@ bool setParameterValue (lpi_plugin* p, uint32_t index, float value)
     return true;
 }
 
+// The state: the two values, then the preset name's bytes
 size_t getState (lpi_plugin* p, void* buffer, size_t size)
 {
     float values[kNumParams] { self (p)->requested[kGain].load(), self (p)->requested[kMute].load() };
+    auto& name = self (p)->presetName;
+    auto needed = sizeof (values) + name.size();
     if (buffer == nullptr)
-        return sizeof (values);
-    if (size < sizeof (values))
+        return needed;
+    if (size < needed)
         return 0;
     std::memcpy (buffer, values, sizeof (values));
-    return sizeof (values);
+    std::memcpy (static_cast<char*> (buffer) + sizeof (values), name.data(), name.size());
+    return needed;
 }
 
 bool setState (lpi_plugin* p, const void* data, size_t size)
@@ -118,6 +125,7 @@ bool setState (lpi_plugin* p, const void* data, size_t size)
     std::memcpy (values, data, sizeof (values));
     for (int i = 0; i < kNumParams; ++i)
         self (p)->requested[i].store (values[i]);
+    self (p)->presetName.assign (static_cast<const char*> (data) + sizeof (values), std::min (size - sizeof (values), size_t (64)));
     return true;
 }
 

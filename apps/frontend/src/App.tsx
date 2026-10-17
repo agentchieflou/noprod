@@ -22,7 +22,7 @@ import { initMidi } from './audio/inputs';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
 import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from './audio/coachLoader';
 import { getPluginEditor, subscribePluginEditor } from './native/pluginEditor';
-import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
+import { onNativeEditorParameter, onNativeDeviceState, connectNativeTransport } from './native/trackBridge';
 import './native/audioCore'; // GhostDAW's own, paired connection (follows Services)
 import { getServices, subscribeServices, getServicesDialogOpen, subscribeServicesDialog, setServicesDialogOpen } from './native/services';
 import { watchNativeConsent } from './native/consent';
@@ -82,6 +82,8 @@ watchNativeConsent(useDAWStore);
 // A hosted plug-in's own editor changed a parameter: its device keeps it
 onNativeEditorParameter((deviceId, parameterId, value, gesture) =>
   useDAWStore.getState().setDeviceParameterFromPlugin(deviceId, parameterId, value, gesture));
+// The plug-in's own state after a change: its device carries it, so the project does
+onNativeDeviceState((deviceId, state) => useDAWStore.getState().setNativeDeviceState(deviceId, state));
 
 // Plug-ins on browser tracks learn tempo and position with each audio block
 const nativeTransportChanged = connectNativeTransport(getTransportSnapshot);

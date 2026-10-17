@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -277,12 +278,20 @@ public:
     tresult PLUGIN_API getRoutingInfo (RoutingInfo&, RoutingInfo&) override { return kResultFalse; }
     tresult PLUGIN_API activateBus (MediaType, BusDirection, int32, TBool) override { return kResultOk; }
     tresult PLUGIN_API setActive (TBool isActive) override { active = isActive != 0; return kResultOk; }
+    // The component's state: the gain, then the preset name's bytes (what
+    // no parameter sets)
     tresult PLUGIN_API setState (IBStream* stream) override
     {
         float gain = 1.0f;
         int32 read = 0;
         if (stream->read (&gain, sizeof (gain), &read) != kResultOk || read != sizeof (gain))
             return kResultFalse;
+        char name[64] = {};
+        read = 0;
+        if (stream->read (name, sizeof (name) - 1, &read) == kResultOk && read > 0)
+            presetName.assign (name, static_cast<size_t> (read));
+        else
+            presetName.clear();
        #if ! defined(TEST_VST3_SEPARATE_CONTROLLER)
         // A gain no parameter can set (they are normalised) is the tests'
         // cue: edit the gain from a thread of our own, as a plug-in's UI
@@ -305,7 +314,9 @@ public:
     tresult PLUGIN_API getState (IBStream* stream) override
     {
         auto gain = static_cast<float> (state.gain.load());
-        return stream->write (&gain, sizeof (gain), nullptr);
+        if (stream->write (&gain, sizeof (gain), nullptr) != kResultOk)
+            return kResultFalse;
+        return presetName.empty() ? kResultOk : stream->write (presetName.data(), static_cast<int32> (presetName.size()), nullptr);
     }
 
     // IAudioProcessor
@@ -392,6 +403,7 @@ private:
     bool active = false;
     double sampleRate = 0.0;
     IConnectionPoint* peer = nullptr;
+    std::string presetName;
    #if ! defined(TEST_VST3_SEPARATE_CONTROLLER)
     IComponentHandler* componentHandler = nullptr;
     std::thread editStorm;
@@ -428,8 +440,19 @@ public:
             state.gain.store (gain);
         return kResultOk;
     }
-    tresult PLUGIN_API setState (IBStream*) override { return kResultOk; }
-    tresult PLUGIN_API getState (IBStream*) override { return kResultOk; }
+    // The controller's own state: a note (a view setting, say) the
+    // component never sees
+    tresult PLUGIN_API setState (IBStream* stream) override
+    {
+        char text[64] = {};
+        int32 read = 0;
+        note = stream->read (text, sizeof (text) - 1, &read) == kResultOk && read > 0 ? std::string (text, static_cast<size_t> (read)) : std::string();
+        return kResultOk;
+    }
+    tresult PLUGIN_API getState (IBStream* stream) override
+    {
+        return note.empty() ? kResultOk : stream->write (note.data(), static_cast<int32> (note.size()), nullptr);
+    }
     int32 PLUGIN_API getParameterCount() override { return controller.parameterCount(); }
     tresult PLUGIN_API getParameterInfo (int32 index, ParameterInfo& info) override { return controller.parameterInfo (index, info); }
     tresult PLUGIN_API getParamStringByValue (ParamID id, ParamValue value, String128 string) override { return controller.stringByValue (id, value, string); }
@@ -448,6 +471,7 @@ public:
 private:
     GainState state;
     ControllerPart controller;
+    std::string note;
     IComponentHandler* componentHandler = nullptr;
     IConnectionPoint* peer = nullptr;
 };

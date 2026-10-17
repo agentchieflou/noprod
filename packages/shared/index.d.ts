@@ -139,16 +139,21 @@ export interface AudioCoreErrorEvent { type: 'AUDIO_CORE_ERROR'; message: string
 // float32 planar samples. Each comes back processed in place.
 export type TrackStreamCommand =
   | { type: 'OPEN'; streamId: string; sampleRate: number; maxBlockSize: number }
-  | { type: 'LOAD'; path: string; format?: PluginFormat; pluginId?: string; parameters?: Record<string, number> }
+  // `state` is the chunk GET_PLUGIN_STATE gave for this plug-in (base64, at
+  // most 2 MiB decoded; a bigger one is refused)
+  | { type: 'LOAD'; path: string; format?: PluginFormat; pluginId?: string; parameters?: Record<string, number>; state?: string }
   | { type: 'UNLOAD' }
   | { type: 'SET_PARAM'; parameterId?: string; parameterIndex?: number; value: number }
   | { type: 'GET_STATE' }
+  | { type: 'GET_PLUGIN_STATE' }
   | { type: 'OPEN_EDITOR'; scale?: number }
   | CloseEditorCommand;
 
 export type TrackStreamEvent =
   | { type: 'STREAM_OPENED' }
   | { type: 'STREAM_STATE'; streamId: string; sampleRate: number; maxBlockSize: number; insert: NativeInsertSlot | null }
+  // The plug-in's whole state (null when it has none, or `message` says it is too big to send)
+  | { type: 'STREAM_PLUGIN_STATE'; streamId: string; state: string | null; message?: string }
   | PluginParameterChangedEvent
   | EditorOpenedEvent | EditorClosedEvent
   | AudioCoreErrorEvent;

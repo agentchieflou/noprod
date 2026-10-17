@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeProjectFile, readProjectFile, MAGIC, PCM_CHUNK_FRAMES, type Pcm } from '../src/project/format.ts';
-import { SCHEMA_VERSION, SCHEMA_KEYS, ProjectFileError } from '../src/project/schema.ts';
+import { SCHEMA_VERSION, SCHEMA_KEYS, NATIVE_STATE_CHARS, ProjectFileError } from '../src/project/schema.ts';
 
 // A project as the store's createDefaultProject makes it
 const defaults = () => ({
@@ -93,7 +93,7 @@ async function v1File(project: any, buffers: Record<string, { sampleRate: number
   return new Response(new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'))).blob();
 }
 
-test('v1 files load into v2, keys they predate filled in', async () => {
+test('v1 files load into the current schema, keys they predate filled in', async () => {
   const take = tone(4800, 220);
   const { scenes: _s, launchQuantization: _q, midiMappings: _m, ...project } = defaults();
   project.regions = [{ id: 'r1', trackId: 't1', file: 'Take', audioBuffer: { $audioBuffer: 'buf0' }, startTime: 1, duration: 0.1 }];
@@ -239,11 +239,35 @@ test('audio chunks must belong where they say', async () => {
 
 test('newer files are refused with a reason; optional chunks are skipped', async () => {
   await refuses(new Blob([header(2), ...chunk('END ', new Uint8Array(0))] as BlobPart[]), /newer NoProd \(container v2\)/);
-  await refuses(await file({ ...v2(), version: SCHEMA_VERSION + 1 }), /newer NoProd \(project v3\)/);
+  await refuses(await file({ ...v2(), version: SCHEMA_VERSION + 1 }), new RegExp(`newer NoProd \\(project v${SCHEMA_VERSION + 1}\\)`));
   await refuses(await file(v2(), chunk('WAVE', new Uint8Array(4))), /needs a newer NoProd/);
   const skipped = await file(v2(), chunk('note', new Uint8Array(4)));
   assert.deepEqual((await readProjectFile(skipped, defaults())).doc.project, defaults());
   await refuses(new Blob([new TextEncoder().encode('hello, not a project')]), /Not a NoProd project/);
+});
+
+test('v2 files load into v3 as they are', async () => {
+  const { doc } = await readProjectFile(await file(v2()), defaults());
+  assert.equal(doc.version, 3);
+  assert.deepEqual(doc.project, defaults());
+});
+
+test('a native device carries its plug-in\'s state, base64 and capped', async () => {
+  const native = (state: unknown) => ({ id: 'n1', name: 'Verb', type: 'vst', pluginId: 'com.example.verb', format: 'VST3', parameters: { mix: 0.5 }, state });
+  const withDevice = (state: unknown) => ({ ...defaults(), tracks: [{ ...defaults().tracks[0], plugins: [native(state)] }] });
+  const current = (project: any) => ({ ...v2(project), version: SCHEMA_VERSION });
+  const chunk = 'AAAAgD8AAAAAdmVyc2U='; // what an LPI gain's state looks like, say
+  const { doc } = await readProjectFile(await file(current(withDevice(chunk))), defaults());
+  assert.equal(doc.project.tracks[0].plugins[0].state, chunk);
+  const atTheCap = 'A'.repeat(NATIVE_STATE_CHARS);
+  assert.equal((await readProjectFile(await file(current(withDevice(atTheCap))), defaults())).doc.project.tracks[0].plugins[0].state, atTheCap);
+  assert.equal((await readProjectFile(await file(current(withDevice(undefined))), defaults())).doc.project.tracks[0].plugins[0].state, undefined);
+  await refuses(await file(current(withDevice('A'.repeat(NATIVE_STATE_CHARS + 4)))), /tracks\[0\]\.plugins\[0\]\.state: more than 2097152 bytes/);
+  await refuses(await file(current(withDevice('not base64!'))), /plugins\[0\]\.state: not base64/);
+  await refuses(await file(current(withDevice(42))), /plugins\[0\]\.state: expected text/);
+  // A round trip through the writer keeps it
+  const { doc: back } = await readProjectFile(await writeProjectFile(docJson(withDevice(chunk), []), []), defaults());
+  assert.equal(back.project.tracks[0].plugins[0].state, chunk);
 });
 
 test('only known project keys reach the store, and deep nesting is refused', async () => {

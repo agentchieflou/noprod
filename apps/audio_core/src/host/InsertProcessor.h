@@ -87,6 +87,12 @@ public:
     // True if the plugin has an editor GhostDAW can stream to the browser
     // (an LPI plugin with lpi.gui.offscreen.v1, see editor/LpiEditor.h)
     virtual bool hasEditor() { return false; }
+
+    // The plugin's whole state (what a preset holds: its parameters and
+    // whatever else it keeps), as bytes only the same plugin reads. Control
+    // thread. False when the plugin has none, or refused the bytes.
+    virtual bool getState (std::vector<uint8_t>&) { return false; }
+    virtual bool setState (const std::vector<uint8_t>&) { return false; }
 };
 
 } // namespace ghostdaw

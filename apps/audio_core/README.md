@@ -97,9 +97,15 @@ and the browser, on the control thread. The component's state
   The servers keep answering meanwhile: nothing else shares those threads.
 - **Audio re-routing** (the OS switching outputs) restarts the device from
   the control thread, re-preparing the mixer and inserts for the new rate.
-- **Bus state** (each bus's inserts, their bypass and parameter values) is
-  saved to `state.json` a second after every change and loaded again at the
-  next launch, once the launch scan has listed the plugins.
+- **Bus state** (each bus's inserts, their bypass, parameter values and the
+  plugin's own state: VST 3 component and controller state, an AU's class
+  info, an LPI plugin's `get_state`) is saved to `state.json` a second after
+  every change (and when an editor closes) and loaded again at the next
+  launch, once the launch scan has listed the plugins. A browser track's
+  plugin keeps its state in the project instead: the stream's
+  `LOAD { pluginId, parameters, state }` carries the chunk the project holds,
+  and `GET_PLUGIN_STATE` → `STREAM_PLUGIN_STATE { state }` reads it back
+  after a change for saving.
 
 ### Secure by design
 
@@ -140,6 +146,10 @@ and the browser, on the control thread. The component's state
   VST3 folders plus the `scanFolders` in GhostDAW's own `settings.json`
   (`ghostdaw --add-scan-folder DIR` adds one), never folders a client sends
   with `SCAN_PLUGINS`.
+- **State chunks are bounded.** A stream's `LOAD { state }` must be base64
+  of at most 2 MiB (`PluginHost::maxStateBytes`), or the `LOAD` is refused;
+  a plugin's state past that is not sent either. The bytes go to the plugin
+  that produced them and nowhere else.
 - **Scans in a child process.** Each binary is loaded by `ghostdaw
   --scan-file FILE`, a child with a 20 s limit; one that crashes or hangs
   is written down in `plugins.json` as skipped, with the reason, listed in

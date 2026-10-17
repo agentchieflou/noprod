@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../platform/Base64.h"
 #include "../platform/Json.h"
 #include "../platform/Log.h"
 #include "../platform/Loop.h"
@@ -69,12 +70,18 @@ namespace ghostdaw
 // AUDIO_CORE_STATE through `broadcast`, or STREAM_STATE to its stream, so
 // the browser re-compensates.
 //
-// The buses' inserts (plugin, bypass, parameter values) are saved to
-// `stateFile` after every change and loaded again at the next launch.
+// The buses' inserts (plugin, bypass, parameter values and the plugin's own
+// state, see InsertProcessor::getState) are saved to `stateFile` after
+// every change and loaded again at the next launch. A browser track's
+// plugin keeps its state in the project instead: its stream sends the
+// chunk with LOAD and asks for it back with GET_PLUGIN_STATE.
 class PluginHost
 {
 public:
     static constexpr int protocolVersion = 2;
+    // The most a plugin's state chunk may hold, as a client sends or gets
+    // it (a bigger one is refused, or not sent)
+    static constexpr size_t maxStateBytes = 2 * 1024 * 1024;
 
     PluginHost (Mixer& mixerToControl, MessageLoop& controlLoop, PluginRegistry& pluginRegistry, fs::path busStateFile)
         : mixer (mixerToControl), loop (controlLoop), registry (pluginRegistry), stateFile (std::move (busStateFile))
@@ -340,7 +347,7 @@ public:
 
     // --------------------------------------------------------- saved state
 
-    // The buses' inserts as saved: { buses: [ { bus, inserts: [ { pluginId, bypassed, parameters: { id: value } } ] } ] }
+    // The buses' inserts as saved: { buses: [ { bus, inserts: [ { pluginId, bypassed, parameters: { id: value }, state: base64 | null } ] } ] }
     Json describeBusState()
     {
         auto buses = Json::array();
@@ -355,7 +362,8 @@ public:
                 for (auto& p : slot.processor->getParameters())
                     if (! p.id.empty() && ! p.readOnly)
                         parameters.set (p.id.c_str(), slot.processor->getParameterValue (p.index));
-                inserts.push (Json::object ({ { "pluginId", slot.processor->getPluginId() }, { "bypassed", slot.bypassed->load() }, { "parameters", parameters } }));
+                inserts.push (Json::object ({ { "pluginId", slot.processor->getPluginId() }, { "bypassed", slot.bypassed->load() },
+                                              { "parameters", parameters }, { "state", stateChunk (*slot.processor) } }));
             }
             buses.push (Json::object ({ { "bus", id }, { "inserts", inserts } }));
         };
@@ -404,6 +412,8 @@ public:
                     ++missing;
                     continue;
                 }
+                if (! applyState (*processor, insert["state"], error))
+                    Log::warn ("restoring " + insert["pluginId"].toString() + " on bus " + bus["bus"].toString() + " without its saved state: " + error);
                 applyParameters (*processor, insert["parameters"]);
                 InsertChain::Slot slot;
                 slot.id = "insert-" + std::to_string (nextSlotNumber++);
@@ -435,11 +445,14 @@ public:
     }
 
     // A stream hosts one plugin. Commands:
-    //   LOAD       { pluginId, parameters?: { [parameterId]: value } }   -> STREAM_STATE
+    //   LOAD       { pluginId, parameters?: { [parameterId]: value }, state?: base64 }  -> STREAM_STATE
     //   UNLOAD                                                             -> STREAM_STATE
     //   SET_PARAM  { parameterId | parameterIndex, value }                 -> PLUGIN_PARAMETER_CHANGED
     //   GET_STATE                                                          -> STREAM_STATE
+    //   GET_PLUGIN_STATE                                                   -> STREAM_PLUGIN_STATE { state: base64 | null }
     //   OPEN_EDITOR { scale? } / CLOSE_EDITOR    as the commands above, for the stream's plugin
+    // A LOAD's state (the chunk GET_PLUGIN_STATE gave for this plugin) must
+    // decode to at most maxStateBytes, or the LOAD is refused.
     Json handleStreamCommand (TrackStream& stream, const Json& message)
     {
         auto type = message["type"].toString();
@@ -465,10 +478,15 @@ public:
         if (type == "LOAD")
         {
             std::string error;
+            std::vector<uint8_t> state;
+            if (message.has ("state") && ! decodeState (message["state"], state, error))
+                return makeError (error, "STREAM_" + type);
             auto processor = createProcessor (message, error);
             if (processor == nullptr || ! processor->prepare (stream.sampleRate, stream.maxBlockSize, error))
                 return makeError (error, "STREAM_" + type);
 
+            if (! state.empty() && ! processor->setState (state))
+                Log::warn (processor->getName() + " refused the state its project holds; loading it without");
             applyParameters (*processor, message["parameters"]);
 
             InsertChain::Slot slot;
@@ -500,6 +518,18 @@ public:
         if (type == "GET_STATE")
             return describeStream (stream);
 
+        if (type == "GET_PLUGIN_STATE")
+        {
+            if (stream.chain.getSlots().empty())
+                return makeError ("No plugin loaded", "STREAM_" + type);
+            auto& processor = *stream.chain.getSlots().front().processor;
+            auto reply = Json::object ({ { "type", "STREAM_PLUGIN_STATE" }, { "streamId", stream.id }, { "state", stateChunk (processor) } });
+            std::vector<uint8_t> bytes;
+            if (reply["state"].isNull() && processor.getState (bytes) && bytes.size() > maxStateBytes)
+                reply.set ("message", processor.getName() + "'s state (" + std::to_string (bytes.size()) + " bytes) is more than GhostDAW sends");
+            return reply;
+        }
+
         return makeError ("Unknown stream command '" + type + "'", "STREAM_" + type);
     }
 
@@ -528,6 +558,7 @@ public:
             closing->close();
             reply.set ("editorId", closing->editorId);
             reply.set ("slotId", closing->slotId);
+            stateChanged(); // whatever the editor did to the plugin's state is saved
         }
         return reply;
     }
@@ -642,6 +673,64 @@ private:
 
         error = "This build can't host " + known.format + " plugins";
         return nullptr;
+    }
+
+    // The plugin's state as a chunk (base64), null when it has none or it
+    // is too big to send
+    static Json stateChunk (InsertProcessor& processor)
+    {
+        std::vector<uint8_t> bytes;
+        if (! processor.getState (bytes) || bytes.empty() || bytes.size() > maxStateBytes)
+            return {};
+        return base64Encode (bytes.data(), bytes.size());
+    }
+
+    // A chunk from a client or the saved state to bytes: refused (false,
+    // `error`) when it isn't base64 or is more than maxStateBytes
+    static bool decodeState (const Json& chunk, std::vector<uint8_t>& bytes, std::string& error)
+    {
+        bytes.clear();
+        if (chunk.isNull())
+            return true;
+        if (! chunk.isString())
+        {
+            error = "state: expected a base64 string";
+            return false;
+        }
+        auto text = chunk.toString();
+        auto tooBig = [&] { error = "state: more than " + std::to_string (maxStateBytes) + " bytes"; return false; };
+        if (text.size() > (maxStateBytes + 2) / 3 * 4)
+            return tooBig();
+        if (! base64Decode (text, bytes))
+        {
+            bytes.clear();
+            error = "state: not base64";
+            return false;
+        }
+        if (bytes.size() > maxStateBytes)
+        {
+            bytes.clear();
+            return tooBig();
+        }
+        return true;
+    }
+
+    // A saved chunk into the plugin. False (with the reason) when it can't
+    // be decoded or the plugin refuses it.
+    static bool applyState (InsertProcessor& processor, const Json& chunk, std::string& error)
+    {
+        std::vector<uint8_t> bytes;
+        if (! decodeState (chunk, bytes, error))
+            return false;
+        if (bytes.empty())
+            return true;
+        if (! processor.setState (bytes))
+        {
+            error = processor.getName() + " refused it";
+            return false;
+        }
+        processor.refreshLatency();
+        return true;
     }
 
     // Saved values, by parameter id

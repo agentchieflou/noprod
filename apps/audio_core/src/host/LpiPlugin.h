@@ -154,16 +154,7 @@ public:
         takeParameterChanges();
 
         std::vector<uint8_t> savedState;
-        if (instance != nullptr && api.get_state != nullptr)
-        {
-            auto size = api.get_state (instance, nullptr, 0);
-            if (size > 0)
-            {
-                savedState.resize (size);
-                if (api.get_state (instance, savedState.data(), size) != size)
-                    savedState.clear();
-            }
-        }
+        getState (savedState);
 
         destroyInstance();
 
@@ -214,6 +205,36 @@ public:
         if (transport != nullptr && transport->set_transport == nullptr)
             transport = nullptr;
 
+        return true;
+    }
+
+    // The plugin's state through get_state / set_state (the two-call sizing
+    // idiom); a plugin without them has none
+    bool getState (std::vector<uint8_t>& out) override
+    {
+        out.clear();
+        auto& api = library->getApi();
+        if (instance == nullptr || api.get_state == nullptr)
+            return false;
+        auto size = api.get_state (instance, nullptr, 0);
+        if (size == 0)
+            return false;
+        out.resize (size);
+        if (api.get_state (instance, out.data(), size) == size)
+            return true;
+        out.clear();
+        return false;
+    }
+
+    bool setState (const std::vector<uint8_t>& data) override
+    {
+        auto& api = library->getApi();
+        if (instance == nullptr || api.set_state == nullptr || ! api.set_state (instance, data.data(), data.size()))
+            return false;
+        // The state set the parameters too: what this host holds follows it
+        for (size_t i = 0; i < values.size(); ++i)
+            if (! readOnly[i])
+                values[i] = reported[i] = api.get_parameter_value (instance, static_cast<uint32_t> (i));
         return true;
     }
 

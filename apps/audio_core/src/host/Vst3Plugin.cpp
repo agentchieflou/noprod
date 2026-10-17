@@ -1185,21 +1185,52 @@ bool Vst3Insert::refreshLatency()
 
 bool Vst3Insert::getState (std::vector<uint8_t>& out)
 {
-    auto* stream = new MemoryStream();
-    auto ok = instance->component->getState (stream) == kResultOk;
-    out = stream->data;
-    stream->release();
+    auto& impl = *instance;
+    out.clear();
+    auto* component = new MemoryStream();
+    auto ok = impl.component->getState (component) == kResultOk;
+    if (ok)
+    {
+        std::vector<uint8_t> controller;
+        if (impl.separateController) // (a single class answers both with the same state)
+        {
+            auto* stream = new MemoryStream();
+            if (impl.controller->getState (stream) == kResultOk)
+                controller = stream->data;
+            stream->release();
+        }
+        auto size = static_cast<uint32_t> (component->data.size());
+        out.reserve (4 + component->data.size() + controller.size());
+        for (int shift : { 0, 8, 16, 24 })
+            out.push_back (static_cast<uint8_t> (size >> shift));
+        out.insert (out.end(), component->data.begin(), component->data.end());
+        out.insert (out.end(), controller.begin(), controller.end());
+    }
+    component->release();
     return ok;
 }
 
 bool Vst3Insert::setState (const std::vector<uint8_t>& data)
 {
-    auto* stream = new MemoryStream (data);
-    auto ok = instance->component->setState (stream) == kResultOk;
-    if (ok && instance->separateController)
+    if (data.size() < 4)
+        return false;
+    auto size = static_cast<size_t> (data[0]) | (static_cast<size_t> (data[1]) << 8) | (static_cast<size_t> (data[2]) << 16) | (static_cast<size_t> (data[3]) << 24);
+    if (size > data.size() - 4)
+        return false;
+
+    auto& impl = *instance;
+    auto* stream = new MemoryStream (std::vector<uint8_t> (data.begin() + 4, data.begin() + 4 + static_cast<std::ptrdiff_t> (size)));
+    auto ok = impl.component->setState (stream) == kResultOk;
+    if (ok && impl.separateController)
     {
         stream->seek (0, IBStream::kIBSeekSet, nullptr);
-        instance->controller->setComponentState (stream);
+        impl.controller->setComponentState (stream);
+        if (4 + size < data.size())
+        {
+            auto* controller = new MemoryStream (std::vector<uint8_t> (data.begin() + 4 + static_cast<std::ptrdiff_t> (size), data.end()));
+            impl.controller->setState (controller);
+            controller->release();
+        }
     }
     stream->release();
     return ok;

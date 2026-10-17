@@ -63,9 +63,9 @@ public:
     bool refreshLatency() override;
 
     // The unit's state (kAudioUnitProperty_ClassInfo as a binary property
-    // list), for tests and saving
-    bool getState (std::vector<uint8_t>& out);
-    bool setState (const std::vector<uint8_t>& data);
+    // list)
+    bool getState (std::vector<uint8_t>& out) override;
+    bool setState (const std::vector<uint8_t>& data) override;
 
     struct Impl;
 
