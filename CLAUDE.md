@@ -92,8 +92,9 @@ envelopes, determinism (`packages/sound/src/analysis.ts`).
 
 ## Work tiers
 
-Roadmap issues carry a tier label: `tier:haiku`, `tier:sonnet` or
-`tier:opus` (see #90). Keep to the issue's scope. If it turns
-out to need more, comment on the issue and stop rather than widening the
-change. "More" means a design decision, a change to a package's public API,
+Roadmap issues carry a tier label: `tier:haiku`, `tier:sonnet`,
+`tier:opus` or `tier:fable` (see #90). Fable issues are whole subsystems,
+built or rebuilt end to end over several PRs. Keep to the issue's scope. If
+it turns out to need more, comment on the issue and stop rather than
+widening the change. "More" means a design decision, a change to a package's public API,
 or files well beyond those the issue names.
