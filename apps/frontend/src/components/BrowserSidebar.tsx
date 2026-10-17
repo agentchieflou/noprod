@@ -278,8 +278,8 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
       </div>
       <div className="browser-search">
         <Search size={12} />
-        <input placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
-        {query && <button className="btn-icon" onClick={() => setQuery('')}><X size={11} /></button>}
+        <input aria-label="Search the browser" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
+        {query && <button className="btn-icon" title="Clear the search" onClick={() => setQuery('')}><X size={11} /></button>}
       </div>
       <div className="browser-tree">
         {categories.map((c) => {

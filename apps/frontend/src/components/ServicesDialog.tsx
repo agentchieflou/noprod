@@ -22,7 +22,7 @@ function ServiceRow({ name, title, blurb, addressLabel, status }: {
       <p className="native-hint">{blurb}</p>
       <label className="service-address">
         {addressLabel}
-        <input
+        <input aria-label={addressLabel}
           key={setting.url} className="vst-path-input" defaultValue={setting.url} spellCheck={false}
           style={invalid ? { borderColor: 'var(--accent-red)' } : undefined}
           onChange={(e) => setInvalid(!isWebSocketUrl(e.target.value.trim()))}

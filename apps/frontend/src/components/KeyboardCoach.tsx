@@ -72,7 +72,7 @@ export default function KeyboardCoach({ onPiano }: { onPiano: boolean }) {
 
       {mode === 'lesson' ? (
         <div className="kb-row">
-          <select className="rack-map-select coach-select" value={coach.lesson ?? ''} title={about}
+          <select aria-label="Lesson" className="rack-map-select coach-select" value={coach.lesson ?? ''} title={about}
             onChange={(e) => {
               if (e.target.value === CLIP_LESSON) return;   // already the lesson
               if (e.target.value !== CLIP_PICK) return setCoachLesson(e.target.value || null);
@@ -94,7 +94,7 @@ export default function KeyboardCoach({ onPiano }: { onPiano: boolean }) {
       ) : mode !== 'off' && (
         <div className="kb-row">
           <span className="kb-label">Key</span>
-          <select className="rack-map-select coach-select" value={keyIndex} title="The key suggestions are in"
+          <select aria-label="The key suggestions are in" className="rack-map-select coach-select" value={keyIndex} title="The key suggestions are in"
             onChange={(e) => setCoachKey(e.target.value === 'auto' ? 'auto' : ALL_KEYS[Number(e.target.value)])}>
             <option value="auto">Auto</option>
             {(['major', 'minor'] as const).map((m) => (

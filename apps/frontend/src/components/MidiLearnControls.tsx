@@ -54,11 +54,11 @@ export default function MidiLearnControls() {
             <div key={m.id} className="midi-map-row">
               <span className="midi-map-target">{resolveTarget(state, m.target)?.label ?? 'Missing control'}</span>
               <span className="midi-map-source">{sourceText(m)}</span>
-              <label>Min <input type="number" min={0} max={100} step={1} value={Math.round(m.min * 100)}
+              <label>Min <input aria-label="Minimum" type="number" min={0} max={100} step={1} value={Math.round(m.min * 100)}
                 onChange={(e) => edit(m, { min: Math.max(0, Math.min(100, Number(e.target.value))) / 100 })} /></label>
-              <label>Max <input type="number" min={0} max={100} step={1} value={Math.round(m.max * 100)}
+              <label>Max <input aria-label="Maximum" type="number" min={0} max={100} step={1} value={Math.round(m.max * 100)}
                 onChange={(e) => edit(m, { max: Math.max(0, Math.min(100, Number(e.target.value))) / 100 })} /></label>
-              <select className="rack-map-select" value={m.mode} onChange={(e) => edit(m, { mode: e.target.value as MidiMapping['mode'] })} title="Takeover: pickup waits for the controller to reach the control's value">
+              <select aria-label="Takeover mode" className="rack-map-select" value={m.mode} onChange={(e) => edit(m, { mode: e.target.value as MidiMapping['mode'] })} title="Takeover: pickup waits for the controller to reach the control's value">
                 <option value="jump">Jump</option>
                 <option value="pickup">Pickup</option>
               </select>

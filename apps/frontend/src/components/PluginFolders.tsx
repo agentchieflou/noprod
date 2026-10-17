@@ -76,7 +76,7 @@ export default function PluginFolders({ selectedTrack }: { selectedTrack: any })
       </p>
       
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-        <input 
+        <input aria-label="Plug-in folder path" 
           type="text" 
           placeholder="e.g. C:/Program Files/Common Files/VST3" 
           value={newVstPathInput}
@@ -92,7 +92,7 @@ export default function PluginFolders({ selectedTrack }: { selectedTrack: any })
         {vstScanPaths.map((path: string) => (
           <div key={path} className="vst-path-row">
             <span style={{ fontSize: '12px', fontFamily: 'monospace' }}>{path}</span>
-            <button className="btn-icon" onClick={() => removeVstScanPath(path)}>
+            <button className="btn-icon" title="Remove this folder" onClick={() => removeVstScanPath(path)}>
               <Trash2 size={12} />
             </button>
           </div>

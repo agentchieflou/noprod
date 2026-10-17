@@ -446,14 +446,14 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
       <div className="dsp-map-main">
         <div className="dsp-map-toolbar">
           <span className="dsp-map-title">DSP Map</span>
-          <select className="rack-map-select designer-select" value={note} onChange={(e) => setNote(Number(e.target.value))} title="The note every column plays">
+          <select aria-label="The note every column plays" className="rack-map-select designer-select" value={note} onChange={(e) => setNote(Number(e.target.value))} title="The note every column plays">
             {NOTES.map((n) => <option key={n} value={n}>{midiNoteName(n)}</option>)}
           </select>
           <button className="designer-button" onClick={playingAll ? stopAll : playAll} disabled={!shown.length && !playingAll}>
             {playingAll ? <><Square size={10} /> Stop</> : <><Play size={10} /> Play all</>}
           </button>
           <button className="designer-button" onClick={resetMap} title="The four classic instruments again. Tracks are not changed">Reset map</button>
-          <select className="rack-map-select designer-select dsp-map-picker" value="" onChange={(e) => e.target.value && add(e.target.value)} title="Add an instrument to compare">
+          <select aria-label="Add an instrument to compare" className="rack-map-select designer-select dsp-map-picker" value="" onChange={(e) => e.target.value && add(e.target.value)} title="Add an instrument to compare">
             <option value="">+ Add instrument…</option>
             <optgroup label="Tracks">
               {tracks.filter((t: any) => t.type === 'midi' && soundOf(t) && !present.has(t.id)).map((t: any) => (
@@ -487,7 +487,7 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
                   {c.column && <button className="btn-icon" title="Take off the map" onClick={() => remove(c)}><X size={11} /></button>}
                 </div>
                 {c.pads.length > 0 && (
-                  <select className="rack-map-select designer-pad" value={c.pad!} onChange={(e) => setPad(c, e.target.value)} title="Which of the kit's sounds to show">
+                  <select aria-label="Which of the kit's sounds to show" className="rack-map-select designer-pad" value={c.pad!} onChange={(e) => setPad(c, e.target.value)} title="Which of the kit's sounds to show">
                     {c.pads.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                   </select>
                 )}

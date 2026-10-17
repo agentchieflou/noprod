@@ -26,7 +26,7 @@ export default function ParamControl({ spec, value, onChange, label, disabled, l
     return (
       <div {...row}>
         <span className="param-name">{name}</span>
-        <select className="rack-map-select" value={String(value)} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+        <select aria-label={name} className="rack-map-select" value={String(value)} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
           {(spec.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       </div>
@@ -36,7 +36,7 @@ export default function ParamControl({ spec, value, onChange, label, disabled, l
   return (
     <div {...row}>
       <span className="param-name">{name}</span>
-      <input
+      <input aria-label={name}
         type="range" min="0" max={SLIDER_STEPS} step="1"
         value={valueToSlider(spec, v)}
         disabled={disabled}

@@ -59,7 +59,7 @@ const Strip = ({ id, kind, item, index, tracks, returns, views, onOpenDevices }:
           {returns.map((r, i) => (
             <label key={r.id} title={`Send to ${r.name}`}>
               <span>{RETURN_LETTERS[i]}</span>
-              <input type="range" min="0" max="1" step="0.01" className="mx-send" data-send={r.id}
+              <input aria-label={`Send to ${r.name}`} type="range" min="0" max="1" step="0.01" className="mx-send" data-send={r.id}
                 value={item.sends?.[r.id] ?? 0}
                 onChange={(e) => act().updateTrackSend(id, r.id, parseFloat(e.target.value))}
                 onDoubleClick={() => act().updateTrackSend(id, r.id, 0)} />
@@ -68,7 +68,7 @@ const Strip = ({ id, kind, item, index, tracks, returns, views, onOpenDevices }:
         </div>
       )}
 
-      <input type="range" min="-1" max="1" step="0.01" className="mx-pan" title={`Pan ${pan.toFixed(2)} (double-click: centre)`}
+      <input aria-label="Pan" type="range" min="-1" max="1" step="0.01" className="mx-pan" title={`Pan ${pan.toFixed(2)} (double-click: centre)`}
         value={pan} onChange={(e) => setPan(parseFloat(e.target.value))} onDoubleClick={() => setPan(0)} />
 
       <div className="mx-buttons">
@@ -85,7 +85,7 @@ const Strip = ({ id, kind, item, index, tracks, returns, views, onOpenDevices }:
       </div>
 
       {isTrack ? (
-        <select className="rack-map-select mx-out" title="Output" value={output} onChange={(e) => act().updateTrackRouting(id, e.target.value)}>
+        <select aria-label="Output" className="rack-map-select mx-out" title="Output" value={output} onChange={(e) => act().updateTrackRouting(id, e.target.value)}>
           <option value="master">Master</option>
           {outGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
           {returns.map((r, i) => <option key={r.id} value={r.id}>{RETURN_LETTERS[i]} {r.name}</option>)}
@@ -95,7 +95,7 @@ const Strip = ({ id, kind, item, index, tracks, returns, views, onOpenDevices }:
       )}
 
       <div className="mx-fader-meter">
-        <input type="range" className="mx-fader" min="0" max={FADER_MAX} step="1"
+        <input aria-label="Volume" type="range" className="mx-fader" min="0" max={FADER_MAX} step="1"
           title="Volume (double-click: 0 dB)"
           value={gainToFader(gain)}
           onChange={(e) => setVolume(faderToGain(parseInt(e.target.value)))}

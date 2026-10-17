@@ -63,7 +63,7 @@ export default function SessionView({ tracks, onDropFile, onOpenClip }: Props) {
       {scene && sceneSel !== null && (
         <div className="scene-editor">
           <strong>Scene {sceneSel + 1}</strong>
-          <input
+          <input aria-label="Scene name"
             className="clip-name-input" placeholder="Name" value={scene.name}
             onChange={(e) => updateScene(sceneSel, { name: e.target.value })}
           />
@@ -73,7 +73,7 @@ export default function SessionView({ tracks, onDropFile, onOpenClip }: Props) {
             Tempo
           </label>
           {scene.tempo ? (
-            <input type="number" className="clip-input" min={20} max={999} step={0.01} value={scene.tempo}
+            <input aria-label="Scene tempo" type="number" className="clip-input" min={20} max={999} step={0.01} value={scene.tempo}
               onChange={(e) => updateScene(sceneSel, { tempo: Math.max(20, Math.min(999, parseFloat(e.target.value) || 120)) })} />
           ) : null}
           <label>
@@ -83,10 +83,10 @@ export default function SessionView({ tracks, onDropFile, onOpenClip }: Props) {
           </label>
           {scene.signature && (
             <>
-              <input type="number" className="clip-input" min={1} max={32} value={scene.signature.numerator}
+              <input aria-label="Signature numerator" type="number" className="clip-input" min={1} max={32} value={scene.signature.numerator}
                 onChange={(e) => updateScene(sceneSel, { signature: { ...scene.signature, numerator: Math.max(1, Math.min(32, parseInt(e.target.value) || 4)) } })} />
               /
-              <select className="rack-map-select" value={scene.signature.denominator}
+              <select aria-label="Signature denominator" className="rack-map-select" value={scene.signature.denominator}
                 onChange={(e) => updateScene(sceneSel, { signature: { ...scene.signature, denominator: parseInt(e.target.value) } })}>
                 {[1, 2, 4, 8, 16].map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
@@ -100,10 +100,10 @@ export default function SessionView({ tracks, onDropFile, onOpenClip }: Props) {
           {scene.follow.enabled && (
             <>
               after
-              <input type="number" className="clip-input" min={1} max={256} value={scene.follow.bars}
+              <input aria-label="Bars before following" type="number" className="clip-input" min={1} max={256} value={scene.follow.bars}
                 onChange={(e) => updateScene(sceneSel, { follow: { ...scene.follow, bars: Math.max(1, parseInt(e.target.value) || 1) } })} />
               bars →
-              <select className="rack-map-select" value={scene.follow.action}
+              <select aria-label="Follow action" className="rack-map-select" value={scene.follow.action}
                 onChange={(e) => updateScene(sceneSel, { follow: { ...scene.follow, action: e.target.value } })}>
                 {FOLLOW_ACTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
@@ -161,7 +161,7 @@ export default function SessionView({ tracks, onDropFile, onOpenClip }: Props) {
               <button className={`btn-stop-track ${queuedSlot(session, track.id) === null ? 'queued' : ''}`}
                 title="Stop this track's clip" onClick={() => stopTrack(track.id)}><Square size={10} /></button>
               <button className={`btn-mute ${track.isMuted ? 'muted' : ''}`} onClick={() => toggleMuteTrack(track.id)}>Activator</button>
-              <input
+              <input aria-label={`${track.name} volume`}
                 type="range" min="0" max="1" step="0.01"
                 value={track.volume}
                 onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}

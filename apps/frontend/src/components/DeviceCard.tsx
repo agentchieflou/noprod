@@ -41,10 +41,10 @@ export default function DeviceCard({ device, onChange, onRemove, className = '',
               <div key={p.index} className="param-slider-row" title={p.id || p.name}>
                 <span className="param-name">{p.name}</span>
                 {p.boolean ? (
-                  <input type="checkbox" checked={value >= (p.min + p.max) / 2} disabled={p.readOnly}
+                  <input type="checkbox" aria-label={p.name} checked={value >= (p.min + p.max) / 2} disabled={p.readOnly}
                     onChange={(e) => onChange(p.id, e.target.checked ? p.max : p.min)} />
                 ) : (
-                  <input type="range" className="param-slider" min={p.min} max={p.max} disabled={p.readOnly || !p.id}
+                  <input aria-label={p.name} type="range" className="param-slider" min={p.min} max={p.max} disabled={p.readOnly || !p.id}
                     step={p.stepped && p.max - p.min >= 1 ? 1 : (p.max - p.min) / 1000} value={value}
                     onChange={(e) => onChange(p.id, parseFloat(e.target.value))} />
                 )}
@@ -74,7 +74,7 @@ export default function DeviceCard({ device, onChange, onRemove, className = '',
             // Unhosted third-party plugin: generic normalized controls
             <div key={paramName} className="param-slider-row">
               <span className="param-name">{paramName}</span>
-              <input
+              <input aria-label={paramName}
                 type="range" min="0" max="100"
                 value={Number(params[paramName]) || 0}
                 onChange={(e) => onChange(paramName, parseFloat(e.target.value))}

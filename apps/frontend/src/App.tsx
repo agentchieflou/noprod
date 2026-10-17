@@ -641,7 +641,7 @@ function App() {
 
         {/* AI Dictation */}
         {dictationOn && <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <input
+          <input aria-label="Describe a beat or melody"
             type="text"
             placeholder="Describe a beat or melody..."
             value={dictationInput}
@@ -686,7 +686,7 @@ function App() {
         {/* Master Controls */}
         <div className="master-fader">
           <Volume2 size={16} aria-label="Master volume" />
-          <input
+          <input aria-label="Master volume"
             type="range" min="0" max="1" step="0.01"
             value={masterVolume}
             onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
@@ -852,7 +852,9 @@ function App() {
                         )}
                         {track.type !== 'group' && (
                           <button 
-                            className="btn-checkbox" 
+                            className="btn-checkbox"
+                            title="Select for grouping"
+                            aria-pressed={selectedTrackIds.includes(track.id)}
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleSelectTrackForGroup(track.id);
@@ -946,7 +948,7 @@ function App() {
                       
                       <div className="strip-val">
                         <span style={{ fontSize: '9px' }}>PAN</span>
-                        <input 
+                        <input aria-label={`${track.name} pan`} 
                           type="range" min="-1" max="1" step="0.1" 
                           value={track.pan} 
                           onChange={(e) => updateTrackPan(track.id, parseFloat(e.target.value))}
@@ -959,7 +961,7 @@ function App() {
                         {returns.map((r: any, i: number) => (
                           <div key={r.id} className="strip-val" title={`Send to ${RETURN_LETTERS[i]} ${r.name}`}>
                             <span style={{ fontSize: '9px' }}>{RETURN_LETTERS[i]}</span>
-                            <input
+                            <input aria-label={`${track.name} send to ${r.name}`}
                               type="range" min="0" max="1" step="0.01"
                               value={track.sends?.[r.id] ?? 0}
                               onChange={(e) => updateTrackSend(track.id, r.id, parseFloat(e.target.value))}
@@ -973,7 +975,7 @@ function App() {
                     {/* Fader */}
                     <div className="fader-row">
                       <Volume2 size={12} />
-                      <input 
+                      <input aria-label={`${track.name} volume`} 
                         type="range" min="0" max="1" step="0.01" 
                         value={track.volume} 
                         onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
@@ -989,7 +991,7 @@ function App() {
                     const points = track.automation?.[key]?.length || 0;
                     return (
                       <div key={key} className="automation-lane-header" style={{ borderLeft: `4px solid ${track.color}` }}>
-                        <select
+                        <select aria-label="Automated parameter"
                           className="rack-map-select"
                           value={key}
                           onChange={(e) => setAutomationLanes(track.id, lanes.map((k, i) => (i === laneIdx ? e.target.value : k)))}
@@ -1047,7 +1049,7 @@ function App() {
                     </div>
                     <div className="fader-row">
                       <span style={{ fontSize: '9px' }}>PAN</span>
-                      <input
+                      <input aria-label={`${r.name} pan`}
                         type="range" min="-1" max="1" step="0.1"
                         value={r.pan}
                         onClick={(e) => e.stopPropagation()}
@@ -1055,7 +1057,7 @@ function App() {
                         className="mixer-dial"
                       />
                       <Volume2 size={12} />
-                      <input
+                      <input aria-label={`${r.name} volume`}
                         type="range" min="0" max="1" step="0.01"
                         value={r.volume}
                         onClick={(e) => e.stopPropagation()}
@@ -1079,7 +1081,7 @@ function App() {
                   </div>
                   <div className="fader-row">
                     <Volume2 size={12} />
-                    <input
+                    <input aria-label="Master volume"
                       type="range" min="0" max="1" step="0.01"
                       value={masterVolume}
                       onClick={(e) => e.stopPropagation()}

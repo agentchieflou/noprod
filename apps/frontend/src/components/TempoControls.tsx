@@ -77,7 +77,7 @@ export default function TempoControls() {
 
   return (
     <div className="tempo-controls">
-      <input
+      <input aria-label="Tempo (BPM)"
         {...learn({ kind: 'tempo' }, 'bpm-input')}
         value={bpmDraft}
         onChange={(e) => setBpmDraft(e.target.value)}
@@ -88,7 +88,7 @@ export default function TempoControls() {
       <span className="tempo-unit">BPM</span>
       <button className={`btn-metronome tap-btn ${tapFlash ? 'active' : ''}`} onClick={tap} title="Tap tempo: click on the beat">TAP</button>
       <FollowControl />
-      <input
+      <input aria-label="Time signature"
         className="sig-input"
         value={sigDraft}
         onChange={(e) => setSigDraft(e.target.value)}
@@ -96,7 +96,7 @@ export default function TempoControls() {
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         title={`Time signature at bar ${bar.index + 1} (editing inserts a change at that bar)`}
       />
-      <select
+      <select aria-label="Bars of count-in before recording starts"
         className="rack-map-select countin-select"
         value={countInBars}
         onChange={(e) => setCountInBars(parseInt(e.target.value))}
