@@ -51,7 +51,15 @@ function open() {
   const url = getServices().dictation.url;
   openUrl = url;
   setStatus('trying');
-  const socket = new WebSocket(url);
+  let socket: WebSocket;
+  try {
+    socket = new WebSocket(url);
+  } catch (err) {
+    // Safari throws a SecurityError for ws:// from an https page: a failed attempt, not a crash
+    console.warn('Could not open the Orchestrator connection', err);
+    retry = setTimeout(() => { retry = null; if (wanted()) open(); }, backoffMs(attempt++));
+    return;
+  }
   ws = socket;
   attachOrchestrator(socket);
   socket.onopen = () => { attempt = 0; setStatus('connected'); };

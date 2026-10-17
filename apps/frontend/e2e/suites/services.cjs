@@ -73,6 +73,23 @@ module.exports = async (page, ctx) => {
     await ctx.sleep(3000);
     check('Turning it off stops connecting', (await page.evaluate(() => window.__sockets.length)) === after);
 
+    // A WebSocket that throws on construction (Safari: ws:// from an https page) is a failed attempt
+    const thrown = await page.evaluate(async () => {
+      const spy = window.WebSocket;
+      const Throwing = function () { throw new DOMException('Insecure', 'SecurityError'); };
+      Object.assign(Throwing, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+      window.WebSocket = Throwing;
+      let error = null;
+      try { window.__services.set('dictation', { enabled: true }); } catch (e) { error = String(e); }
+      await new Promise((r) => setTimeout(r, 1500));
+      const status = document.querySelector('[data-service=dictation] [data-status]')?.dataset.status;
+      window.WebSocket = spy;
+      return { error, status, enabled: window.__services.get().dictation.enabled };
+    });
+    check('A WebSocket that throws on construction is a failed attempt, not an error', thrown.error === null && thrown.status === 'trying' && thrown.enabled, JSON.stringify(thrown));
+    check('It connects once the socket can be opened', await waitFor(() => document.querySelector('[data-service=dictation] [data-status]')?.dataset.status === 'connected', null, 30000));
+    await page.evaluate(() => window.__services.set('dictation', { enabled: false }));
+
     // GhostDAW on shows the native UI; a project's native device asks first
     await page.evaluate(() => window.__services.set('ghostdaw', { enabled: true }));
     await ctx.sleep(500);

@@ -102,17 +102,30 @@ export interface MidiEvent {
 
 const midiListeners = new Set<(e: MidiEvent) => void>();
 export const onMidiEvent = (fn: (e: MidiEvent) => void) => { midiListeners.add(fn); return () => { midiListeners.delete(fn); }; };
-const publish = (e: MidiEvent) => midiListeners.forEach((fn) => fn(e));
+// Claims run before any listener. One that returns true consumes the event:
+// no listener sees it (a note that drives a control, say).
+const midiClaims = new Set<(e: MidiEvent) => boolean>();
+export const onMidiClaim = (fn: (e: MidiEvent) => boolean) => { midiClaims.add(fn); return () => { midiClaims.delete(fn); }; };
+const publish = (e: MidiEvent) => {
+  for (const claim of midiClaims) if (claim(e)) return;
+  midiListeners.forEach((fn) => fn(e));
+};
 export const publishMidi = publish;
 
 export interface MidiDevice { id: string; name: string }
 let midiDevices: MidiDevice[] = [];
 export const getMidiDevices = () => midiDevices;
 let midiAccess: any = null;
+// 'idle' until asked; 'unsupported' has no WebMIDI; 'denied' was refused
+// (Firefox asks for a site-permission add-on first)
+export type MidiStatus = 'idle' | 'ready' | 'denied' | 'unsupported';
+let midiStatus: MidiStatus = 'idle';
+export const getMidiStatus = () => midiStatus;
 
 export async function initMidi() {
   const req = (navigator as any).requestMIDIAccess;
-  if (!req || midiAccess) return;
+  if (!req) { if (midiStatus !== 'unsupported') { midiStatus = 'unsupported'; notifyInputs(); } return; }
+  if (midiAccess) return;
   try {
     midiAccess = await req.call(navigator);
     const attach = () => {
@@ -137,9 +150,13 @@ export async function initMidi() {
       });
       notifyInputs();
     };
+    midiStatus = 'ready';
     attach();
     midiAccess.onstatechange = attach;
-  } catch { /* MIDI permission denied or unsupported */ }
+  } catch {
+    midiStatus = 'denied';
+    notifyInputs();
+  }
 }
 
 // ------------------------------------------------------ live MIDI playing

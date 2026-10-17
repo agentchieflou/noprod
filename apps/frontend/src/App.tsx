@@ -33,6 +33,7 @@ import { setPlayhead } from './components/playhead';
 import MidiLearnControls from './components/MidiLearnControls';
 import { useMidiLearn } from './components/useMidiLearn';
 import FileMenu from './components/FileMenu';
+import { SmallScreenNotice } from './components/BrowserNotes';
 import { automationParams } from './audio/automation';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
@@ -537,6 +538,7 @@ function App() {
 
   return (
     <div className="daw-container">
+      <SmallScreenNotice />
       {/* Ableton-style Control Bar */}
       <div className="control-bar">
         <div className="logo-section">NoProd</div>

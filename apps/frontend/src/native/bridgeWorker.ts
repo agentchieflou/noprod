@@ -40,7 +40,15 @@ let warnedBadMessage = false;
 const post = (message: unknown) => ctx.postMessage(message);
 
 function connect(s: Stream) {
-  const ws = new WebSocket(s.url);
+  let ws: WebSocket;
+  try {
+    ws = new WebSocket(s.url);
+  } catch (err) {
+    // e.g. Safari's SecurityError for ws:// from an https page: a failed attempt
+    console.warn('Could not open a connection to the Audio Core', err);
+    if (!paused) s.retry = setTimeout(() => connect(s), backoffMs(s.attempts++));
+    return;
+  }
   ws.binaryType = 'arraybuffer';
   s.ws = ws;
   s.ready = false;

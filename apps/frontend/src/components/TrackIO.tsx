@@ -1,3 +1,4 @@
+import { MidiNote } from './BrowserNotes';
 import { useSyncExternalStore } from 'react';
 import { useDAWStore, RETURN_LETTERS } from '../store/useDAWStore';
 import {
@@ -69,6 +70,7 @@ export default function TrackIO({ track, tracks, returns }: { track: any; tracks
           )}
         </div>
       )}
+      {!isGroup && isMidi && <MidiNote />}
       <div className="track-io-row">
         <span className="io-label">Out</span>
         <select className="rack-map-select" value={output} onChange={(e) => updateTrackRouting(track.id, e.target.value)}>
