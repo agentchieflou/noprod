@@ -17,6 +17,76 @@ pat.queryArc(1, 2).map(String);
 // ['1 → 3/2: "bd"', '3/2 → 2: "cp"']
 ```
 
+## Programs
+
+`evaluate(code)` parses a whole program with our own parser (`parseProgram`
+gives the tree) and interprets it: no `eval`, no `Function`. The program
+only ever chooses among the functions in the interpreter's table; an
+unknown name or method is an error. `evaluateCycle(code)` gives the first
+cycle as plain data (`{ cps, setsTempo, events: [{ time, duration, value }] }`),
+which is what the DAW turns into tracks.
+
+```js
+setcpm(120/4)                       // tempo: cycles per minute (a cycle is a bar)
+stack(                              // parts, one per line
+  s("bd*4, ~ cp ~ cp, hh*8").bank("RolandTR909"),
+  note("c2 ~ eb2 g1").s("bass").gain(0.8),
+  n("0 2 4 <7 9>").scale("C:minor").s("epiano").every(4, x => x.rev())
+)
+```
+
+The language: number and string literals, arithmetic on numbers
+(`120/4`), identifiers, calls, method chains (also across lines), arrays
+(a sequence), one-parameter arrow functions (`x => x.fast(2)`), `$:` labels
+(one pattern per line, all played together; `_$:` mutes one), statements
+separated by newlines or semicolons, `//` and `/* */` comments. A string
+where a pattern is wanted is mini-notation, and a string has the pattern
+methods (`"c3 e3".add(12)`). The program plays its `$:` lines, or else its
+last expression; `setcpm(…)` alone is an error, not silence.
+
+**Patterns:** `note`, `n`, `s`/`sound`, and the other controls below, as
+functions (`note("c3 e3")`) and as methods (`.s("piano")`: the structure
+stays the pattern's, each event takes the value under it); `stack`,
+`cat`/`slowcat`, `seq`/`sequence`/`fastcat`, `timecat`, `silence`, the
+signals `sine`, `cosine`, `saw`, `isaw`, `tri`, `square`, `rand`, `irand(n)`.
+
+**Methods** (each also a function: `fast(2, pat)`, or `fast(2)` as a
+transform to hand to `every`):
+
+| | |
+|---|---|
+| time | `fast`, `slow`, `hurry`, `early`, `late`, `rev`, `palindrome`, `iter`, `iterBack`, `ply`, `cpm` (the pattern's own tempo) |
+| structure | `every`/`firstOf`, `lastOf`, `struct`, `mask`, `euclid(k, n, r?)`, `euclidRot`, `off`, `superimpose`, `layer` |
+| randomness | `degradeBy`, `degrade`, `sometimesBy`, `sometimes`, `often`, `rarely`, `almostAlways`, `almostNever`, `always`, `never`, `someCyclesBy`, `someCycles` |
+| values | `add`, `sub`, `transpose`, `range(lo, hi)`, `scale("C:major")` |
+
+Numeric arguments may be patterns (`fast("<1 2>")`, `every("<2 4>", rev)`).
+
+**Controls the DAW plays:** `note` (a name like `c3`, `eb4`, `c#3`, or a
+MIDI number), `n`, `s` (`"bd:3"` is sound `bd`, sample `3`), `gain`,
+`velocity`, `pan`, `bank`, `orbit`. Other controls of the published language
+(`room`, `lpf`, `attack`, `speed`, …) are accepted and ride along in the
+value, and its visual methods (`pianoroll`, `color`, …) do nothing.
+
+**Pitch:** `add`, `sub` and `transpose` work on the note (names become MIDI
+numbers: `note("c3").add(12)` is `60`), or on `n` when there is no note.
+`scale` turns `n` degrees into MIDI notes: `n("0 2 4").scale("C:major")` is
+`48 52 55`; degrees wrap into the next octave, negative ones go down, the
+root's octave defaults to 3. Scales: major/ionian, minor/aeolian, dorian,
+phrygian, lydian, mixolydian, locrian, harmonic and melodic minor, major and
+minor pentatonic, blues, whole tone, chromatic, ritusen, egyptian, and a
+few more (`SCALE_NAMES`); several words join with colons or underscores
+(`"C:minor:pentatonic"`), since a space would make two steps.
+
+**Tempo:** `setcpm(cpm)`, `setcps(cps)` and `setbpm(bpm)` set the program's
+tempo (one cycle is a bar of four beats, so `setcpm(120/4)` is 120 BPM);
+the default is 0.5 cycles per second. `.cpm(x)` speeds one pattern up
+relative to that; `.cps(x)` is a control, as in the published language.
+
+**Limits for untrusted code:** a program of at most 10 000 characters,
+nested at most 64 deep, 256 arguments per call, plus the mini-notation's
+limits and the query budget below.
+
 ## Time and events
 
 - Time is measured in **cycles**, as exact fractions (`Fraction`): `1/3 +

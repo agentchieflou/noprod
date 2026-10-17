@@ -1,18 +1,22 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Pencil, Play, Power, Square, X } from 'lucide-react';
+import { Pencil, Play, Power, RotateCcw, Save, Square, X } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
 import {
   BLOCKS, CATEGORY_NAMES, KITS, LIBRARY, STAGES, addBlock, branchesFor, chainOf, removeBlock, setBlockOn, setKindOn, sharedBlocks,
-  type Block, type BlockKind, type Category, type Chain, type Layer, type SharedBlock, type SoundRecipe, type Stage
+  type Block, type BlockKind, type Category, type Chain, type Layer, type SharedBlock, type SoundRecipe, type Stage, withId
 } from '@noprod/sound';
 import { useDAWStore } from '../store/useDAWStore';
-import { libraryOf, createLibraryInstrument, createLibraryKit, renderSound, toAudioBuffer, playRendered } from '../audio/library';
+import { libraryOf, createLibraryInstrument, createLibraryKit } from '../audio/library';
+import { renderSound, toAudioBuffer, playRendered } from '../audio/designing';
 import { getStripInput } from '../audio/engine';
 import { midiNoteName } from '../audio/synth';
+import { saveUserSound } from '../audio/userSounds';
 import { Param, Choice, EnvelopeParams, FilterParams } from './designerControls';
 import { filtersOf, asFilter } from './designerUtils';
 import { ExciterParams, ResonatorParams, RadiatorParams, StringSetParams } from './ModelParams';
 import {
-  defaultColumns, savedColumns, saveColumns, savedNote, saveNote, scratchColumn, kitColumn, padOf, padOptions, selectedPads, saveSelectedPads, type MapColumn
+  defaultColumns, savedColumns, saveColumns, savedNote, saveNote, scratchColumn, kitColumn, padOf, padOptions, selectedPads, saveSelectedPads,
+  originalOf, keepOriginals, sameRecipe, notePlayed, type MapColumn
 } from './dspMapState';
 
 // The DSP Map (#80): instruments side by side, each drawn as the stages its
@@ -33,6 +37,8 @@ interface Column {
   recipe: SoundRecipe;
   chain: Chain;
   track: any | null;
+  original: SoundRecipe;
+  changed: boolean;
   pad: string | null;  // a kit's pad (its sound id); null for a single sound
   pads: { id: string; label: string }[];
 }
@@ -178,6 +184,8 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
   const [selection, setSelection] = useState<Selection | null>(null);
   const [hover, setHover] = useState<BlockKind | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
+  const [heardA, setHeardA] = useState<Record<string, boolean>>({}); // columns set to A, their original
+  const [message, setMessage] = useState<string | null>(null);
   const [playingAll, setPlayingAll] = useState(false);
   // Each "Play all" takes a number, and Stop moves it on: a sequence waiting
   // between columns sees its number is no longer the current one, and ends
@@ -200,12 +208,16 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
   }, []);
 
   // The columns, resolved to what they play now
+  const compared = (key: string, pad: string | null, recipe: SoundRecipe) => {
+    const original = originalOf(key, pad, recipe);
+    return { original, changed: !sameRecipe(original, recipe) };
+  };
   const trackColumn = (track: any, column: MapColumn | null): Column => {
     const lib = libraryOf(track.instrument.parameters)!;
     const { recipe, pad } = soundOf(track, column?.kind === 'track' ? column.pad : selPads[track.id])!;
     return {
       key: `track:${track.id}`, column, name: recipe.name, source: `Track · ${track.name}${column ? '' : ' (selected)'}`, recipe, chain: chainOf(recipe), track,
-      pad, pads: lib.kit ? padOptions(lib.kit, lib.sounds) : []
+      pad, pads: lib.kit ? padOptions(lib.kit, lib.sounds) : [], ...compared(`track:${track.id}`, pad, recipe)
     };
   };
   const shown: Column[] = [];
@@ -219,11 +231,12 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
       const pad = padOf(c.kit, c.sounds, c.pad);
       if (!pad) continue;
       const recipe = c.sounds[pad];
-      shown.push({ key: c.key, column: c, name: recipe.name, source: 'Library · scratch copy', recipe, chain: chainOf(recipe), track: null, pad, pads: padOptions(c.kit, c.sounds) });
+      shown.push({ key: c.key, column: c, name: recipe.name, source: 'Library · scratch copy', recipe, chain: chainOf(recipe), track: null, pad, pads: padOptions(c.kit, c.sounds), ...compared(c.key, pad, recipe) });
     } else {
-      shown.push({ key: c.key, column: c, name: c.recipe.name, source: 'Library · scratch copy', recipe: c.recipe, chain: chainOf(c.recipe), track: null, pad: null, pads: [] });
+      shown.push({ key: c.key, column: c, name: c.recipe.name, source: 'Library · scratch copy', recipe: c.recipe, chain: chainOf(c.recipe), track: null, pad: null, pads: [], ...compared(c.key, null, c.recipe) });
     }
   }
+  useEffect(() => keepOriginals(shown.map((c) => c.key)));
   const shared = sharedBlocks(shown.map((c) => c.chain));
   const sharedKinds = new Set(shared.map((s) => s.kind));
 
@@ -246,8 +259,10 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
   // A sequence passes its run number: a column still rendering when Stop or the unmount comes stays silent
   const play = async (c: Column, run?: number) => {
     setPlaying(c.key);
-    const pitched = c.recipe.pitched && !c.pad; // a kit's pad plays unpitched, as the Sound Designer does
-    const sound = await renderSound(c.recipe, { note: pitched ? note : undefined, velocity: 0.9, gate: pitched ? 1.2 : undefined });
+    const recipe = c.changed && heardA[c.key] ? c.original : c.recipe;
+    notePlayed(c.key, recipe);
+    const pitched = recipe.pitched && !c.pad; // a kit's pad plays unpitched, as the Sound Designer does
+    const sound = await renderSound(recipe, { note: pitched ? note : undefined, velocity: 0.9, gate: pitched ? 1.2 : undefined });
     if (run !== undefined && playRun.current !== run) return;
     sounding.current = playRendered(toAudioBuffer(sound), c.track ? getStripInput(c.track.id) : undefined);
     setTimeout(() => setPlaying((p) => (p === c.key ? null : p)), 1400);
@@ -269,6 +284,19 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
   const resetMap = () => {
     setColumns(defaultColumns());
     setSelection(null);
+  };
+
+  const revert = (c: Column) => {
+    edit(c, structuredClone(c.original));
+    setHeardA((h) => ({ ...h, [c.key]: false }));
+  };
+  const saveMine = async (c: Column) => {
+    // A built-in sound is saved as a new one of mine, sounding exactly the same
+    const mine = c.recipe.id.startsWith('my-') ? c.recipe : withId(c.recipe, `my-${uuidv4().slice(0, 8)}`);
+    await saveUserSound(mine);
+    if (mine !== c.recipe) edit(c, mine);
+    setMessage(`Saved “${mine.name}” to My Sounds`);
+    setTimeout(() => setMessage(null), 2500);
   };
 
   const add = (value: string) => {
@@ -436,7 +464,7 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
               </optgroup>
             ))}
           </select>
-          <span className="designer-hint">Hover a shared block to find it in every column; its switch turns it off or on in all of them.</span>
+          <span className="designer-hint">{message ?? 'Hover a shared block to find it in every column; its switch turns it off or on in all of them.'}</span>
         </div>
         {shown.length === 0 ? (
           <div className="detail-empty-message">Add an instrument to see its DSP chain.</div>
@@ -461,6 +489,18 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
                 <div className="dsp-head-source">
                   <span>{c.source}</span>
                   {!c.track && <button className="designer-link" onClick={() => moveToTrack(c)}>Use on a new track</button>}
+                </div>
+                <div className="designer-row dsp-head-ab">
+                  {c.changed && (
+                    <div className="dsp-ab" role="group" aria-label="Which to play">
+                      <button className={`designer-button ${heardA[c.key] ? 'active' : ''}`} data-ab="A" title="The original, as it was when it joined the map"
+                        onClick={() => setHeardA((h) => ({ ...h, [c.key]: true }))}>A</button>
+                      <button className={`designer-button ${heardA[c.key] ? '' : 'active'}`} data-ab="B" title="Your edit"
+                        onClick={() => setHeardA((h) => ({ ...h, [c.key]: false }))}>B</button>
+                    </div>
+                  )}
+                  {c.changed && <button className="designer-link dsp-revert" onClick={() => revert(c)} title="Back to the original"><RotateCcw size={10} /> Revert</button>}
+                  <button className="designer-link dsp-save" onClick={() => saveMine(c)} title="Keep this sound in My Sounds, for every project"><Save size={10} /> Save</button>
                 </div>
               </div>
             ))}

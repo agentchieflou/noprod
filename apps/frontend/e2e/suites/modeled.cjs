@@ -23,6 +23,7 @@ module.exports = async (page, ctx) => {
     const t0 = performance.now();
     const v = startVoice(off, off.destination, params, 69, 0, 1);
     v.release(1.2);
+    await (await import('/src/audio/library.ts')).whenRendered(off); // rendered in a worker
     const d = (await off.startRendering()).getChannelData(0);
     return { ms: Math.round(performance.now() - t0), hz: analysis.estimatePitch(d, 44100, Math.round(0.6 * 44100), 8192, 300, 600),
       held: analysis.levelAt(d, 44100, 0.8), after: analysis.levelAt(d, 44100, 2.9, 0.05) };

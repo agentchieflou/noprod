@@ -10,8 +10,8 @@
   "dependencies": {
     "@strudel/core": "latest",
     "@strudel/repl": "latest",
-    "puppeteer": "^25.3.0",
-    "ws": "^8.16.0"
+    "puppeteer": "^25.13.0",
+    "ws": "^8.22.0"
   },
   "keywords": [],
   "author": "",
