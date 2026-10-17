@@ -353,6 +353,10 @@ bool WebSocketServer::isAllowedOrigin (const std::string& origin, const std::vec
         if (trim (allowed) == origin)
             return true;
 
+    // The hosted web app (GitHub Pages) pairs with a local GhostDAW too
+    if (origin == hostedOrigin)
+        return true;
+
     // An Origin is exactly scheme://host[:port]
     auto separator = origin.find ("://");
     if (separator == std::string::npos)

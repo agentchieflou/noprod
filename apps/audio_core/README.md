@@ -60,8 +60,12 @@ data folder. Crashes are written to `ghostdaw.log` there.
 
 - **Localhost only.** Every server binds `127.0.0.1`.
 - **Origin policy.** Browsers send an `Origin` with every WebSocket
-  handshake; only pages from `localhost`, `127.0.0.1` or `[::1]` (and
-  `NOPROD_ALLOWED_ORIGINS`) get a handshake, as before.
+  handshake; only pages from `localhost`, `127.0.0.1` or `[::1]`, the
+  hosted web app (`https://agentchieflou.github.io`) and
+  `NOPROD_ALLOWED_ORIGINS` get a handshake, as before. A hosted page is an
+  https page opening `ws://localhost`: browsers allow that (loopback is a
+  secure context), and Chrome asks the user once for Local Network Access
+  before the page may reach a program on their own machine.
 - **Pairing.** GhostDAW keeps a 256-bit random token in `pairing-token`
   (owner-only), created on first launch. Every connection on 8082, 8083 and
   8085 presents it as `?token=<hex>` in its URL; a wrong or missing token

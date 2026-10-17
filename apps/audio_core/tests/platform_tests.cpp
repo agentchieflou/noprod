@@ -476,19 +476,22 @@ static void testWebSocketHandshake()
     CHECK (equalsIgnoreCase (plain.responseHeader ("Upgrade"), "websocket"));
     CHECK (waitFor ([&] { return server.getConnectionCount() == 1; }));
 
-    TestWebSocketClient local, ipv6, extra, evil, lookalike, nullOrigin, noUpgrade, badKey, post;
+    TestWebSocketClient local, ipv6, extra, hosted, evil, lookalike, nullOrigin, noUpgrade, badKey, post;
     CHECK (local.connect (port, "/", "http://localhost:5173") == 101);
     CHECK (ipv6.connect (port, "/", "https://[::1]:4173") == 101);
     CHECK (extra.connect (port, "/", "https://extra.example") == 101);
+    CHECK (hosted.connect (port, "/", WebSocketServer::hostedOrigin) == 101); // the web app on GitHub Pages
     CHECK (evil.connect (port, "/", "https://evil.example") == 403);
     CHECK (lookalike.connect (port, "/", "http://localhost.evil.example") == 403);
     CHECK (nullOrigin.connect (port, "/", "null") == 403);
     CHECK (noUpgrade.connect (port, "/", "", "", "dGhlIHNhbXBsZSBub25jZQ==", false) == 400);
     CHECK (badKey.connect (port, "/", "", "", "tooshort") == 400);
     CHECK (evil.waitForClose() && noUpgrade.waitForClose());
-    CHECK (waitFor ([&] { return server.getConnectionCount() == 4; }));
+    CHECK (waitFor ([&] { return server.getConnectionCount() == 5; }));
 
     CHECK (WebSocketServer::isAllowedOrigin ({}) && WebSocketServer::isAllowedOrigin ("http://127.0.0.1"));
+    CHECK (WebSocketServer::isAllowedOrigin ("https://agentchieflou.github.io") && ! WebSocketServer::isAllowedOrigin ("https://evil.github.io")
+           && ! WebSocketServer::isAllowedOrigin ("http://agentchieflou.github.io") && ! WebSocketServer::isAllowedOrigin ("https://agentchieflou.github.io.evil.example"));
     CHECK (! WebSocketServer::isAllowedOrigin ("http://localhost:80@evil.example") && ! WebSocketServer::isAllowedOrigin ("http://localhost:") && ! WebSocketServer::isAllowedOrigin ("file://"));
 
     section ("WebSocket: text and binary messages, pings, the close handshake");
@@ -519,13 +522,13 @@ static void testWebSocketHandshake()
     CHECK (plain.sendClose (1000, "bye"));
     CHECK (plain.readFrame (frame) && frame.opcode == 0x8 && frame.closeCode() == 1000);
     CHECK (plain.waitForClose());
-    CHECK (waitFor ([&] { return received.closes.load() == 1 && server.getConnectionCount() == 3; }));
+    CHECK (waitFor ([&] { return received.closes.load() == 1 && server.getConnectionCount() == 4; }));
 
     // Closing from the server side
     server.stop();
     CHECK (local.readFrame (frame) && frame.opcode == 0x8 && frame.closeCode() == 1001);
-    CHECK (local.waitForClose() && ipv6.waitForClose() && extra.waitForClose());
-    CHECK (received.closes.load() == 4 && server.getConnectionCount() == 0);
+    CHECK (local.waitForClose() && ipv6.waitForClose() && extra.waitForClose() && hosted.waitForClose());
+    CHECK (received.closes.load() == 5 && server.getConnectionCount() == 0);
 }
 
 static void testWebSocketFraming()

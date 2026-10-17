@@ -123,6 +123,9 @@ public:
     // NOPROD_ALLOWED_ORIGINS list).
     static bool isAllowedOrigin (const std::string& origin, const std::vector<std::string>& extra = {});
 
+    // Where the web app is hosted: allowed beside the local dev origins
+    static constexpr const char* hostedOrigin = "https://agentchieflou.github.io";
+
     // The handshake request parsed, for tests
     struct Request
     {
