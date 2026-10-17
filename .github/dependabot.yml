@@ -10,6 +10,10 @@ updates:
       npm:
         patterns: ['*']
         update-types: [minor, patch]
+    # Node's types move when the Node we run (.nvmrc) does, by hand
+    ignore:
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
     schedule:
