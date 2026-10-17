@@ -1470,6 +1470,19 @@ void testVst3()
         CHECK (registry.addUserScanFolder (vst3Folder));
         auto candidates = PluginScanner::candidates ({ vst3Folder });
         CHECK (candidates.size() == 2);
+        // A symlink to a bundle, named like it (how the VST3 SDK installs
+        // what it builds), is a candidate, and is described through the link
+        auto linked = dir / pathFromUtf8 (VST3_TEST_GAIN_PATH).filename();
+        std::error_code linkError;
+        fs::create_directory_symlink (pathFromUtf8 (VST3_TEST_GAIN_PATH), linked, linkError);
+        if (! linkError)
+        {
+            auto withLink = PluginScanner::candidates ({ dir });
+            CHECK (withLink.size() == 1 && withLink[0] == linked);
+            auto described = PluginScanner::describeFile (linked);
+            CHECK (described["plugins"].size() == 1 && described["plugins"][0]["format"].toString() == "VST3");
+            fs::remove (linked);
+        }
         PluginScanner::Options options;
         options.worker = pathFromUtf8 (GHOSTDAW_EXE_PATH);
         options.timeoutMs = 20000;

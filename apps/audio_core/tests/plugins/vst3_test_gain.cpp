@@ -14,6 +14,7 @@
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
+#include "pluginterfaces/vst/ivsthostapplication.h"
 #include "pluginterfaces/vst/ivstmessage.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
@@ -46,6 +47,9 @@ DEF_CLASS_IID (IComponent)
 DEF_CLASS_IID (IAudioProcessor)
 DEF_CLASS_IID (IEditController)
 DEF_CLASS_IID (IConnectionPoint)
+DEF_CLASS_IID (IHostApplication)
+DEF_CLASS_IID (IMessage)
+DEF_CLASS_IID (IAttributeList)
 DEF_CLASS_IID (IParameterChanges)
 DEF_CLASS_IID (IParamValueQueue)
 } // namespace Vst
@@ -69,6 +73,36 @@ constexpr const char* kPluginName = "NoProd Test Gain (separate controller)";
 DECLARE_UID (kComponentUid, 0x4E6F5072, 0x6F645465, 0x73744761, 0x696E0001) // "NoPrTestGain"
 constexpr const char* kPluginName = "NoProd Test Gain";
 #endif
+
+// The host's messages, as a plug-in would use them to talk to its
+// controller: a string set then read back, and a buffer too small for a
+// terminator (or none) refused rather than overrun. The component refuses
+// to initialise with a host that gets this wrong, which a test sees.
+bool hostMessagesWork (FUnknown* context)
+{
+    IHostApplication* host = nullptr;
+    if (context == nullptr || context->queryInterface (IHostApplication::iid, reinterpret_cast<void**> (&host)) != kResultOk || host == nullptr)
+        return false;
+    IMessage* message = nullptr;
+    TUID messageId;
+    std::memcpy (messageId, IMessage::iid.toTUID(), sizeof (TUID));
+    auto ok = host->createInstance (messageId, messageId, reinterpret_cast<void**> (&message)) == kResultOk && message != nullptr;
+    host->release();
+    if (! ok)
+        return false;
+    message->setMessageID ("probe");
+    auto* attributes = message->getAttributes();
+    TChar text[8] = {};
+    const TChar hi[] = { 'h', 'i', 0 };
+    ok = attributes != nullptr
+      && attributes->setString ("text", hi) == kResultOk
+      && attributes->getString ("text", text, 1) == kInvalidArgument
+      && attributes->getString ("text", nullptr, sizeof (text)) == kInvalidArgument
+      && attributes->getString ("text", text, sizeof (text)) == kResultOk && text[0] == 'h' && text[1] == 'i' && text[2] == 0
+      && attributes->getString ("missing", text, sizeof (text)) == kResultFalse;
+    message->release();
+    return ok;
+}
 
 void copyString (String128 out, const char* text)
 {
@@ -200,7 +234,7 @@ public:
     }
 
     // IPluginBase
-    tresult PLUGIN_API initialize (FUnknown* context) override { return context != nullptr ? kResultOk : kResultFalse; }
+    tresult PLUGIN_API initialize (FUnknown* context) override { return hostMessagesWork (context) ? kResultOk : kResultFalse; }
     tresult PLUGIN_API terminate() override { return kResultOk; }
 
     // IComponent

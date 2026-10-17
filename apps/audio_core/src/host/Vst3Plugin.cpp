@@ -200,6 +200,7 @@ public:
     }
     tresult PLUGIN_API getString (AttrID id, TChar* string, uint32 sizeInBytes) override
     {
+        if (string == nullptr || sizeInBytes < sizeof (TChar)) return kInvalidArgument;
         auto it = strings.find (id);
         if (it == strings.end()) return kResultFalse;
         auto count = std::min<size_t> (it->second.size(), sizeInBytes / sizeof (TChar) - 1);
@@ -912,8 +913,8 @@ std::unique_ptr<Vst3Insert> Vst3Insert::create (std::shared_ptr<Vst3Module> modu
 
     // Buses: the main ones stereo (or whatever the plug-in insists on),
     // the aux ones left as they are and inactive
-    impl.inputBuses = impl.component->getBusCount (kAudio, kInput);
-    impl.outputBuses = impl.component->getBusCount (kAudio, kOutput);
+    impl.inputBuses = std::max (0, impl.component->getBusCount (kAudio, kInput));
+    impl.outputBuses = std::max (0, impl.component->getBusCount (kAudio, kOutput));
     std::vector<SpeakerArrangement> inputs (static_cast<size_t> (impl.inputBuses)), outputs (static_cast<size_t> (impl.outputBuses));
     for (int32 i = 0; i < impl.inputBuses; ++i)
         impl.processor->getBusArrangement (kInput, i, inputs[static_cast<size_t> (i)]);

@@ -173,17 +173,17 @@ std::vector<fs::path> listBundles (const fs::path& dir, const std::string& exten
     for (fs::recursive_directory_iterator it (dir, fs::directory_options::skip_permission_denied, ec), end; ! ec && it != end && visited < limit; it.increment (ec))
     {
         ++visited;
-        if (! it->is_directory (ec) || it->is_symlink (ec))
-        {
-            it.disable_recursion_pending();
+        if (! it->is_directory (ec))
             continue;
-        }
         auto name = lowerCase (pathToUtf8 (it->path().filename()));
-        if (name.size() > wanted.size() && name.compare (name.size() - wanted.size(), wanted.size(), wanted) == 0)
-        {
+        auto isBundle = name.size() > wanted.size() && name.compare (name.size() - wanted.size(), wanted.size(), wanted) == 0;
+        // The walk follows no symlinked folder (a link back up would loop),
+        // but a symlink to a bundle is a bundle: the VST3 SDK links each
+        // plug-in it builds into the user's folder that way
+        if (isBundle)
             result.push_back (it->path());
+        if (isBundle || it->is_symlink (ec))
             it.disable_recursion_pending(); // what a bundle holds is its own
-        }
     }
     std::sort (result.begin(), result.end());
     return result;

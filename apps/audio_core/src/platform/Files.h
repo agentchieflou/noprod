@@ -41,8 +41,8 @@ bool removeFile (const fs::path& path);
 std::vector<fs::path> listFiles (const fs::path& dir, const std::vector<std::string>& extensions, size_t limit = 10000);
 
 // Directories under `dir` (in subfolders too, but not inside another
-// bundle, and following no symlinks) whose name ends in `extension`, e.g.
-// ".vst3" bundles. Sorted.
+// bundle) whose name ends in `extension`, e.g. ".vst3" bundles. A symlink
+// to one counts; no other symlinked folder is followed. Sorted.
 std::vector<fs::path> listBundles (const fs::path& dir, const std::string& extension, size_t limit = 10000);
 
 
