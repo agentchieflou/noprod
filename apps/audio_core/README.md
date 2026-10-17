@@ -39,8 +39,10 @@ The new host lives beside the old one until the switch:
 | Path | What |
 | --- | --- |
 | `src/platform/` | Sockets (loopback only) and the WebSocket server, the message loop and timers, files, dynamic libraries, logging, JSON, pairing, the single-instance lock and the crash handler |
+| `src/host/` | The host: `InsertChain` (RCU, as before), `Mixer`, `HapAudioEngine`, `AudioDevice` and the `Watchdog` |
+| `third_party/miniaudio/` | Device I/O: [miniaudio](https://github.com/mackron/miniaudio), public domain or MIT-0 (see its README there). Chosen over writing WASAPI, CoreAudio and ALSA backends ourselves: one well-tested file, no dependencies, a null backend for machines without a sound card and for CI |
 | `src/ghostdaw_main.cpp` | The new entry point, `ghostdaw` |
-| `tests/platform_tests.cpp` | Its tests, `ghostdaw_tests`: the WebSocket server over real sockets (handshake, framing, masking, fragmentation, limits, the token), JSON, the loop, pairing |
+| `tests/` | Its tests, `ghostdaw_tests`: the WebSocket server over real sockets (handshake, framing, masking, fragmentation, limits, the token), JSON, the loop, pairing, the chains and mixer under concurrent swaps, the device on the null backend, the watchdog |
 | `src/*.h`, `src/main.cpp` | The JUCE host, `GhostDAW`, until the switch |
 
 ```sh
@@ -54,7 +56,20 @@ build/audio_core/ghostdaw --help
 (Linux), `~/Library/Application Support/NoProd/GhostDAW` (macOS) or
 `%APPDATA%\NoProd\GhostDAW` (Windows); `--data-dir` moves them. It exits 1
 when a port is taken and 2 when another GhostDAW already runs with that
-data folder. Crashes are written to `ghostdaw.log` there.
+data folder. Crashes are written to `ghostdaw.log` there. `--null-audio`
+runs without a sound card (a machine without one falls back to that by
+itself).
+
+### Reliable
+
+- **A watchdog thread** watches the audio callback and the control thread.
+  A callback stuck for 2 s (a plugin hanging in `process()`) or a control
+  thread silent for 5 s (a plugin hanging in a control call) is reported in
+  the log and to every control client as `AUDIO_CORE_ERROR { request:
+  "WATCHDOG" }`, naming the bus and insert, and again when it recovers.
+  The servers keep answering meanwhile: nothing else shares those threads.
+- **Audio re-routing** (the OS switching outputs) restarts the device from
+  the control thread, re-preparing the mixer and inserts for the new rate.
 
 ### Secure by design
 
@@ -80,7 +95,9 @@ data folder. Crashes are written to `ghostdaw.log` there.
   which runs as the same user, reads the token file. The token covers what
   `Origin` cannot: other local pages and non-browser clients.
 - **Per-connection limits.** A connection cap per server (16 control, 64
-  stream, 8 editor connections), a 5 s handshake timeout, a message size
+  stream, 8 editor connections) and a shorter one on connections still in
+  their handshake (8), so idle sockets can't fill the cap: each holds a
+  slot for at most the 5 s handshake timeout. A message size
   limit per server (1 MiB, 4 MiB, 64 KiB), client masking enforced,
   fragmented messages reassembled, and the close codes RFC 6455 gives
   protocol errors (1002, 1007, 1009).

@@ -20,7 +20,8 @@ namespace ghostdaw
 //
 // Each accepted connection is served on its own thread, up to
 // Options::maxConnections (beyond that, a 503 and the connection is
-// dropped). The handshake must complete within handshakeTimeoutMs. Client
+// dropped), and at most Options::maxHandshaking of them still in their
+// handshake. The handshake must complete within handshakeTimeoutMs. Client
 // frames must be masked; fragmented messages are reassembled, up to
 // maxMessageBytes; pings are answered; a protocol error closes the
 // connection with the code RFC 6455 gives it (1002, 1007, 1009).
@@ -88,6 +89,10 @@ public:
         std::string name = "ws";            // for the log
         uint16_t port = 0;                  // 0: any free port
         int maxConnections = 32;
+        // A shorter cap for connections that have not finished their
+        // handshake, so idle sockets can't fill maxConnections: each holds
+        // a slot for at most handshakeTimeoutMs
+        int maxHandshaking = 8;
         int handshakeTimeoutMs = 5000;
         size_t maxMessageBytes = 1024 * 1024;
         // Checks the token a client presents (empty when it sent none).

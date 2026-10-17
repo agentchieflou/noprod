@@ -54,8 +54,27 @@ function(ghostdaw_warnings target)
 endfunction()
 ghostdaw_warnings(ghostdaw_platform)
 
+# The host: the mixer, the insert chains, the hap engine (headers in
+# src/host) and the audio device over miniaudio (third_party/miniaudio,
+# public domain or MIT-0; see its README)
+add_library(ghostdaw_host STATIC
+    src/host/AudioDevice.cpp
+    third_party/miniaudio/miniaudio.c)
+target_include_directories(ghostdaw_host PUBLIC src third_party/miniaudio)
+target_link_libraries(ghostdaw_host PUBLIC ghostdaw_platform)
+if(WIN32)
+    # miniaudio links WASAPI and friends at run time
+elseif(APPLE)
+    # miniaudio links CoreAudio at run time; CoreFoundation for the device names
+    target_link_libraries(ghostdaw_host PUBLIC "-framework CoreFoundation")
+else()
+    target_link_libraries(ghostdaw_host PUBLIC m ${CMAKE_DL_LIBS})
+endif()
+set_source_files_properties(third_party/miniaudio/miniaudio.c PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>")
+target_compile_options(ghostdaw_host PRIVATE $<$<COMPILE_LANGUAGE:CXX>:$<IF:$<CXX_COMPILER_ID:MSVC>,/W4,-Wall;-Wextra;-Wshadow;-Wconversion;-Wno-sign-conversion>>)
+
 add_executable(ghostdaw src/ghostdaw_main.cpp)
-target_link_libraries(ghostdaw PRIVATE ghostdaw_platform)
+target_link_libraries(ghostdaw PRIVATE ghostdaw_host)
 target_include_directories(ghostdaw PRIVATE "${LPI_INCLUDE_DIR}")
 ghostdaw_warnings(ghostdaw)
 
