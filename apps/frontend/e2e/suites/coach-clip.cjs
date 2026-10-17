@@ -15,6 +15,7 @@ module.exports = async (page, ctx) => {
     return 1;
   });
   await page.click('.coach-toggle');
+  await page.waitForSelector('.kb-coach', { timeout: 15000 }).catch(() => {}); // the coach loads when first opened
   await ctx.sleep(200);
 
   const publish = (type, pitches) => page.evaluate((type, pitches) => {
