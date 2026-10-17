@@ -63,6 +63,11 @@ listen. See `packages/sound/src/analysis.ts`.
 - Pull requests are squash-merged. The PR body lists what changed and the
   evidence: test counts and the suites run.
 
+## License
+
+noprod is licensed under the [Apache License 2.0](LICENSE). By contributing,
+you agree that your contributions are licensed under it too.
+
 ## Dependencies
 
 We own what we ship. Nothing restricted by its license goes into the apps, the
