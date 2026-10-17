@@ -146,7 +146,7 @@ module.exports = async (page, ctx) => {
     for (let i = 0; same && i < a.length; i++) same = a[i] === b[i];
     const { getUserSounds } = await import('/src/audio/userSounds.ts');
     const db = await new Promise((resolve) => {
-      const req = indexedDB.open('noprod-sounds', 1);
+      const req = indexedDB.open('noprod-sounds');
       req.onsuccess = () => { const g = req.result.transaction('sounds').objectStore('sounds').getAll(); g.onsuccess = () => resolve(g.result.map((x) => x.id)); };
     });
     const groups = [...document.querySelectorAll('.browser-folder')].map((e) => e.textContent.trim());

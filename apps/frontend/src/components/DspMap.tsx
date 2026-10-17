@@ -11,6 +11,7 @@ import { renderSound, toAudioBuffer, playRendered } from '../audio/designing';
 import { getStripInput } from '../audio/engine';
 import { midiNoteName } from '../audio/synth';
 import { saveUserSound } from '../audio/userSounds';
+import { describeStorageError } from '../project/storage';
 import { Param, Choice, EnvelopeParams, FilterParams } from './designerControls';
 import { filtersOf, asFilter } from './designerUtils';
 import { ExciterParams, ResonatorParams, RadiatorParams, StringSetParams } from './ModelParams';
@@ -293,9 +294,13 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
   const saveMine = async (c: Column) => {
     // A built-in sound is saved as a new one of mine, sounding exactly the same
     const mine = c.recipe.id.startsWith('my-') ? c.recipe : withId(c.recipe, `my-${uuidv4().slice(0, 8)}`);
-    await saveUserSound(mine);
     if (mine !== c.recipe) edit(c, mine);
-    setMessage(`Saved “${mine.name}” to My Sounds`);
+    try {
+      await saveUserSound(mine);
+      setMessage(`Saved “${mine.name}” to My Sounds`);
+    } catch (err) {
+      setMessage(`“${mine.name}” is in My Sounds until you close the page: ${describeStorageError(err)}`);
+    }
     setTimeout(() => setMessage(null), 2500);
   };
 

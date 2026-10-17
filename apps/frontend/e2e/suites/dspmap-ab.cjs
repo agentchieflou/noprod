@@ -89,7 +89,7 @@ module.exports = async (page, ctx) => {
     const now = st.tracks.find((t) => t.id === st.selectedTrackId).instrument.parameters.Library.sound;
     const { getUserSounds } = window.__userSounds;
     const db = await new Promise((resolve) => {
-      const req = indexedDB.open('noprod-sounds', 1);
+      const req = indexedDB.open('noprod-sounds');
       req.onsuccess = () => { const g = req.result.transaction('sounds').objectStore('sounds').getAll(); g.onsuccess = () => resolve(g.result.map((x) => x.id)); };
     });
     return { id: now.id, mine: getUserSounds().map((x) => x.id), db, group: [...document.querySelectorAll('.browser-folder')].some((e) => e.textContent.trim().startsWith('My Sounds')), hint: document.querySelector('.dsp-map-toolbar .designer-hint').textContent };
