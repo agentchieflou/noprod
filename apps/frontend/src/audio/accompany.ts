@@ -27,7 +27,6 @@ import { getCoachState, subscribeCoach } from './coach';
 const LOOKAHEAD = 0.2;   // seconds committed ahead
 const TICK_MS = 25;
 const MARGIN = 0.03;     // seconds
-const CUT = 0.015;       // a cut note fades with this time constant
 
 type Part = 'bass' | 'keys';
 const PARTS: Part[] = ['bass', 'keys'];
@@ -87,7 +86,7 @@ const sameClock = (a: Clock, b: Clock) => a.bpm === b.bpm && a.beatsPerBar === b
 
 // ------------------------------------------------------------------- band
 
-interface Sounding { src: { stop: (when?: number) => void }; gain: GainNode; start: number; end: number }
+interface Sounding { src: { stop: (when?: number) => void }; start: number; end: number }
 export interface PlayedNote { id: number; part: Part; pitch: number; start: number; end: number; track: string }
 
 interface Band { acc: Accompanist; clock: Clock; notes: Map<number, Sounding>; timer: ReturnType<typeof setInterval> }
@@ -99,9 +98,9 @@ const played: PlayedNote[] = [];   // what the band played lately, for tests and
 const bandTrack = (part: Part) =>
   (store.getState().tracks || []).find((t: any) => t.type === 'midi' && t.name === BAND_TRACKS[part]);
 
+// The engine fades a stopped note over a few milliseconds
 function cut(note: Sounding, at: number) {
-  note.gain.gain.setTargetAtTime(0, at, CUT);
-  try { note.src.stop(at + CUT * 8); } catch { /* already stopped */ }
+  try { note.src.stop(at); } catch { /* already stopped */ }
   note.end = Math.min(note.end, at);
 }
 
@@ -116,10 +115,8 @@ function apply(events: AccompanyEvent[]) {
       const start = timeOf(clock, note.start), end = timeOf(clock, note.end);
       // Its track gone, or the scheduler fell behind it
       if (!track?.instrument || start < now - 0.05) continue;
-      const gain = audioContext.createGain();
-      gain.connect(getStripInput(track.id));
-      const src = triggerNote(audioContext, gain, track.instrument.parameters, note.pitch, Math.max(start, now), end - start, note.velocity);
-      notes.set(note.id, { src, gain, start, end });
+      const src = triggerNote(audioContext, getStripInput(track.id), track.instrument.parameters, note.pitch, Math.max(start, now), end - start, note.velocity);
+      notes.set(note.id, { src, start, end });
       played.push({ id: note.id, part: note.part, pitch: note.pitch, start, end, track: track.id });
       if (played.length > 2000) played.splice(0, played.length - 1000);
     } else {
@@ -128,7 +125,6 @@ function apply(events: AccompanyEvent[]) {
       const at = timeOf(clock, e.at);
       if (at <= note.start + 1e-6) {
         // Taken back before it sounds
-        note.gain.gain.value = 0;
         try { note.src.stop(note.start); } catch { /* already stopped */ }
         notes.delete(e.id);
       } else {

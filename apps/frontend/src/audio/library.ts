@@ -291,6 +291,51 @@ const nothing: Stoppable = { stop: () => {} };
 // when a burst of new notes (the first bar from a cold cache) queues up.
 export const LATE_BUDGET = 0.03;
 
+// What a library note plays: its render, its level, and for a kit pad which
+// pad and choke group (the engine's voices choke by group)
+export interface LibraryNote extends Render { level: number; pad?: number; chokeGroup?: number }
+
+export function resolveLibraryNote(params: any, note: number, velocity: number, duration?: number): LibraryNote | null {
+  const r = resolve(params, note, velocity, duration);
+  if (!r) return null;
+  const kit = libraryOf(params)?.kit;
+  const group = kit && r.pad !== undefined ? kit.chokes?.findIndex((g) => g.includes(r.pad!)) ?? -1 : -1;
+  return group >= 0 ? { ...r, chokeGroup: group } : r;
+}
+
+// The release a held note of this sound fades with
+export const soundRelease = (sound: SoundRecipe) => Math.max(0.05, ...sound.layers.map((l) => l.env?.release ?? 0.05));
+
+// The nearest render of a note that isn't ready, repitched (the fast path), or null
+export const nearestNoteBuffer = (r: Render, sampleRate: number) => nearest(r, sampleRate);
+
+// A note's render if it is in the cache
+export const cachedNoteBuffer = (r: Render, sampleRate: number) => cached(r, sampleRate);
+
+// A note's buffer, to `play(buffer, at)`: at once if it is cached, else
+// when a worker has rendered it, if that is still before `when` or within
+// LATE_BUDGET of it (counted as late); later than that it is skipped and
+// counted. A `live` note (a key held) renders ahead of everything else and
+// plays whenever it arrives. `cancel` takes a note back before it plays.
+export function noteBuffer(ctx: BaseAudioContext, r: Render, when: number, play: (buffer: AudioBuffer, at: number) => void, live = false): { cancel: (at?: number) => void } {
+  const hit = cached(r, ctx.sampleRate);
+  if (hit) { play(hit, when); return { cancel: () => {} }; }
+  stats.missed++;
+  const realtime = isRealtime(ctx);
+  const asked = performance.now();
+  let cancelledAt: number | null = null;
+  const job = renderNote(r, ctx.sampleRate, live ? LIVE : realtime ? when : OFFLINE).then((buffer) => {
+    keep(stats.waits, performance.now() - asked);
+    const at = realtime ? Math.max(when, ctx.currentTime) : when;
+    if (cancelledAt !== null && cancelledAt <= at) return; // taken back before it could start
+    if (!live && at - when > LATE_BUDGET) { stats.skipped++; keep(stats.skippedAt, when); return; }
+    if (at > when) stats.late++;
+    play(buffer, at);
+  }, () => { /* counted as failed; nothing plays */ });
+  if (!realtime) trackOffline(ctx, job);
+  return { cancel: (at) => { cancelledAt = at ?? (realtime ? ctx.currentTime : 0); } };
+}
+
 // One scheduled note (clips, audition, freeze): see synth.ts triggerNote.
 // A note that isn't rendered yet renders in a worker ahead of everything
 // due later, and starts when it arrives if that's still useful.
@@ -300,33 +345,17 @@ export function triggerLibrary(
   const r = resolve(params, note, velocity, duration);
   if (!r) return nothing;
   const kit = libraryOf(params)?.kit;
-  const start = (buffer: AudioBuffer, at: number) => {
-    const voice = play(ctx, destination, buffer, at, r.level);
-    if (kit && r.pad !== undefined) choke(kit, r.pad, destination, voice);
-    return voice;
-  };
-  const hit = cached(r, ctx.sampleRate);
-  if (hit) return start(hit, when).src;
-
-  stats.missed++;
-  const realtime = isRealtime(ctx);
-  const asked = performance.now();
   let voice: Voice | null = null;
   let stopAt: number | null = null;
-  const job = renderNote(r, ctx.sampleRate, realtime ? when : OFFLINE).then((buffer) => {
-    keep(stats.waits, performance.now() - asked);
-    const at = realtime ? Math.max(when, ctx.currentTime) : when;
-    if (stopAt !== null && stopAt <= at) return; // stopped (or taken back) before it could start
-    if (at - when > LATE_BUDGET) { stats.skipped++; keep(stats.skippedAt, when); return; }
-    if (at > when) stats.late++;
-    voice = start(buffer, at);
+  const handle = noteBuffer(ctx, r, when, (buffer, at) => {
+    voice = play(ctx, destination, buffer, at, r.level);
+    if (kit && r.pad !== undefined) choke(kit, r.pad, destination, voice);
     if (stopAt !== null) voice.src.stop(stopAt);
-  }, () => { /* counted as failed; nothing plays */ });
-  if (!realtime) trackOffline(ctx, job);
+  });
   return {
     stop(at?: number) {
       if (voice) voice.src.stop(at);
-      else stopAt = at ?? (realtime ? ctx.currentTime : 0);
+      else { stopAt = at ?? (isRealtime(ctx) ? ctx.currentTime : 0); handle.cancel(stopAt); }
     }
   };
 }

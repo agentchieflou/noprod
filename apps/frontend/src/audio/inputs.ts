@@ -6,6 +6,7 @@
 // published on a bus for recording / capture.
 
 import { audioContext, getStripInput, audioNeedsStart, resumeAudio } from './engine';
+import { liveStrip } from './engineNode';
 import { notify } from '../notify';
 import { startVoice } from './synth';
 import { controlLiveVoices } from './liveModels';
@@ -205,7 +206,10 @@ export function initLiveMidi(store: { getState: () => any }) {
     if (e.type !== 'on' && e.type !== 'off') {
       // a control moves every live voice on the tracks it plays (see LIVE_CONTROLS)
       const control = liveControl(e);
-      if (control) midiEventTargets(st, e).forEach((t: any) => controlLiveVoices(audioContext, getStripInput(t.id), control, e.time));
+      if (control) midiEventTargets(st, e).forEach((t: any) => {
+        const strip = liveStrip(audioContext, getStripInput(t.id));
+        if (strip) controlLiveVoices(strip.output, control, e.time);
+      });
       return;
     }
     midiEventTargets(st, e).forEach((t: any) => {
