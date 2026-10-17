@@ -189,23 +189,20 @@ export function readMidiFile(bytes: Uint8Array): MidiFile {
   const warnings = new Set<string>();
   const ctx: Context = { warn: (m) => { warnings.add(m); }, events: 0, maxTicks: Infinity };
 
-  // §2: a file is chunks, each a 4-character type and a 32-bit length
-  const chunks: { type: string; start: number; end: number }[] = [];
-  for (let p = 0; p < d.length;) {
-    if (d.length - p < 8) {
-      if (!chunks.length) throw err('not a MIDI file: too short for a chunk header', p);
-      ctx.warn('bytes after the last chunk were ignored');
-      break;
-    }
+  // §2: a file is chunks, each a 4-character type and a 32-bit length. They are
+  // walked one at a time and only the tracks are kept, so a file of a million
+  // empty unknown chunks costs the loop and nothing else
+  const lengthAt = (p: number): number => {
     const length = d[p + 4] * 0x1000000 + ((d[p + 5] << 16) | (d[p + 6] << 8) | d[p + 7]);
     if (length > d.length - p - 8) throw err('chunk length runs past the end of the file', p + 4);
-    chunks.push({ type: String.fromCharCode(d[p], d[p + 1], d[p + 2], d[p + 3]), start: p + 8, end: p + 8 + length });
-    p += 8 + length;
-  }
-  if (!chunks.length || chunks[0].type !== 'MThd') throw err('not a MIDI file: no MThd header chunk', 0);
+    return length;
+  };
+  const isType = (p: number, a: number, b: number, c: number, e: number) => d[p] === a && d[p + 1] === b && d[p + 2] === c && d[p + 3] === e;
+  if (d.length && d.length < 8) throw err('not a MIDI file: too short for a chunk header', 0);
+  if (!d.length || !isType(0, 0x4d, 0x54, 0x68, 0x64)) throw err('not a MIDI file: no MThd header chunk', 0);
+  const head = { start: 8, end: 8 + lengthAt(0) };
 
   // §2.1 / §3: format, number of tracks, division. A header longer than 6 is skipped past
-  const head = chunks[0];
   if (head.end - head.start < 6) throw err('MThd length under 6', 4);
   const format = (d[head.start] << 8) | d[head.start + 1];
   const declared = (d[head.start + 2] << 8) | d[head.start + 3];
@@ -214,11 +211,6 @@ export function readMidiFile(bytes: Uint8Array): MidiFile {
   if (declared === 0) throw err('the file declares 0 tracks', head.start + 2);
   if (declared > MAX_TRACKS) throw err(`the file declares more than ${MAX_TRACKS} tracks`, head.start + 2);
 
-  const trackChunks = chunks.filter((c) => c.type === 'MTrk');   // unknown chunk types are skipped (§2)
-  if (trackChunks.length < declared) {
-    throw err(`${declared} tracks declared but ${trackChunks.length} chunks present`, d.length);
-  }
-  if (trackChunks.length > declared) ctx.warn('tracks beyond the number in the header were ignored');
   if (format === 0 && declared !== 1) ctx.warn('a format 0 file with more than one track');
   if (format === 2) ctx.warn('format 2 (independent patterns): each track is read from beat 0');
 
@@ -238,7 +230,17 @@ export function readMidiFile(bytes: Uint8Array): MidiFile {
     ctx.maxTicks = MAX_BEATS * ticksPerBeat;
   }
 
-  const parsed = trackChunks.slice(0, declared).map((c) => parseTrack(d, c.start, c.end, ctx));
+  const parsed: Parsed[] = [];
+  for (let p = head.end; p < d.length;) {
+    if (d.length - p < 8) { ctx.warn('bytes after the last chunk were ignored'); break; }
+    const end = p + 8 + lengthAt(p);
+    if (isType(p, 0x4d, 0x54, 0x72, 0x6b)) {   // unknown chunk types are skipped (§2)
+      if (parsed.length < declared) parsed.push(parseTrack(d, p + 8, end, ctx));
+      else ctx.warn('tracks beyond the number in the header were ignored');
+    }
+    p = end;
+  }
+  if (parsed.length < declared) throw err(`${declared} tracks declared but ${parsed.length} chunks present`, d.length);
 
   const byTick = <T extends { tick: number }>(all: T[]) => all.sort((a, b) => a.tick - b.tick);   // stable: track order breaks ties
   const tempoEvents = byTick(parsed.flatMap((t) => t.tempo));

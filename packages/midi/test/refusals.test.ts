@@ -136,3 +136,9 @@ test('limit: a song of 100000 beats under SMPTE division', () => {
   assert.equal(readMidiFile(at(MAX_BEATS * 500)).tracks[0].controllers[0].beat, MAX_BEATS);
   refuses(at(MAX_BEATS * 500 + 1), /past 100000 beats/, 22);
 });
+
+test('tracks beyond the header\'s count are skipped without being read', () => {
+  const file = readMidiFile(Uint8Array.from([...header(0, 1, 96), ...track(note), ...chunk('MTrk', [0, 0x90, 60]), ...track(note)]));   // the extras are hostile
+  assert.equal(file.tracks.length, 1);
+  assert.ok(file.warnings.some((w) => /beyond the number in the header/.test(w)));
+});
