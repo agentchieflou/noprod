@@ -45,6 +45,12 @@ jobs:
           npx tsc -b
           npx oxlint src
           npx vite build
+      # Sourcemaps stay off the host; they are kept here for debugging a build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sourcemaps
+          path: apps/frontend/dist/assets/*.map
+          if-no-files-found: error
 
   e2e:
     name: Browser tests
@@ -62,5 +68,24 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: e2e-screenshots
+          path: apps/frontend/e2e/.shots/
+          if-no-files-found: ignore
+
+  dist:
+    name: Built app (smoke test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run e2e:dist
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-screenshots
           path: apps/frontend/e2e/.shots/
           if-no-files-found: ignore
