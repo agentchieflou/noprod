@@ -196,7 +196,7 @@ module.exports = async (page, ctx) => {
   const left = await slots();
   check('New Project drops the recovery copy of the project it replaces', had.length === 1 && left.length === 0, JSON.stringify({ had, left }));
 
-  // 6. A full disk is shown, and clears once a write fits again. Chrome
+  // 6. A full disk is shown, and clears once there is room again. Chrome
   // applies a quota override only to storage opened after it, so this runs
   // in a fresh browser context.
   const fresh = await page.browser().createBrowserContext();
@@ -216,9 +216,10 @@ module.exports = async (page, ctx) => {
   const full = await tabC.evaluate(() => document.querySelector('.storage-banner')?.textContent || '');
   check('A quota error is shown to the user', /Autosave: browser storage is full/.test(full), full || JSON.stringify(await slots(tabC)));
   await tabC.screenshot({ path: join(ctx.shotDir, 'project-quota.png') });
-  await tabC.evaluate(() => { const st = window.__dawStore.getState(); st.removeRegion(st.regions[0].id); });
-  // Chrome may count the aborted write against the quota for a moment, so
-  // edit again (each edit autosaves) until a write fits, up to a deadline
+  // Make room: lift the quota. Chrome counts an aborted write against it
+  // until it cleans up, so freeing a little isn't enough; the worker reopens
+  // its connection after the failure and so sees the new quota.
+  await cdp.send('Storage.overrideQuotaForOrigin', { origin: new URL(url).origin });
   let cleared = null;
   for (let i = 0; i < 6; i++) {
     await tabC.evaluate((bpm) => window.__dawStore.getState().setBpm(bpm), 140 + i);
@@ -226,11 +227,8 @@ module.exports = async (page, ctx) => {
     cleared = { banner: await tabC.evaluate(() => !!document.querySelector('.storage-banner')), slots: await slots(tabC), tries: i + 1 };
     if (!cleared.banner) break;
   }
-  if (cleared.banner) {
-    cleared.notice = await tabC.evaluate(() => document.querySelector('.storage-banner').textContent);
-    cleared.estimate = await tabC.evaluate(() => navigator.storage.estimate());
-  }
-  check('The notice clears when autosave fits again', !cleared.banner && cleared.slots.some((s) => s.bpm >= 140 && s.buffers === 0), JSON.stringify(cleared));
+  if (cleared.banner) cleared.notice = await tabC.evaluate(() => document.querySelector('.storage-banner').textContent);
+  check('Once there is room, autosave saves the work that failed and the notice clears', !cleared.banner && cleared.slots.some((s) => s.bpm >= 140 && s.regions === 1 && s.buffers === 1), JSON.stringify(cleared));
   await fresh.close();
 
   // 7. My Sounds: stored with a schema version; export and import
