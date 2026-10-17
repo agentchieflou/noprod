@@ -5,7 +5,6 @@ module.exports = async (page, ctx) => {
   await page.evaluate(async () => { window.__sound = await import(window.__fs + '/packages/sound/src/index.ts'); return 1; });
   await page.evaluate(async () => { window.__library = await import('/src/audio/library.ts'); return 1; });
   await page.evaluate(async () => { window.__userSounds = await import('/src/audio/userSounds.ts'); return 1; });
-  await page.evaluate(async () => { window.__dspState = await import('/src/components/dspMapState.ts'); return 1; });
   const check = (name, ok, detail = '') => { const line = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`; results.push(line); console.log(line); };
   const track = () => page.evaluate(() => {
     const st = window.__dawStore.getState();
@@ -19,6 +18,29 @@ module.exports = async (page, ctx) => {
   }, a, b);
   const played = () => page.evaluate(() => window.__dspState.lastPlayed);
   await page.mouse.click(5, 5);
+  const count = (sel) => page.evaluate((s) => document.querySelectorAll(s).length, sel);
+
+  // A track selected and edited before the DSP Map was ever opened (it loads on first use)
+  await page.evaluate(() => {
+    const { findSound } = window.__sound;
+    const st = window.__dawStore.getState();
+    st.addMidiTrackWithInstrument(window.__library.createLibraryInstrument(findSound('flute-modeled')), 'Flute');
+  });
+  await ctx.sleep(300);
+  await page.evaluate(() => {
+    const { chainOf, setBlockOn } = window.__sound;
+    const st = window.__dawStore.getState();
+    const t = st.tracks.find((x) => x.id === st.selectedTrackId);
+    const lib = t.instrument.parameters.Library;
+    st.updateInstrumentParameter(t.id, 'Library', { ...lib, sound: setBlockOn(lib.sound, 0, chainOf(lib.sound).layers[0].blocks.find((b) => b.switchable && b.on).id, false) });
+  });
+  await ctx.sleep(200);
+  const fid = await page.evaluate(() => window.__dawStore.getState().selectedTrackId);
+  await page.evaluate(() => [...document.querySelectorAll('.detail-tab')].find((b) => b.textContent === 'DSP Map').click());
+  await ctx.sleep(500);
+  check('Edited before the map first opened: it shows Revert', (await count(`.dsp-map-head[data-col="track:${fid}"] .dsp-revert`)) === 1);
+  await page.evaluate(async () => { window.__dspState = await import('/src/components/dspMapState.ts'); return 1; });
+  await page.evaluate(() => window.__dawStore.getState().setSelectedTrackId(null));
 
   // A violin on a track, the DSP Map open on it
   await page.evaluate(() => [...document.querySelectorAll('.detail-tab')].find((b) => b.textContent === 'DSP Map').click());
@@ -30,7 +52,6 @@ module.exports = async (page, ctx) => {
   const t0 = await track();
   const col = `track:${t0.id}`;
   const head = `.dsp-map-head[data-col="${col}"]`;
-  const count = (sel) => page.evaluate((s) => document.querySelectorAll(s).length, sel);
 
   check('Unedited: no Revert, no A/B', (await count(`${head} .dsp-revert`)) === 0 && (await count(`${head} .dsp-ab`)) === 0);
 
