@@ -5,7 +5,7 @@ import {
   Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic, GraduationCap
 } from 'lucide-react';
 import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
-import { triggerNote } from './audio/synth';
+import { startVoice } from './audio/synth';
 import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
 import ClipView from './components/ClipView';
 import SessionView from './components/SessionView';
@@ -14,7 +14,7 @@ import InstrumentCard from './components/InstrumentCard';
 import TakeLane from './components/TakeLane';
 import BrowserSidebar, { SAMPLE_DRAG_TYPE, SOUND_DRAG_TYPE } from './components/BrowserSidebar';
 import { getFile } from './browser/library';
-import { createLibraryInstrument, soundAsBuffer } from './audio/library';
+import { createLibraryInstrument, soundAsBuffer, whenRendered, libraryStats } from './audio/library';
 import { startLibraryWarmup } from './audio/libraryWarmup';
 import { findAnySound, loadUserSounds } from './audio/userSounds';
 import { applyDictation, type DictationResult } from './audio/dictation';
@@ -51,7 +51,7 @@ import './App.css';
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
   (window as any).__dawStore = useDAWStore;
-  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, accompany: accompanyDebug };
+  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, libraryStats, accompany: accompanyDebug };
 }
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 
@@ -295,7 +295,8 @@ function App() {
         setTrackInstrument(trackId, createLibraryInstrument(sound));
         return;
       }
-      const audioBuffer = soundAsBuffer(sound);
+      const audioBuffer = await soundAsBuffer(sound).catch(() => null);
+      if (!audioBuffer) return;
       if (slotIndex !== undefined) {
         setSessionClip(trackId, slotIndex, { name: sound.name, audioBuffer, duration: audioBuffer.duration });
       } else {
@@ -475,7 +476,9 @@ function App() {
   const auditionNote = (track: any, pitch: number) => {
     if (!track?.instrument) return;
     if (audioContext.state === 'suspended') audioContext.resume();
-    triggerNote(audioContext, getStripInput(track.id), track.instrument.parameters, pitch, audioContext.currentTime, 0.35);
+    // played as a key is, so a note that isn't rendered yet still sounds
+    const now = audioContext.currentTime;
+    startVoice(audioContext, getStripInput(track.id), track.instrument.parameters, pitch, now, 1).release(now + 0.35);
   };
 
   // Freeze: render the track's clips offline (instrument included for MIDI),
@@ -501,6 +504,7 @@ function App() {
         region.startTime, 0, clipTimelineLength(region, bpm), bpm, { midiEffects: track.midiEffects });
     });
 
+    await whenRendered(offline); // library notes render in workers first
     const rendered = await offline.startRendering();
     setTrackFrozen(track.id, rendered, end);
   };
