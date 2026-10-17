@@ -31,6 +31,8 @@ Frontend landmarks: `App.tsx` (layout, bottom-panel tabs), `audio/engine.ts`
 npm test                                   # packages/sound, packages/theory, the frontend's project files
 cd packages/sound && ../../node_modules/.bin/tsc -p .     # typecheck a package
 cd apps/frontend && npx tsc -b && npx oxlint src && npx vite build
+node scripts/check-licenses.mjs            # the dependency rule below, enforced in CI
+node --test scripts/*.test.mjs             # the license check's own tests
 npm run e2e                                # every browser suite (about 2 minutes)
 npm run e2e -- designer dspmap             # some of them
 E2E_SKIP=dictation npm run e2e             # without the one that needs unpkg

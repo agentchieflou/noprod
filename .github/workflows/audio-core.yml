@@ -1,12 +1,16 @@
 name: Audio core
 
-# GhostDAW builds JUCE, so it only runs when the audio core changes
+# GhostDAW builds JUCE, so it only runs when the audio core or the protocol
+# it shares with the frontend changes
 on:
   pull_request:
-    paths: ['apps/audio_core/**', '.github/workflows/audio-core.yml']
+    paths: ['apps/audio_core/**', 'packages/shared/**', 'apps/frontend/src/native/**', '.github/workflows/audio-core.yml']
   push:
     branches: [main]
-    paths: ['apps/audio_core/**', '.github/workflows/audio-core.yml']
+    paths: ['apps/audio_core/**', 'packages/shared/**', 'apps/frontend/src/native/**', '.github/workflows/audio-core.yml']
+
+permissions:
+  contents: read
 
 concurrency:
   group: audio-core-${{ github.ref }}
@@ -18,9 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
+          persist-credentials: false
       - name: JUCE's Linux dependencies
         run: |
           sudo apt-get update
