@@ -6,8 +6,8 @@ import {
 
 test('every lesson has steps, in range, with labels', () => {
   assert.equal(new Set(LESSONS.map(l => l.id)).size, LESSONS.length);
-  assert.equal(LESSONS.filter(l => l.kind === 'chords').length, 5);
-  assert.equal(LESSONS.filter(l => l.kind === 'melody').length, 6);
+  assert.equal(LESSONS.filter(l => l.kind === 'chords').length, 8);
+  assert.equal(LESSONS.filter(l => l.kind === 'melody').length, 7);
   for (const lesson of LESSONS) {
     assert.ok(lesson.steps.length > 0 && lesson.description.length > 0, lesson.id);
     for (const step of lesson.steps) {
@@ -33,6 +33,9 @@ test('chord lessons play the chords they name, with smooth voice leading around 
   assert.equal(findLesson('blues-a')!.steps.length, 12);
   assert.ok(findLesson('blues-a')!.steps.every(s => s.label.includes('7')));
   assert.deepEqual(findLesson('minor-am')!.steps.map(s => s.label), ['Am (i)', 'F (VI)', 'C (III)', 'G (VII)']);
+  assert.deepEqual(findLesson('country-g')!.steps.map(s => s.label), ['G (I)', 'C (IV)', 'D (V)', 'G (I)']);
+  assert.deepEqual(findLesson('fifties-f')!.steps.map(s => s.label), ['F (I)', 'Dm (vi)', 'Bb (IV)', 'C (V)']);
+  assert.deepEqual(findLesson('minor-cadence-d')!.steps.map(s => s.label), ['Dm (i)', 'Gm (iv)', 'A (V)', 'Dm (i)']);
 });
 
 test('melody lessons are single notes labeled with their names', () => {
@@ -67,6 +70,17 @@ test('a chord step passes with its notes in any voicing or octave', () => {
   runner.restart();
   assert.equal(runner.step(), 0);
   assert.deepEqual(runner.current(), findLesson('pop-c')!.steps[0]);
+});
+
+test('the Jingle Bells lesson stays in C major and a runner fed its notes in order finishes', () => {
+  const lesson = findLesson('jingle-bells')!;
+  const inKey = new Set([0, 2, 4, 5, 7, 9, 11]);
+  assert.ok(lesson.steps.every(s => inKey.has(s.pitches[0] % 12)));
+  const runner = new LessonRunner(lesson);
+  const results = lesson.steps.map(step => runner.press(step.pitches));
+  assert.ok(results.slice(0, -1).every(r => r === 'advance'));
+  assert.equal(results.at(-1), 'done');
+  assert.equal(runner.done(), true);
 });
 
 test('a melody step passes on its note, in any octave unless the step says not', () => {
