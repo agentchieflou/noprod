@@ -256,10 +256,11 @@ export class Pattern<T = unknown> {
   // Forwards one cycle, backwards the next
   palindrome(): Pattern<T> { return slowcat(this, this.rev()); }
 
-  // Cycle c starts c/n of the way in: "a b c d" → "b c d a" → ...
+  // Cycle c starts c/n of the way in: "a b c d" → "b c d a" → ... (the shift
+  // is computed from the cycle number, so iter(1e9) costs nothing)
   iter(n: number, backwards = false): Pattern<T> {
     if (!Number.isInteger(n) || n <= 0) throw new PatternError(`iter wants a positive whole number, not ${n}`);
-    return slowcat(...Array.from({ length: n }, (_, i) => (backwards ? this._late(new Fraction(i, n)) : this._early(new Fraction(i, n)))));
+    return slowcatOf(n, (i) => (backwards ? this._late(new Fraction(i, n)) : this._early(new Fraction(i, n))));
   }
 
   // Every event repeated n times within its own span
@@ -392,12 +393,17 @@ export function slowcat<T>(...pats: Patternable<T>[]): Pattern<T> {
   const ps = pats.map(reify);
   if (ps.length === 0) return silence;
   if (ps.length === 1) return ps[0];
-  const n = ps.length;
+  return slowcatOf(ps.length, (i) => ps[i]);
+}
+
+// slowcat over n patterns made on demand from their index, so n may be huge
+export function slowcatOf<T>(n: number, at: (i: number) => Pattern<T>): Pattern<T> {
+  if (!Number.isInteger(n) || n <= 0) throw new PatternError(`slowcat wants a positive whole number of patterns, not ${n}`);
   return new Pattern((span, b) => span.spanCycles().flatMap((s) => {
     const cycle = Number(s.begin.sam());
     const i = mod(cycle, n);
     const offset = new Fraction(cycle - (cycle - i) / n);
-    return ps[i].query(s.withTime((t) => t.sub(offset)), b).map((h) => h.withSpan((sp) => sp.withTime((t) => t.add(offset))));
+    return at(i).query(s.withTime((t) => t.sub(offset)), b).map((h) => h.withSpan((sp) => sp.withTime((t) => t.add(offset))));
   }));
 }
 export const cat = slowcat;
@@ -411,12 +417,16 @@ export const seq = fastcat;
 
 // All in one cycle, each as long as its weight says
 export function timecat<T>(...pairs: [FractionLike, Patternable<T>][]): Pattern<T> {
-  const weighted = pairs.map(([w, p]) => [Fraction.from(w), reify(p)] as const).filter(([w]) => w.gt(0));
+  const weighted = pairs.map(([w, p]) => [Fraction.from(w), reify(p)] as const);
+  const negative = weighted.find(([w]) => w.lt(0));
+  if (negative) throw new PatternError(`timecat wants weights of zero or more, not ${negative[0]}`);
   if (weighted.length === 0) return silence;
   const total = weighted.reduce((sum, [w]) => sum.add(w), ZERO);
+  if (total.isZero()) return silence;
   let begin = ZERO;
   const parts: Pattern<T>[] = [];
   for (const [w, p] of weighted) {
+    if (w.isZero()) continue;
     const end = begin.add(w);
     parts.push(p.compress(begin.div(total), end.div(total)));
     begin = end;

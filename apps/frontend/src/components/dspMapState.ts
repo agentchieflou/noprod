@@ -1,5 +1,6 @@
 import { GM_DRUM_NAMES, findSound, type DrumKit, type SoundRecipe } from '@noprod/sound';
-import { kitSounds } from '../audio/library';
+import { useDAWStore } from '../store/useDAWStore';
+import { kitSounds, libraryOf } from '../audio/library';
 
 // The DSP Map's columns (#80): the selected track always, then any tracks
 // and library sounds added. A library sound is edited as a scratch copy. A
@@ -48,5 +49,51 @@ export const saveColumns = (columns: MapColumn[]) => { saved = columns; };
 export const savedNote = () => savedNoteValue;
 export const saveNote = (note: number) => { savedNoteValue = note; };
 
+// Each column's recipe as it was when it joined the map (a track's, when it
+// became the selected one), for A/B and Revert. Keyed by the column's key,
+// and by the pad too for a kit.
+const originals = new Map<string, SoundRecipe>();
+const originalKey = (key: string, pad: string | null) => (pad ? `${key}#${pad}` : key);
+
+export const originalOf = (key: string, pad: string | null, recipe: SoundRecipe): SoundRecipe => {
+  const k = originalKey(key, pad);
+  if (!originals.has(k)) originals.set(k, structuredClone(recipe));
+  return originals.get(k)!;
+};
+const dropOriginals = (key: string) => {
+  for (const k of [...originals.keys()]) if (k.split('#')[0] === key) originals.delete(k);
+};
+
+// The selected track's original is its recipe when it became selected, so an
+// edit made elsewhere before the map opens still shows as a change.
+const isColumn = (trackId: string) => !!saved?.some((c) => c.kind === 'track' && c.trackId === trackId);
+useDAWStore.subscribe((state: any, prev: any) => {
+  if (state.selectedTrackId === prev.selectedTrackId) return;
+  if (prev.selectedTrackId && !isColumn(prev.selectedTrackId)) dropOriginals(`track:${prev.selectedTrackId}`);
+  const id = state.selectedTrackId;
+  const lib = libraryOf(state.tracks.find((t: any) => t.id === id)?.instrument?.parameters);
+  if (!lib || isColumn(id)) return;
+  if (lib.kit) for (const [pad, sound] of Object.entries(lib.sounds ?? {})) originals.set(originalKey(`track:${id}`, pad), structuredClone(sound as SoundRecipe));
+  else if (lib.sound) originals.set(`track:${id}`, structuredClone(lib.sound));
+});
+
+// Columns that left the map take their original with them
+export const keepOriginals = (keys: string[]) => {
+  for (const k of [...originals.keys()]) if (!keys.includes(k.split('#')[0])) originals.delete(k);
+};
+
+// What the last play rendered, for the browser suite to check A against B
+export let lastPlayed: { key: string; recipe: SoundRecipe } | null = null;
+export const notePlayed = (key: string, recipe: SoundRecipe) => { lastPlayed = { key, recipe }; };
+
+// Deep equality for plain recipe data (key order and undefined fields don't count)
+export const sameRecipe = (a: unknown, b: unknown): boolean => {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || !a || !b || Array.isArray(a) !== Array.isArray(b)) return false;
+  const x = a as Record<string, unknown>, y = b as Record<string, unknown>;
+  const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
+  for (const k of keys) if (!sameRecipe(x[k], y[k])) return false;
+  return true;
+};
 export const selectedPads = () => savedPads;
 export const saveSelectedPads = (pads: Record<string, string>) => { savedPads = pads; };
