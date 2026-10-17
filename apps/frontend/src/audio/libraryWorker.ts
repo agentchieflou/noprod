@@ -1,27 +1,18 @@
-// Library work off the main thread: rendering notes (prewarm, the Sound
-// Designer) and resynthesizing recordings. Same code, same results, as on
-// the main thread.
+// Library work off the main thread (see libraryJobs.ts). Same code, same
+// results, as on the main thread. A job that throws answers with its error,
+// so the request fails and the next one runs.
 
-import { render, resynthesize, type RenderOptions, type SoundRecipe } from '@noprod/sound';
+import { runJob, type LibraryJob } from './libraryJobs';
 
-// Recipes arrive as copies; keep one object per recipe so its loudness is
-// measured once (render caches it per object)
-const recipes = new Map<string, SoundRecipe>();
-
-type Message =
-  | { id: number; kind?: 'render'; recipe: SoundRecipe; options: RenderOptions }
-  | { id: number; kind: 'resynth'; samples: Float32Array; sampleRate: number; name: string; recipeId: string };
+type Message = LibraryJob & { id: number };
 
 self.onmessage = (e: MessageEvent<Message>) => {
   const post = (data: unknown, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(data, transfer);
   const m = e.data;
-  if (m.kind === 'resynth') {
-    post({ id: m.id, recipe: resynthesize(m.samples, m.sampleRate, { name: m.name, id: m.recipeId }) });
-    return;
+  try {
+    const { data, transfer } = runJob(m);
+    post({ ...data, id: m.id }, transfer);
+  } catch (error) {
+    post({ id: m.id, error: error instanceof Error ? error.message : String(error) });
   }
-  const json = JSON.stringify(m.recipe);
-  let same = recipes.get(json);
-  if (!same) recipes.set(json, (same = m.recipe));
-  const { left, right } = render(same, m.options);
-  post({ id: m.id, left, right }, [left.buffer, right.buffer]);
 };

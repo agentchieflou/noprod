@@ -11,8 +11,7 @@ import { initMidiLearn } from './audio/midiLearn'
 import { initRecorder } from './audio/recorder'
 import { initCapture } from './audio/capture'
 import { initComputerKeyboard } from './audio/computerKeyboard'
-import { initCoach } from './audio/coach'
-import { initAccompany } from './audio/accompany'
+import { initCoachLoader } from './audio/coachLoader'
 import { useDAWStore } from './store/useDAWStore'
 
 // The audio engine registers its worklets before the first render so device
@@ -25,8 +24,7 @@ initMidiLearn(useDAWStore)
 initRecorder(useDAWStore)
 initCapture(useDAWStore)
 initComputerKeyboard(useDAWStore)
-initCoach(useDAWStore)
-initAccompany(useDAWStore)
+initCoachLoader(useDAWStore)
 initEngine(useDAWStore).finally(() => {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
