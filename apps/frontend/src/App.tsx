@@ -10,7 +10,6 @@ import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
 import ClipView from './components/ClipView';
 import SessionView from './components/SessionView';
 import TrackIO from './components/TrackIO';
-import InstrumentCard from './components/InstrumentCard';
 import TakeLane from './components/TakeLane';
 import BrowserSidebar, { SAMPLE_DRAG_TYPE, SOUND_DRAG_TYPE } from './components/BrowserSidebar';
 import { getFile } from './browser/library';
@@ -28,8 +27,6 @@ import PluginEditorWindow from './components/PluginEditorWindow';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
 import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage, findNativePlugin, nativeDeviceFor } from './native/audioCore';
 import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
-import RackDevice from './components/RackDevice';
-import DeviceCard from './components/DeviceCard';
 import ArrangementRuler from './components/ArrangementRuler';
 import TempoControls from './components/TempoControls';
 import Playhead from './components/Playhead';
@@ -38,8 +35,6 @@ import FileMenu from './components/FileMenu';
 import AutomationLane from './components/AutomationLane';
 import { automationParams } from './audio/automation';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
-import { DEVICE_DEFS, createDevice } from './audio/devices';
-import { MIDI_EFFECT_DEFS, createMidiEffect } from './audio/midiEffects';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
 import { liveModelStats } from './audio/liveModels';
 import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
@@ -49,6 +44,7 @@ import './App.css';
 const SoundDesigner = lazy(() => import('./components/SoundDesigner'));
 const DspMap = lazy(() => import('./components/DspMap'));
 const KeyboardPanel = lazy(() => import('./components/KeyboardPanel'));
+const DeviceChain = lazy(() => import('./components/DeviceChain'));
 
 
 // Dev-only handle for driving the store from the console / automated tests
@@ -85,14 +81,6 @@ const PRESET_COLORS = [
   '#a855f7', // Purple
   '#ec4899', // Pink
   '#6b7280'  // Grey
-];
-
-// Add Device choices: stock devices with real DSP first, then third-party
-// plugins (passed through untouched until Audio Core hosts them natively).
-const BROWSER_PLUGINS = [
-  ...Object.keys(DEVICE_DEFS).map(createDevice),
-  { name: 'FabFilter Pro-Q 3', type: 'vst', parameters: { 'Freq': 440, 'Gain': 0.0, 'Q': 1.0 } },
-  { name: 'Antares AutoTune', type: 'vst', parameters: { 'Retune Speed': 20, 'Humanize': 60, 'Key': 'C min' } },
 ];
 
 // Live peak meter + clip LED + limiter gain-reduction readout for the master bus.
@@ -158,19 +146,17 @@ function App() {
     togglePlayback, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
     addTrack, removeTrack, addRegion, updateTrackColor, toggleArmTrack,
     updateTrackVolume, updateTrackPan, updateTrackSend, toggleMuteTrack, toggleSoloTrack,
-    setMasterVolume, addReturn, removeReturn, updateReturn, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
+    setMasterVolume, addReturn, removeReturn, updateReturn, addDeviceToTrack,
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
     undo, redo, past, future,
     addMidiRegion, setTrackInstrument,
     isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
-    savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
     setTrackFrozen, unfreezeTrack, flattenTrack,
     punchInTime, punchOutTime, isPunchEnabled, togglePunch,
     isLoopEnabled, loopStart, loopEnd, toggleLoop, locators, addLocator, timeSignatures,
     toggleAutomationView, setAutomationLanes, clearAutomation,
     selectedSessionClip, updateSessionClip, updateClip,
     compTakeRange, removeTakeLane, toggleTakesView,
-    addMidiEffect, removeMidiEffect, updateMidiEffectParameter,
     scannedPlugins, setScannedPlugins
   } = useDAWStore();
   const [isScanning, setIsScanning] = useState(false);
@@ -181,7 +167,6 @@ function App() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [newVstPathInput, setNewVstPathInput] = useState('');
-  const [newDeviceIdx, setNewDeviceIdx] = useState('audio:0');
   const [showIO, setShowIO] = useState(false);
   const keyboardMidi = useSyncExternalStore(subscribeKeyboard, () => getKeyboardState().enabled);
   const coachOpen = useSyncExternalStore(subscribeCoachOpen, getCoachOpen);
@@ -1268,102 +1253,9 @@ function App() {
           {activeTab === 'devices' && (
             <div className={`device-chain-view ${selectedTrack?.isFrozen ? 'frozen-locked' : ''}`}>
               {selectedTrack ? (
-                <>
-                  {selectedTrack.isFrozen && (
-                    <div className="frozen-banner" title="Unfreeze the track to edit devices">
-                      <Snowflake size={12} /> Frozen
-                    </div>
-                  )}
-                  <div style={{ marginRight: '1rem', borderRight: '1px solid var(--border-color)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                    <h5 style={{ color: selectedTrack.color }}>{selectedTrack.name} Device Chain</h5>
-                    <div style={{ display: 'flex', gap: '3px' }}>
-                      <select className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(e.target.value)} title="Device to add">
-                        <optgroup label="Audio Effects">
-                          {BROWSER_PLUGINS.map((p: any, i: number) => <option key={p.name} value={`audio:${i}`}>{p.name}</option>)}
-                        </optgroup>
-                        {selectedTrack.type === 'midi' && (
-                          <optgroup label="MIDI Effects">
-                            {Object.values(MIDI_EFFECT_DEFS).map((d) => <option key={d.kind} value={`midi:${d.kind}`}>{d.name}</option>)}
-                          </optgroup>
-                        )}
-                      </select>
-                      <button className="btn-add-track" onClick={() => {
-                        const [group, key] = newDeviceIdx.split(':');
-                        if (group === 'midi') addMidiEffect(selectedTrack.id, createMidiEffect(key));
-                        else addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[parseInt(key)] || BROWSER_PLUGINS[0]);
-                      }}>
-                        <Plus size={12} /> Add
-                      </button>
-                    </div>
-                    <button className="btn-add-track" style={{ backgroundColor: '#a855f7' }} onClick={() => addRackToTrack(selectedTrack.id)}>
-                      <Plus size={12} /> Add Rack
-                    </button>
-                    {selectedTrack.plugins.some((p: any) => p.type !== 'rack') && (
-                      <button className="btn-add-track" style={{ backgroundColor: '#6366f1' }}
-                        title="Wrap this track's devices into an Audio Effect Rack"
-                        onClick={() => groupTrackDevicesIntoRack(selectedTrack.id)}>
-                        Group into Rack
-                      </button>
-                    )}
-                    {savedRacks.length > 0 && (
-                      <select
-                        className="rack-map-select"
-                        title="Insert a saved rack preset"
-                        value=""
-                        onChange={(e) => {
-                          if (e.target.value !== '') addSavedRackToTrack(selectedTrack.id, parseInt(e.target.value));
-                        }}
-                      >
-                        <option value="">Saved racks…</option>
-                        {savedRacks.map((r: any, i: number) => <option key={i} value={i}>{r.name}</option>)}
-                      </select>
-                    )}
-                  </div>
-                  
-                  {/* MIDI effects run before the instrument */}
-                  {selectedTrack.type === 'midi' && (selectedTrack.midiEffects || []).map((fx: any) => (
-                    <DeviceCard
-                      key={fx.id}
-                      device={fx}
-                      onChange={(name, val) => updateMidiEffectParameter(selectedTrack.id, fx.id, name, val)}
-                      onRemove={() => removeMidiEffect(selectedTrack.id, fx.id)}
-                    />
-                  ))}
-
-                  {/* Instrument Card (MIDI tracks) */}
-                  {selectedTrack.type === 'midi' && (
-                    selectedTrack.instrument ? (
-                      <InstrumentCard track={selectedTrack} onAudition={(pitch: number) => auditionNote(selectedTrack, pitch)} onEditSound={() => setActiveTab('sound')} />
-                    ) : (
-                      <button className="btn-add-track" style={{ backgroundColor: '#10b981', alignSelf: 'flex-start' }}
-                        onClick={() => setTrackInstrument(selectedTrack.id, createDefaultInstrument())}>
-                        <Plus size={12} /> Add Instrument
-                      </button>
-                    )
-                  )}
-
-                  {/* Plugin Cards */}
-                  <div className="device-cards">
-                    {selectedTrack.plugins.map((plugin: any) => (
-                      plugin.type === 'rack' ? (
-                        <RackDevice
-                          key={plugin.id}
-                          trackId={selectedTrack.id}
-                          rack={plugin}
-                          browserPlugins={BROWSER_PLUGINS}
-                          onRemove={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}
-                        />
-                      ) : (
-                        <DeviceCard
-                          key={plugin.id}
-                          device={plugin}
-                          onChange={(paramName, val) => updateDeviceParameter(selectedTrack.id, plugin.id, paramName, val)}
-                          onRemove={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}
-                        />
-                      )
-                    ))}
-                  </div>
-                </>
+                <Suspense fallback={null}>
+                  <DeviceChain track={selectedTrack} onAudition={(pitch: number) => auditionNote(selectedTrack, pitch)} onEditSound={() => setActiveTab('sound')} />
+                </Suspense>
               ) : (
                 <div className="detail-empty-message">No track selected. Click a track header to configure its plugins.</div>
               )}
