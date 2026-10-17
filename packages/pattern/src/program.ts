@@ -17,7 +17,14 @@
 
 import { PatternError } from './errors.ts';
 
-export const PROGRAM_LIMITS = { maxLength: 10000, maxDepth: 64, maxArguments: 256 };
+export const PROGRAM_LIMITS = {
+  maxLength: 10000,   // characters
+  maxDepth: 64,       // nesting of expressions (brackets, arguments, unary signs)
+  maxChain: 256,      // methods in one chain
+  maxArguments: 256,  // per call
+  maxCallDepth: 64,   // arrow functions calling into arrow functions
+  maxSteps: 100000    // expressions evaluated by one program
+};
 
 export interface Position { offset: number; line: number; column: number }
 
@@ -81,7 +88,7 @@ export function tokenizeProgram(source: string): Token[] {
         if (source[j] === '\\') {
           const next = source[j + 1];
           const escapes: Record<string, string> = { n: '\n', t: '\t', r: '\r', '\\': '\\', '"': '"', "'": "'", '`': '`' };
-          if (!(next in escapes)) throw fail(source, j, `unknown escape "\\${next ?? ''}"`);
+          if (next === undefined || !Object.hasOwn(escapes, next)) throw fail(source, j, `unknown escape "\\${next ?? ''}"`);
           value += escapes[next];
           j += 2;
           continue;
@@ -212,14 +219,23 @@ class Parser {
   }
 
   private unary(): Expr {
-    if (this.is('-')) { const t = this.next(); return { type: 'negate', operand: this.unary(), pos: t.offset }; }
-    if (this.is('+')) { this.next(); return this.unary(); }
+    if (this.is('-') || this.is('+')) {
+      const t = this.next();
+      this.enter();
+      try {
+        const operand = this.unary();
+        return t.text === '-' ? { type: 'negate', operand, pos: t.offset } : operand;
+      } finally {
+        this.leave();
+      }
+    }
     return this.postfix();
   }
 
   // calls and member chains; a chain may continue on the next line
   private postfix(): Expr {
     let expr = this.primary();
+    let chain = 0;
     for (;;) {
       if (this.is('(')) {
         const open = this.next();
@@ -235,6 +251,7 @@ class Parser {
         this.next();
         expr = { type: 'call', callee: expr, args, pos: open.offset };
       } else if (this.is('.') || (this.isNewline() && this.continuesWithDot())) {
+        if (++chain > PROGRAM_LIMITS.maxChain) throw this.error(`a chain of more than ${PROGRAM_LIMITS.maxChain} methods`);
         this.skipNewlines();
         const dot = this.next();
         const name = this.next();

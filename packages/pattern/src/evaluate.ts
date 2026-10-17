@@ -6,11 +6,13 @@ import { Fraction } from './fraction.ts';
 import { PatternError } from './errors.ts';
 import { Pattern, pure, silence, stack, slowcat, fastcat, timecat, rand, sine, cosine, saw, isaw, tri, square, type Limits, type Transform } from './pattern.ts';
 import { mini, type MiniValue } from './mini.ts';
-import { parseProgram, positionOf, type Expr, type Program } from './program.ts';
+import { parseProgram, positionOf, PROGRAM_LIMITS, type Expr, type Program } from './program.ts';
 import { type Controls, isControls, addControls, noteToMidi, parseScale, scaleDegree, soundControls } from './controls.ts';
 import type { Hap } from './hap.ts';
 
 export const DEFAULT_CPS = 0.5; // one cycle every two seconds: a 120 BPM bar
+export const MIN_BPM = 20;
+export const MAX_BPM = 400;
 
 type Value = number | string | Pattern<unknown> | Func | Value[] | undefined;
 interface Func { kind: 'function'; name: string; call: (args: Value[], where: number) => Value }
@@ -38,22 +40,37 @@ const CONTROL_ALIASES: Record<string, string> = { sound: 's', velo: 'velocity', 
 // Visual methods of the published engine that mean nothing here
 const NO_OPS = ['pianoroll', '_pianoroll', 'punchcard', '_punchcard', 'color', 'scope', '_scope', 'spectrum', '_spectrum', 'spiral', '_spiral'];
 
+// Whatever a program makes the engine do, the caller sees one error type:
+// a stack overflow from a shape the limits didn't catch is a PatternError too
+function failingClosed<T>(f: () => T): T {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof RangeError) throw new PatternError(`the program is too deeply nested to run (${e.message})`);
+    throw e;
+  }
+}
+
 export function evaluate(code: string, limits?: Limits): Evaluation {
-  const program = parseProgram(code);
-  return new Interpreter(code, limits).run(program);
+  return failingClosed(() => {
+    const program = parseProgram(code);
+    return new Interpreter(code, limits).run(program);
+  });
 }
 
 // One cycle of a program, as plain data: what the DAW turns into tracks
 export interface CycleEvent { time: number; duration: number; value: Controls }
 export function evaluateCycle(code: string, limits?: Limits): { cps: number; setsTempo: boolean; events: CycleEvent[] } {
   const { pattern, cps, setsTempo } = evaluate(code, limits);
-  const events = pattern.firstCycle(limits).map((h: Hap<Controls>) => ({ time: Number(h.whole!.begin), duration: Number(h.whole!.duration), value: h.value }));
+  const events = failingClosed(() => pattern.firstCycle(limits)).map((h: Hap<Controls>) => ({ time: Number(h.whole!.begin), duration: Number(h.whole!.duration), value: h.value }));
   return { cps, setsTempo, events };
 }
 
 class Interpreter {
   cps = DEFAULT_CPS;
   private setsTempo = false;
+  private steps = 0; // expressions evaluated: a program's whole work is bounded
+  private depth = 0; // calls in progress
   private readonly source: string;
   private readonly globals: Map<string, Value>;
 
@@ -92,6 +109,7 @@ class Interpreter {
   // ---- expressions
 
   private eval(expr: Expr, scope: Map<string, Value>): Value {
+    if (++this.steps > PROGRAM_LIMITS.maxSteps) throw this.error(expr.pos, `the program does more than ${PROGRAM_LIMITS.maxSteps} steps`);
     switch (expr.type) {
       case 'number': return expr.value;
       case 'string': return expr.value;
@@ -118,9 +136,14 @@ class Interpreter {
         const name = `${expr.param} => …`;
         return func(name, (args) => {
           if (args.length !== 1) throw this.error(expr.pos, `an arrow function takes one argument, not ${args.length}`);
-          const inner = new Map(scope);
-          inner.set(expr.param, args[0]);
-          return this.eval(expr.body, inner);
+          if (++this.depth > PROGRAM_LIMITS.maxCallDepth) throw this.error(expr.pos, `calls nested more than ${PROGRAM_LIMITS.maxCallDepth} deep`);
+          try {
+            const inner = new Map(scope);
+            inner.set(expr.param, args[0]);
+            return this.eval(expr.body, inner);
+          } finally {
+            this.depth--;
+          }
         });
       }
       case 'member': {
@@ -236,9 +259,11 @@ class Interpreter {
     return g;
   }
 
+  // The transport takes 20 to 400 BPM; a cycle is a bar of four beats
   private setTempo(cps: number, pos: number): void {
     if (!(cps > 0) || !Number.isFinite(cps)) throw this.error(pos, `a tempo must be a positive number, not ${cps}`);
-    if (cps > 100) throw this.error(pos, `a tempo of ${cps} cycles per second is too fast`);
+    const bpm = cps * 240;
+    if (bpm < MIN_BPM || bpm > MAX_BPM) throw this.error(pos, `a tempo of ${Math.round(bpm * 100) / 100} BPM is outside ${MIN_BPM} to ${MAX_BPM}`);
     this.cps = cps;
     this.setsTempo = true;
   }
@@ -247,14 +272,15 @@ class Interpreter {
     if (object === undefined) throw this.error(pos, `".${name}" on nothing (setcpm makes no pattern)`);
     if (isFunc(object)) throw this.error(pos, `".${name}" on a function; call it first`);
     const pat = this.toPattern(object, pos, `.${name}`);
-    const method = METHODS[name];
+    // own properties only: "toString" and "__proto__" are not methods
+    const method = Object.hasOwn(METHODS, name) ? METHODS[name] : undefined;
     if (method) {
       if (args.length < method.arity || (!method.rest && args.length > method.arity)) {
         throw this.error(pos, `.${name} wants ${method.arity} argument${method.arity === 1 ? '' : 's'}, not ${args.length}`);
       }
       return method.apply(this, pat, args, pos);
     }
-    const control = CONTROL_ALIASES[name] ?? (CONTROL_NAMES.includes(name) ? name : undefined);
+    const control = Object.hasOwn(CONTROL_ALIASES, name) ? CONTROL_ALIASES[name] : CONTROL_NAMES.includes(name) ? name : undefined;
     if (control) return this.setControl(pat, control, this.toPattern(args.length === 1 ? args[0] : args, pos, `.${name}`), pos);
     if (NO_OPS.includes(name)) return pat;
     throw this.error(pos, `unknown method ".${name}"`);
@@ -318,7 +344,9 @@ const addValues = (v: MiniValue | Controls, a: MiniValue | Controls): MiniValue 
   if (isControls(v)) return addControls(v, a);
   if (isControls(a)) throw new PatternError('add wants a number when the pattern has plain values');
   if (typeof a !== 'number') throw new PatternError(`add wants a number, not ${JSON.stringify(a)}`);
-  return noteToMidi(v, 'add') + a;
+  const sum = noteToMidi(v, 'add') + a;
+  if (!Number.isFinite(sum)) throw new PatternError(`add gives ${sum}`);
+  return sum;
 };
 const negate = (a: MiniValue | Controls): MiniValue | Controls => {
   if (isControls(a)) return Object.fromEntries(Object.entries(a).map(([k, x]) => [k, typeof x === 'number' ? -x : x]));

@@ -224,7 +224,7 @@ test('tempo', () => {
   assert.deepEqual(cycle('s("a").cps(0.75)'), ['0 1 {"s":"a","cps":0.75}'], '.cps is a control, as in the published language');
   fails('setcpm(0); s("a")', /positive number/);
   fails('setcpm(-5); s("a")', /positive number/);
-  fails('setcps(1000); s("a")', /too fast/);
+  fails('setcps(1000); s("a")', /outside 20 to 400/);
   fails('setcpm("fast"); s("a")', /setcpm wants a number/);
   fails('setcpm(120)', /ends with a statement that makes no pattern/);
   fails('setcpm(120).fast(2)', /on nothing/);
@@ -285,4 +285,63 @@ test('limits for untrusted programs', () => {
   assert.throws(() => evaluateCycle('s("bd*100").fast(100)', { maxEvents: 1000 }), /too many events/);
   assert.equal(evaluateCycle('s("bd*100").fast(100)', { maxEvents: 100000 }).events.length, 10000);
   fails('s("bd").fast(2 ** 3)', /unexpected "\*"/);
+});
+
+test('names from Object.prototype are unknown, as methods and as functions', () => {
+  for (const name of ['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__', '__defineGetter__', 'isPrototypeOf', 'propertyIsEnumerable', 'toLocaleString']) {
+    fails(`s("bd").${name}()`, new RegExp(`unknown method "\\.${name}" at 1:8`));
+    fails(`"bd".${name}()`, new RegExp(`unknown method "\\.${name}"`));
+    fails(`${name}(s("bd"))`, new RegExp(`unknown name "${name}"`));
+    fails(`s("bd").${name}("x")`, /unknown method/);
+  }
+  fails('n("0").scale("C:constructor")', /unknown scale "constructor"/);
+  fails('n("0").scale("C:__proto__")', /unknown scale/);
+  fails('s("\\q")', /unknown escape/);
+});
+
+test('iter is lazy: a billion rotations cost nothing', () => {
+  const started = performance.now();
+  assert.deepEqual(cycle('s("a b").iter(1000000000)'), ['0 0.5 {"s":"a"}', '0.5 0.5 {"s":"b"}']);
+  assert.deepEqual(evaluate('s("a b c d").iter(1000000000)').pattern.onsetsOnly().queryArc(1, 2).map((h) => h.value.s), ['b', 'c', 'd', 'a'], 'a billionth early: the next bar\'s first step just makes it in');
+  assert.deepEqual(evaluate('s("a b c d").iter(1000000)').pattern.onsetsOnly().queryArc(250000, 250001).map((h) => h.value.s), ['b', 'c', 'd', 'a']);
+  assert.ok(performance.now() - started < 1000, `${(performance.now() - started).toFixed(0)} ms`);
+});
+
+test('recursion is bounded, and only ever a PatternError', () => {
+  const only = (code: string, message: RegExp) => {
+    try { evaluateCycle(code); assert.fail(`${code.slice(0, 40)} did not throw`); } catch (e) {
+      assert.ok(e instanceof PatternError, `${code.slice(0, 40)} threw ${(e as Error).constructor.name}: ${(e as Error).message.slice(0, 80)}`);
+      assert.match((e as Error).message, message);
+    }
+  };
+  only('-'.repeat(9000) + '1', /nested more than 64 deep/);
+  only('+'.repeat(9000) + '1', /nested more than 64 deep/);
+  assert.deepEqual(cycle('s("bd").fast(' + '-'.repeat(60) + '2)'), ['0 0.5 {"s":"bd"}', '0.5 0.5 {"s":"bd"}']);
+  only('(x => x(x))(x => x(x))', /calls nested more than 64 deep|more than 100000 steps/);
+  only('(two => two(two)(two)(two)(p => "bd")("bd"))(f => x => f(f(x)))', /more than 100000 steps|calls nested more than/);
+  only('(two => two(two)(two)(two)(two)(p => "bd")("bd"))(f => x => f(f(x)))', /more than 100000 steps|calls nested more than/);
+  only('s("bd")' + '.rev()'.repeat(300), /chain of more than 256 methods/);
+  assert.deepEqual(cycle('s("bd")' + '.rev()'.repeat(200)), ['0 1 {"s":"bd"}']);
+  assert.deepEqual(cycle('s("bd")' + '.fast(1)'.repeat(256)), ['0 1 {"s":"bd"}'], 'the longest chain allowed still runs');
+  only('s("bd")' + '.fast(1)'.repeat(257), /chain of more than 256 methods/);
+});
+
+test('the package is Apache-2.0, like every other workspace', async () => {
+  const { readFileSync } = await import('node:fs');
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(pkg.license, 'Apache-2.0');
+});
+
+test('values and tempos stay finite and within range', () => {
+  fails('note("c3").add(1e308).add(1e308)', /gives Infinity/);
+  fails('"60".add(1e308).add(1e308)', /gives Infinity/);
+  fails('n("0").add(1e308).add(1e308)', /gives Infinity/);
+  fails('setbpm(1e-300); s("a")', /outside 20 to 400/);
+  fails('setbpm(10); s("a")', /outside 20 to 400/);
+  fails('setbpm(401); s("a")', /outside 20 to 400/);
+  fails('setcps(1000); s("a")', /outside 20 to 400/);
+  assert.equal(evaluate('setbpm(20); s("a")').cps, 20 / 240);
+  assert.equal(evaluate('setbpm(400); s("a")').cps, 400 / 240);
+  fails('timecat([-1, s("bd")], [1, s("sd")])', /weights of zero or more, not -1/);
+  assert.deepEqual(cycle('timecat([0, s("bd")], [1, s("sd")])'), ['0 1 {"s":"sd"}'], 'a weight of zero takes no time');
 });

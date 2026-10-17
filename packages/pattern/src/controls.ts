@@ -50,7 +50,7 @@ export function parseScale(spec: MiniValue | undefined): Scale {
   if (parts.length < 2) throw new PatternError(`scale wants a root and a name, like "C:major", not "${spec}"`);
   const root = noteToMidi(parts[0], 'a scale root');
   const name = parts.slice(1).join(' ').toLowerCase();
-  const steps = SCALES[name];
+  const steps = Object.hasOwn(SCALES, name) ? SCALES[name] : undefined;
   if (!steps) throw new PatternError(`unknown scale "${parts.slice(1).join(':')}"; try one of ${SCALE_NAMES.join(', ')}`);
   return { root, steps, name };
 }
@@ -80,8 +80,9 @@ const asNumber = (v: MiniValue | undefined, what: string): number => {
 // value + amount: notes by name become MIDI numbers
 export function addToValue(value: MiniValue | undefined, amount: MiniValue | undefined, key: string): MiniValue {
   const n = asNumber(amount, `adding to ${key}`);
-  if (key === 'note') return noteToMidi(value, 'note') + n;
-  return asNumber(value, key) + n;
+  const sum = (key === 'note' ? noteToMidi(value, 'note') : asNumber(value, key)) + n;
+  if (!Number.isFinite(sum)) throw new PatternError(`adding to ${key} gives ${sum}`);
+  return sum;
 }
 
 // Adds `amount` to a control value: a number goes to the note (or n); a
