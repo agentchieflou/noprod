@@ -85,3 +85,9 @@ CI runs these from `.github/workflows/`:
   the Keyboard Coach
 - [apps/audio_core/README.md](apps/audio_core/README.md): building and
   testing GhostDAW
+
+## License
+
+noprod is open source under the [Apache License 2.0](LICENSE). Two parts
+still use code under other licenses until they're rebuilt: the sequencer in
+`apps/sequencer` (Strudel, AGPL) and GhostDAW (JUCE). See #147.
