@@ -2228,6 +2228,8 @@ body {
 .coach-select { flex: 1; max-width: none; font-size: 10px; padding: 1px 2px; }
 .coach-restart { font-size: 10px; padding: 1px 6px; gap: 3px; }
 .coach-accompany { font-size: 10px; padding: 1px 6px; gap: 3px; }
+.coach-clip { font-size: 10px; padding: 1px 6px; gap: 3px; }
+.coach-bass { font-size: 10px; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
 .coach-readout {
   flex: 1;
   min-height: 0;
