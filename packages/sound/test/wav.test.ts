@@ -55,3 +55,19 @@ test('out-of-range samples clip instead of wrapping, and odd data is padded', ()
 test('decoding refuses what is not a WAV file', () => {
   assert.throws(() => decodeWav(new Uint8Array(64)), /not a WAV/);
 });
+
+test('dither adds a step of triangular noise, the same every time', () => {
+  const quiet = Float32Array.from({ length: 20000 }, (_, i) => Math.sin(i * 0.05) * (0.3 / 32768)); // under a 16-bit step
+  const plain = decodeWav(encodeWav([quiet], 44100, 16)).channels[0];
+  const dithered = decodeWav(encodeWav([quiet], 44100, 16, true)).channels[0];
+  const rms = (x: Float32Array) => Math.sqrt(x.reduce((s, v) => s + v * v, 0) / x.length);
+  // without dither a signal under a step is lost to rounding; with it the
+  // wave survives, with noise around a step's worth (TPDF: 1/sqrt(6) step rms)
+  assert.ok(rms(plain) < 0.2 / 32768, `plain rms ${rms(plain) * 32768} steps`);
+  const noise = rms(dithered) * 32768;
+  assert.ok(noise > 0.3 && noise < 0.8, `dithered rms ${noise} steps`);
+  const correlation = quiet.reduce((s, v, i) => s + v * dithered[i], 0) / quiet.reduce((s, v) => s + v * v, 0);
+  assert.ok(correlation > 0.8 && correlation < 1.2, `the signal is in there (${correlation.toFixed(2)})`);
+  assert.deepEqual(encodeWav([quiet], 44100, 16, true), encodeWav([quiet], 44100, 16, true));
+  assert.ok(Math.abs(dithered.reduce((s, v) => s + v, 0) / dithered.length) < 0.05 / 32768, 'no offset');
+});

@@ -3194,6 +3194,16 @@ body {
 .audio-bar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 6px 12px; font-size: 12px; color: var(--text-primary); background: var(--bg-panel); border-bottom: 1px solid var(--accent-blue); }
 .audio-bar-error { border-bottom-color: var(--accent-red); }
 
+/* Export dialog */
+.export-dialog { width: 420px; }
+.export-rows { display: flex; flex-direction: column; gap: 6px; padding: 6px 0; }
+.export-rows label { display: flex; align-items: center; gap: 8px; }
+.export-rows label > select, .export-rows label > input { margin-left: auto; }
+.export-rows label > select + select, .export-rows label > select + input { margin-left: 0; width: 90px; }
+.export-progress { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.export-progress progress { flex: 1; }
+.export-actions { display: flex; justify-content: flex-end; padding-top: 6px; }
+
 /* Services dialog, native plug-in consent */
 .services-dialog { width: 460px; }
 .service-row { padding: 8px 0; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px; }
