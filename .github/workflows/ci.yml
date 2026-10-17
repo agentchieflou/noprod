@@ -102,9 +102,15 @@ jobs:
           if-no-files-found: ignore
 
   dist:
-    name: Built app (smoke test)
+    name: Built app (smoke test, ${{ matrix.browser }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    env:
+      E2E_BROWSER: ${{ matrix.browser }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -114,10 +120,25 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # Firefox and WebKit make no sound without an audio device: give them a
+      # null sink
+      - name: Audio device
+        if: matrix.browser != 'chromium'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=ci
+      - name: Install Firefox
+        if: matrix.browser == 'firefox'
+        run: npx puppeteer browsers install firefox
+      - name: Install WebKit
+        if: matrix.browser == 'webkit'
+        run: npx playwright-core install --with-deps webkit
       - run: npm run e2e:dist
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dist-screenshots
+          name: dist-screenshots-${{ matrix.browser }}
           path: apps/frontend/e2e/.shots/
           if-no-files-found: ignore

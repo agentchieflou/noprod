@@ -3,6 +3,8 @@ import { Plus, Trash2 } from 'lucide-react';
 import { useDAWStore } from '../store/useDAWStore';
 import { findNativePlugin, nativeDeviceFor } from '../native/audioCore';
 import AudioCorePanel from './AudioCorePanel';
+import { LatencyInfo } from './BrowserNotes';
+import { canScanFolders, FOLDER_SCAN_REASON } from '../platform/support';
 
 // The VST Folders Scan tab: the folders the Audio Core scans, a scan of a
 // folder from the browser, and the Audio Core itself
@@ -44,10 +46,7 @@ export default function PluginFolders({ selectedTrack }: { selectedTrack: any })
 
   const handleScanPluginFolder = async () => {
     const picker = (window as any).showDirectoryPicker;
-    if (!picker) {
-      alert('Folder scanning needs the File System Access API (Chromium-based browser).');
-      return;
-    }
+    if (!picker) return;
     try {
       setIsScanning(true);
       const dirHandle = await picker.call(window, { mode: 'read' });
@@ -99,14 +98,19 @@ export default function PluginFolders({ selectedTrack }: { selectedTrack: any })
         ))}
       </div>
       
-      <button
-        className="btn-add-track"
-        style={{ backgroundColor: 'var(--accent-green)', marginTop: '10px' }}
-        onClick={handleScanPluginFolder}
-        disabled={isScanning}
-      >
-        {isScanning ? 'Scanning…' : 'Scan Folder for Plugins…'}
-      </button>
+      {canScanFolders() ? (
+        <button
+          className="btn-add-track"
+          style={{ backgroundColor: 'var(--accent-green)', marginTop: '10px' }}
+          onClick={handleScanPluginFolder}
+          disabled={isScanning}
+        >
+          {isScanning ? 'Scanning…' : 'Scan Folder for Plugins…'}
+        </button>
+      ) : (
+        <p className="browser-note" style={{ marginTop: '10px' }}>{FOLDER_SCAN_REASON}</p>
+      )}
+      <LatencyInfo />
 
       {scannedPlugins.length > 0 && (
         <div style={{ marginTop: '10px' }}>

@@ -43,7 +43,9 @@ E2E_SKIP=dictation npm run e2e             # without the one that needs unpkg
 - Packages run as TypeScript directly (Node 22.18+ strips types): imports
   carry `.ts` extensions, and nothing that needs compiling (no enums,
   namespaces or parameter properties).
-- oxlint: the one accepted warning is PianoRoll's `exhaustive-deps`. A
+- oxlint: the accepted warnings are PianoRoll's `exhaustive-deps` and,
+  until #190 clears them, the seven from oxlint 1.88's React rules listed
+  there. Leave those to #190, and add no new ones. A
   `.tsx` file exports only components (`only-export-components`); helpers and
   constants go in a `.ts` file beside it.
 - A Vite dev server you started yourself must be restarted after you edit
