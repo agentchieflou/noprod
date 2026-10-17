@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readMidiFile } from '../src/index.ts';
+import { TempoMap } from '../../time/src/index.ts';
 import { smf, track, ev, tempoEv, meterEv, vlq } from './helpers.ts';
 
 test('a minimal format 1 file reads as data in beats', () => {
@@ -168,6 +169,17 @@ test('SMPTE division: seconds to beats at the file\'s tempo, with a warning', ()
   assert.equal(file.ticksPerBeat, 1000);   // at 60 BPM a beat is a second
   assert.deepEqual(file.tracks[0].notes.map((n) => [n.start, n.length]), [[2, 1]]);
   assert.ok(file.warnings.some((w) => /SMPTE/.test(w)));
+});
+
+test('SMPTE division: tempo is the one the positions were converted at, so TempoMap agrees', () => {
+  // 1000 ticks a second; 60 BPM first, then 240 BPM at 2 s. A note at 4 s must come back at 4 s.
+  const file = readMidiFile(smf(0, 0xe728, [track([tempoEv(0, 60), tempoEv(2000, 240), ev(2000, 0x90, 60, 100), ev(1000, 0x90, 60, 0)])]));
+  assert.deepEqual(file.tempo, [{ beat: 0, bpm: 60 }]);
+  assert.ok(file.warnings.some((w) => /Set Tempo events after the first were dropped/.test(w)));
+  const note = file.tracks[0].notes[0];
+  const map = new TempoMap(file.tempo);
+  assert.equal(map.secondsAt(note.start), 4);
+  assert.equal(map.secondsAt(note.start + note.length), 5);
 });
 
 test('SMPTE division with no tempo reads at 120 BPM', () => {

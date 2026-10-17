@@ -258,11 +258,15 @@ export function readMidiFile(bytes: Uint8Array): MidiFile {
   const beat = (tick: number) => tick / ticksPerBeat;
 
   const tempo: MidiFile['tempo'] = [];
-  for (const e of tempoEvents) {
+  // Under SMPTE the positions were converted at the first tempo, so it is the only one
+  if (smpte && tempoEvents.length) {
+    if (tempoEvents.length > 1) ctx.warn('SMPTE division: Set Tempo events after the first were dropped');
+    tempo.push({ beat: 0, bpm: bpmOf(tempoEvents[0].us) });
+  } else for (const e of tempoEvents) {
     const entry = { beat: beat(e.tick), bpm: bpmOf(e.us) };
     if (tempo.length && tempo[tempo.length - 1].beat === entry.beat) tempo[tempo.length - 1] = entry; else tempo.push(entry);
   }
-  if (!tempo.length || tempo[0].beat > 0) tempo.unshift({ beat: 0, bpm: DEFAULT_BPM });
+  if (!tempo.length || (!smpte && tempo[0].beat > 0)) tempo.unshift({ beat: 0, bpm: DEFAULT_BPM });
 
   // Signatures are by bar, and a bar line is where a signature can change
   const meter: MidiFile['meter'] = [];
