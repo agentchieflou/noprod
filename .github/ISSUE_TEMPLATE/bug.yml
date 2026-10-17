@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work the way it should
+labels: []
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The steps, from a fresh page if you can.
+      placeholder: |
+        1. Open the app
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: browser-os
+    attributes:
+      label: Browser and OS
+      placeholder: Firefox 150 on Windows 11
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: The version or commit you are running. If you use the hosted app, say so.
+      placeholder: 1.0.0, or a commit hash
+    validations:
+      required: true
