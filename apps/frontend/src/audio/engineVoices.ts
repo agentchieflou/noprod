@@ -8,7 +8,7 @@
 import { playsLive } from '@noprod/sound';
 import type { Engine } from './engineNode';
 import type { VoiceSpec } from './dsp/events';
-import { libraryOf, nearestNoteBuffer, noteBuffer, resolveLibraryNote, soundRelease, type LibraryNote } from './library';
+import { cachedNoteBuffer, libraryOf, nearestNoteBuffer, noteBuffer, resolveLibraryNote, soundRelease, type LibraryNote } from './library';
 import { startLiveVoice } from './liveModels';
 import { midiToFreq, type SynthParams } from './synth';
 
@@ -82,9 +82,12 @@ export function engineHeldVoice(engine: Engine, strip: number, params: SynthPara
       engine.liveOn(k, strip, Math.max(at, ctx.currentTime), bufferSpec(engine, r, buffer, rate, gain * nearGain, release));
       if (releasedAt !== null) engine.liveOff(k, Math.max(releasedAt, at));
     };
-    const near = nearestNoteBuffer(r, ctx.sampleRate);
+    const hit = cachedNoteBuffer(r, ctx.sampleRate);
+    const near = hit ? null : nearestNoteBuffer(r, ctx.sampleRate);
     let handle: { cancel: (at?: number) => void } | null = null;
-    if (near) {
+    if (hit) {
+      post(hit, when);
+    } else if (near) {
       // the fast path: a rendered neighbour, repitched, while the key's own render comes for next time
       post(near.buffer, when, near.rate, near.gain);
       noteBuffer(ctx, r, Infinity, () => {}, true);

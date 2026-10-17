@@ -307,7 +307,11 @@ export function resolveLibraryNote(params: any, note: number, velocity: number, 
 export const soundRelease = (sound: SoundRecipe) => Math.max(0.05, ...sound.layers.map((l) => l.env?.release ?? 0.05));
 
 // The nearest render of a note that isn't ready, repitched (the fast path), or null
-export const nearestNoteBuffer = (r: Render, sampleRate: number) => nearest(r, sampleRate);
+export function nearestNoteBuffer(r: Render, sampleRate: number) {
+  const near = nearest(r, sampleRate);
+  if (near) stats.fastPath++;
+  return near;
+}
 
 // A note's render if it is in the cache
 export const cachedNoteBuffer = (r: Render, sampleRate: number) => cached(r, sampleRate);
