@@ -2731,7 +2731,7 @@ body {
 }
 
 .dsp-ab .designer-button.active {
-  background: var(--accent-primary, #4a9eff);
+  background: var(--accent-blue);
   color: #fff;
 }
 

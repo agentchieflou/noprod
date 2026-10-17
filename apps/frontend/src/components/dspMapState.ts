@@ -1,4 +1,6 @@
 import { findSound, type SoundRecipe } from '@noprod/sound';
+import { useDAWStore } from '../store/useDAWStore';
+import { libraryOf } from '../audio/library';
 
 // The DSP Map's columns (#80): the selected track always, then any tracks
 // and library sounds added. A library sound is edited as a scratch copy.
@@ -32,6 +34,17 @@ export const originalOf = (key: string, recipe: SoundRecipe): SoundRecipe => {
   if (!originals.has(key)) originals.set(key, structuredClone(recipe));
   return originals.get(key)!;
 };
+// The selected track's original is its recipe when it became selected, so an
+// edit made elsewhere before the map opens still shows as a change.
+const isColumn = (trackId: string) => !!saved?.some((c) => c.kind === 'track' && c.trackId === trackId);
+const soundOf = (state: any, id: string | null) => libraryOf(state.tracks.find((t: any) => t.id === id)?.instrument?.parameters)?.sound;
+useDAWStore.subscribe((state: any, prev: any) => {
+  if (state.selectedTrackId === prev.selectedTrackId) return;
+  if (prev.selectedTrackId && !isColumn(prev.selectedTrackId)) originals.delete(`track:${prev.selectedTrackId}`);
+  const sound = soundOf(state, state.selectedTrackId);
+  if (sound && !isColumn(state.selectedTrackId)) originals.set(`track:${state.selectedTrackId}`, structuredClone(sound));
+});
+
 // Columns that left the map take their original with them
 export const keepOriginals = (keys: string[]) => {
   for (const k of [...originals.keys()]) if (!keys.includes(k)) originals.delete(k);

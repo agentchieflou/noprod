@@ -87,6 +87,38 @@ module.exports = async (page, ctx) => {
   }, scol);
   check('A scratch column now holds the saved copy', /^my-/.test(scratch ?? ''), String(scratch));
 
+  // 6. A track edited while the map is closed still shows its change when the map opens
+  const tabs = () => page.evaluate(() => [...document.querySelectorAll('.detail-tab')].find((b) => b.textContent !== 'DSP Map').click());
+  await tabs();
+  await ctx.sleep(200);
+  await page.evaluate(async () => {
+    const { findSound } = await import(window.__fs + '/packages/sound/src/index.ts');
+    const { createLibraryInstrument } = await import('/src/audio/library.ts');
+    window.__dawStore.getState().addMidiTrackWithInstrument(createLibraryInstrument(findSound('trumpet-modeled')), 'Trumpet');
+  });
+  await ctx.sleep(300);
+  const t4 = await track();
+  await page.evaluate(async () => {
+    const { setBlockOn, chainOf } = await import(window.__fs + '/packages/sound/src/index.ts');
+    const st = window.__dawStore.getState();
+    const t = st.tracks.find((x) => x.id === st.selectedTrackId);
+    const lib = t.instrument.parameters.Library;
+    const id = chainOf(lib.sound).layers[0].blocks.find((b) => b.switchable && b.on).id;
+    st.updateInstrumentParameter(t.id, 'Library', { ...lib, sound: setBlockOn(lib.sound, 0, id, false) });
+  });
+  await ctx.sleep(200);
+  const t5 = await track();
+  await page.evaluate(() => [...document.querySelectorAll('.detail-tab')].find((b) => b.textContent === 'DSP Map').click());
+  await ctx.sleep(400);
+  const head2 = `.dsp-map-head[data-col="track:${t4.id}"]`;
+  const edited = !(await same(t4.sound, t5.sound));
+  await page.click(`${head2} [data-ab="A"]`);
+  await page.click(`${head2} .designer-play`);
+  await ctx.sleep(300);
+  const a2 = await played();
+  check('Edited on another tab: opening the map shows Revert, and A plays the pre-edit recipe',
+    edited && (await count(`${head2} .dsp-revert`)) === 1 && (await same(a2.recipe, t4.sound)), `edited ${edited}`);
+
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
