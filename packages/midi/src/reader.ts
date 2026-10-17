@@ -70,12 +70,13 @@ function parseTrack(d: Uint8Array, start: number, end: number, ctx: Context): Pa
 
   while (p < end && !ended) {
     const eventAt = p;
-    tick += vlq();
+    const delta = vlq();
+    tick += delta;
     if (tick > ctx.maxTicks) throw err(`the song runs past ${MAX_BEATS} beats`, eventAt);
     if (++ctx.events > MAX_EVENTS) throw err(`more than ${MAX_EVENTS} events in the file`, eventAt);
     if (p >= end) throw err('delta time with no event after it', p);
     out.endTick = tick;
-    out.endOffset = eventAt;
+    if (delta) out.endOffset = eventAt;   // the event that got to the last tick
 
     let status = d[p];
     if (status >= 0x80) {
