@@ -7,10 +7,9 @@ module.exports = async (page, ctx) => {
   await page.mouse.click(5, 5);
   await page.addScriptTag({ path: require.resolve('axe-core') });
 
-  // Colour contrast is a design question (the palette stays as it is), so it is left out
   const audit = (selector) => page.evaluate(async (selector) => {
-    const r = await window.axe.run(selector ? document.querySelector(selector) : document, { rules: { 'color-contrast': { enabled: false } } });
-    return r.violations.map((v) => ({ id: v.id, impact: v.impact, nodes: v.nodes.length, sample: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
+    const r = await window.axe.run(selector ? document.querySelector(selector) : document);
+    return r.violations.map((v) => ({ id: v.id, impact: v.impact, nodes: v.nodes.length, sample: v.nodes.slice(0, 3).map((n) => n.target.join(' ')), why: v.id === 'color-contrast' ? v.nodes.map((n) => { const d = n.any[0]?.data || {}; return `${n.target.join(' ')} ${d.fgColor} on ${d.bgColor} ${d.contrastRatio} (${d.fontSize})`; }) : [] }));
   }, selector);
   const clickText = (sel, text) => page.evaluate((sel, text) => [...document.querySelectorAll(sel)].find((b) => b.textContent.trim() === text).click(), sel, text);
   const view = async (name, open, selector, wait = 600) => {
@@ -19,7 +18,7 @@ module.exports = async (page, ctx) => {
     const all = await audit(selector);
     const bad = all.filter((v) => v.impact === 'critical' || v.impact === 'serious');
     const count = bad.reduce((n, v) => n + v.nodes, 0);
-    if (process.env.A11Y_VERBOSE) for (const v of all) console.error(`  ${name}: ${v.id} (${v.impact}) x${v.nodes} ${v.sample.join(' | ')}`);
+    if (process.env.A11Y_VERBOSE) for (const v of all) { console.error(`  ${name}: ${v.id} (${v.impact}) x${v.nodes} ${v.sample.join(' | ')}`); for (const w of v.why) console.error(`    ${w}`); }
     console.error(`axe ${name}: ${count} critical/serious nodes in ${bad.length} rules, ${all.length} rules in all`);
     check(`${name}: no critical or serious axe violations`, bad.length === 0, bad.map((v) => `${v.id} x${v.nodes}`).join(', '));
   };

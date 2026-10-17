@@ -1036,7 +1036,7 @@ function App() {
                   </div>
                 </div>
                 <div className="track-list-actions">
-                  <button className="btn-add-track" style={{ backgroundColor: '#6b7280' }} onClick={addReturn}
+                  <button className="btn-add-track btn-add-return" onClick={addReturn}
                     disabled={returns.length >= RETURN_LETTERS.length} title="Add Return Track">
                     + Return
                   </button>

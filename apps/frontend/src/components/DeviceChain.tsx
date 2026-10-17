@@ -6,6 +6,7 @@ import { MIDI_EFFECT_DEFS, createMidiEffect } from '../audio/midiEffects';
 import InstrumentCard from './InstrumentCard';
 import RackDevice from './RackDevice';
 import DeviceCard from './DeviceCard';
+import { readableOn } from './contrast';
 
 // Add Device choices: the stock devices (plug-ins come from the Browser)
 const BROWSER_PLUGINS = Object.keys(DEVICE_DEFS).map(createDevice);
@@ -28,7 +29,7 @@ export default function DeviceChain({ track: selectedTrack, onAudition, onEditSo
       </div>
     )}
     <div style={{ marginRight: '1rem', borderRight: '1px solid var(--border-color)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-      <h5 style={{ color: selectedTrack.color }}>{selectedTrack.name} Device Chain</h5>
+      <h5 style={{ color: readableOn(selectedTrack.color, '#202020') }}>{selectedTrack.name} Device Chain</h5>
       <div style={{ display: 'flex', gap: '3px' }}>
         <select aria-label="Device to add" className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(e.target.value)} title="Device to add">
           <optgroup label="Audio Effects">
