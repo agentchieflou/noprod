@@ -185,20 +185,33 @@ function biquad(x: Float32Array, b: [number, number, number], a: [number, number
 }
 
 // ITU-R BS.1770 K-weighting: a +4 dB shelf above ~1.5 kHz (the head) and a
-// highpass at 38 Hz, designed for any sample rate
-export function kWeight(x: Float32Array, sampleRate: number) {
+// highpass at 38 Hz, designed for any sample rate. Both stages as RBJ biquad
+// coefficients, shared by the offline measure and the streaming meter.
+type Coefficients = { b: [number, number, number]; a: [number, number, number] };
+
+export function kWeightStages(sampleRate: number): [Coefficients, Coefficients] {
   let w = (2 * Math.PI * 1500) / sampleRate;
   const A = Math.pow(10, 4 / 40);
   let alpha = Math.sin(w) / (2 * Math.SQRT1_2);
   let cos = Math.cos(w);
   const root = 2 * Math.sqrt(A) * alpha;
-  const shelved = biquad(x,
-    [A * ((A + 1) + (A - 1) * cos + root), -2 * A * ((A - 1) + (A + 1) * cos), A * ((A + 1) + (A - 1) * cos - root)],
-    [(A + 1) - (A - 1) * cos + root, 2 * ((A - 1) - (A + 1) * cos), (A + 1) - (A - 1) * cos - root]);
+  const shelf = {
+    b: [A * ((A + 1) + (A - 1) * cos + root), -2 * A * ((A - 1) + (A + 1) * cos), A * ((A + 1) + (A - 1) * cos - root)],
+    a: [(A + 1) - (A - 1) * cos + root, 2 * ((A - 1) - (A + 1) * cos), (A + 1) - (A - 1) * cos - root]
+  } as Coefficients;
   w = (2 * Math.PI * 38) / sampleRate;
   alpha = Math.sin(w) / (2 * 0.5);
   cos = Math.cos(w);
-  return biquad(shelved, [(1 + cos) / 2, -(1 + cos), (1 + cos) / 2], [1 + alpha, -2 * cos, 1 - alpha]);
+  const highpass = {
+    b: [(1 + cos) / 2, -(1 + cos), (1 + cos) / 2],
+    a: [1 + alpha, -2 * cos, 1 - alpha]
+  } as Coefficients;
+  return [shelf, highpass];
+}
+
+export function kWeight(x: Float32Array, sampleRate: number) {
+  const [shelf, highpass] = kWeightStages(sampleRate);
+  return biquad(biquad(x, shelf.b, shelf.a), highpass.b, highpass.a);
 }
 
 // The loudest moment, in LUFS: K-weighted power over the loudest `window`
@@ -216,4 +229,120 @@ export function loudness(left: Float32Array, right: Float32Array, sampleRate: nu
     loudest = Math.max(loudest, sum);
   }
   return -0.691 + 10 * Math.log10(Math.max(loudest, 1e-20) / n);
+}
+
+// Loudness as a stream (BS.1770-4 / EBU R128): feed it blocks of samples as
+// they arrive. Momentary is the last 400 ms, short-term the last 3 s,
+// integrated the gated mean since the last reset. True peak is the largest
+// sample of the signal at 4x its rate. `loudness` above is the offline
+// version of the same weighting.
+const TP_TAPS = 12; // per phase
+const TP_PHASES = 4;
+const oversampler = (() => {
+  // Windowed-sinc interpolation, one filter per phase
+  const kernel: Float64Array[] = [];
+  for (let p = 1; p < TP_PHASES; p++) {
+    const k = new Float64Array(TP_TAPS);
+    let sum = 0;
+    for (let i = 0; i < TP_TAPS; i++) {
+      const t = i - (TP_TAPS / 2 - 1) - p / TP_PHASES; // distance from the new sample
+      const sinc = Math.sin(Math.PI * t) / (Math.PI * t);
+      const win = 0.5 + 0.5 * Math.cos((Math.PI * t) / (TP_TAPS / 2));
+      k[i] = sinc * win;
+      sum += k[i];
+    }
+    for (let i = 0; i < TP_TAPS; i++) k[i] /= sum; // unity gain at DC
+    kernel.push(k);
+  }
+  return kernel;
+})();
+
+class Biquad {
+  x1 = 0; x2 = 0; y1 = 0; y2 = 0;
+  c: Coefficients;
+  constructor(c: Coefficients) { this.c = c; }
+  run(x: number) {
+    const { b, a } = this.c;
+    const v = (b[0] * x + b[1] * this.x1 + b[2] * this.x2 - a[1] * this.y1 - a[2] * this.y2) / a[0];
+    this.x2 = this.x1; this.x1 = x; this.y2 = this.y1; this.y1 = v;
+    return v;
+  }
+}
+
+const lufs = (meanSquare: number) => -0.691 + 10 * Math.log10(Math.max(meanSquare, 1e-20));
+
+export class LoudnessMeter {
+  readonly sampleRate: number;
+  private stages: Biquad[][];
+  private step: number;            // samples in a 100 ms sub-block
+  private fill = 0;
+  private acc = 0;                 // K-weighted power in the sub-block so far (both channels)
+  private recent: number[] = [];   // mean squares of the last 30 sub-blocks
+  private blocks: number[] = [];   // every 400 ms block's mean square since reset
+  private history: Float64Array[]; // last TP_TAPS samples per channel, for true peak
+  private tp = 0;
+
+  constructor(sampleRate: number) {
+    this.sampleRate = sampleRate;
+    this.step = Math.round(0.1 * sampleRate);
+    const [shelf, highpass] = kWeightStages(sampleRate);
+    this.stages = [0, 1].map(() => [new Biquad(shelf), new Biquad(highpass)]);
+    this.history = [new Float64Array(TP_TAPS), new Float64Array(TP_TAPS)];
+  }
+
+  push(left: Float32Array, right: Float32Array) {
+    for (let i = 0; i < left.length; i++) {
+      this.truePeakSample(0, left[i]);
+      this.truePeakSample(1, right[i]);
+      const l = this.stages[0][1].run(this.stages[0][0].run(left[i]));
+      const r = this.stages[1][1].run(this.stages[1][0].run(right[i]));
+      this.acc += l * l + r * r;
+      if (++this.fill === this.step) {
+        this.recent.push(this.acc / this.step);
+        if (this.recent.length > 30) this.recent.shift();
+        if (this.recent.length >= 4) this.blocks.push(this.mean(4));
+        this.acc = 0;
+        this.fill = 0;
+      }
+    }
+  }
+
+  private truePeakSample(ch: number, v: number) {
+    const h = this.history[ch];
+    h.copyWithin(0, 1);
+    h[TP_TAPS - 1] = v;
+    this.tp = Math.max(this.tp, Math.abs(v));
+    for (const k of oversampler) {
+      let y = 0;
+      for (let i = 0; i < TP_TAPS; i++) y += k[i] * h[i];
+      this.tp = Math.max(this.tp, Math.abs(y));
+    }
+  }
+
+  private mean(last: number) {
+    const from = Math.max(0, this.recent.length - last);
+    let sum = 0;
+    for (let i = from; i < this.recent.length; i++) sum += this.recent[i];
+    return sum / (this.recent.length - from);
+  }
+
+  get momentary() { return this.recent.length >= 4 ? lufs(this.mean(4)) : -Infinity; }
+  get shortTerm() { return this.recent.length >= 4 ? lufs(this.mean(30)) : -Infinity; }
+
+  // Blocks above -70 LUFS, then those within 10 LU of their mean
+  get integrated() {
+    const loud = this.blocks.filter((p) => lufs(p) > -70);
+    if (!loud.length) return -Infinity;
+    const gate = lufs(loud.reduce((a, b) => a + b, 0) / loud.length) - 10;
+    const kept = loud.filter((p) => lufs(p) > gate);
+    return kept.length ? lufs(kept.reduce((a, b) => a + b, 0) / kept.length) : -Infinity;
+  }
+
+  // dBTP, the highest since reset
+  get truePeak() { return toDb(this.tp); }
+
+  reset() {
+    this.blocks = [];
+    this.tp = 0;
+  }
 }
