@@ -64,6 +64,7 @@ module.exports = async (page, ctx) => {
   await ctx.sleep(100);
   const closed = await panel();
   await page.click('.coach-toggle');
+  await page.waitForSelector('.kb-coach', { timeout: 15000 }).catch(() => {}); // the coach loads when first opened
   await ctx.sleep(200);
   const offOpen = await panel();
   check('Coach button opens the panel with the keyboard off', !closed.panel && offOpen.panel && offOpen.coach && !offOpen.controls && offOpen.piano,
@@ -235,6 +236,7 @@ module.exports = async (page, ctx) => {
   await page.reload({ waitUntil: 'networkidle0' });
   await setup();
   await page.click('.coach-toggle');
+  await page.waitForSelector('.kb-coach', { timeout: 15000 }).catch(() => {});
   await ctx.sleep(200);
   const restored = await page.evaluate(() => ({
     mode: document.querySelector('.coach-modes .active')?.textContent,

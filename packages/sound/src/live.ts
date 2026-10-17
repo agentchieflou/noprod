@@ -11,14 +11,7 @@ import { ModelLayerVoice, noteSeed, type NoteContext } from './render.ts';
 import { closedLoop, modelTuning } from './model.ts';
 import { midiToHz } from './dsp.ts';
 import type { SoundRecipe } from './types.ts';
-
-// A pitched sound whose layers are all physical models plays live
-export const playsLive = (recipe: SoundRecipe) =>
-  recipe.pitched && recipe.layers.some((l) => !l.mute) && recipe.layers.every((l) => l.mute || l.type === 'model');
-
-// Slurred from note to note (one voice) rather than a voice a note
-export const legato = (recipe: SoundRecipe) => recipe.legato ?? recipe.layers.every((l) =>
-  l.mute || (l.type === 'model' && (l.exciter.kind === 'lips' || l.exciter.kind === 'jet' || l.exciter.kind === 'reed')));
+import type { LiveTarget } from './controls.ts';
 
 // What a note is, to its layers
 function noteContext(recipe: SoundRecipe, note: number, velocity: number, sampleRate: number, transpose = 0): NoteContext {
@@ -57,39 +50,7 @@ export interface LiveNoteOptions {
 
 const SLUR = 0.03;  // seconds a slur takes to reach the new note
 
-// ----------------------------------------------------------- controls
-
-// What a player's controls move in a live note (#106), as data, so the DSP
-// Map and the Sound Designer can show it. `to`: the player's input to a bow
-// or breath (0..1, as the envelope is), vibrato added (cents, full scale
-// `range`), or a bend (semitones, full scale `range`, either way). Each is
-// followed smoothly, reaching a move in `smoothing` seconds.
-export type LiveTarget = 'input' | 'vibrato' | 'bend';
-
-export interface LiveControl {
-  label: string;
-  from: { type: 'cc'; controller: number } | { type: 'pressure' } | { type: 'bend' };
-  to: LiveTarget;
-  range: number;
-  smoothing: number;
-}
-
-export const LIVE_CONTROLS: LiveControl[] = [
-  { label: 'Breath', from: { type: 'cc', controller: 2 }, to: 'input', range: 1, smoothing: 0.03 },
-  { label: 'Expression', from: { type: 'cc', controller: 11 }, to: 'input', range: 1, smoothing: 0.03 },
-  { label: 'Aftertouch', from: { type: 'pressure' }, to: 'input', range: 1, smoothing: 0.03 },
-  { label: 'Mod wheel', from: { type: 'cc', controller: 1 }, to: 'vibrato', range: 40, smoothing: 0.15 },
-  { label: 'Pitch bend', from: { type: 'bend' }, to: 'bend', range: 2, smoothing: 0.01 }
-];
-
 const VIBRATO_RATE = 5.5;  // Hz, of the vibrato a mod wheel adds
-
-// What a MIDI control event moves, and to what (`value`: 0..1, a bend -1..1)
-export function liveControl(event: { type: string; controller?: number; value?: number }): { to: LiveTarget; value: number; smoothing: number } | null {
-  const control = LIVE_CONTROLS.find((c) => c.from.type === event.type && (c.from.type !== 'cc' || c.from.controller === event.controller));
-  if (!control || event.value === undefined) return null;
-  return { to: control.to, value: event.value * control.range, smoothing: control.smoothing };
-}
 
 export class LiveNote {
   readonly note: number;

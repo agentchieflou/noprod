@@ -5,6 +5,7 @@ import { clipTimelineLength } from '../audio/clipPlayback';
 import { mapDeviceAnywhere } from './deviceTree';
 import { resolveTarget, splitMappings, targetKey } from '../audio/midiTargets';
 import { sliceClip, cutRange, overlapping } from '../project/comping';
+import { boundHistory } from './historyBudget';
 
 // Undo/redo: which slice of the store is history-tracked. Transport/selection/UI
 // state stays out so undoing never yanks the playhead or flips the view.
@@ -12,7 +13,7 @@ const UNDOABLE_KEYS = [
   'tracks', 'regions', 'sessionClips', 'bpm', 'vstScanPaths',
   'masterVolume', 'masterPan', 'returns', 'masterPlugins', 'locators', 'timeSignatures', 'scenes', 'midiMappings'
 ];
-const HISTORY_LIMIT = 100;
+const HISTORY_LIMIT = 100; // snapshots, and the audio only they hold within a budget (historyBudget.ts)
 // Continuous gestures (fader/dial/param drags) coalesce into one entry as long
 // as change events for the same target keep arriving within this window.
 // Device params coalesce per device, since one gesture can move several
@@ -1045,3 +1046,11 @@ export const useDAWStore = create((set, get) => ({
 
 // The project the app opens with counts as saved until something changes
 useDAWStore.setState((state) => ({ savedSnapshot: projectSlice(state) }));
+
+// After each edit, the audio only undo history holds stays within its
+// budget (an edit is recorded before it's made, so this is when it shows)
+useDAWStore.subscribe((state, prev) => {
+  if (state.past === prev.past && UNDOABLE_KEYS.every((k) => state[k] === prev[k])) return;
+  const past = boundHistory(state.past, takeSnapshot(state));
+  if (past !== state.past) useDAWStore.setState({ past });
+});

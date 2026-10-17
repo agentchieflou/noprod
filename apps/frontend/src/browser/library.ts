@@ -5,6 +5,7 @@
 // webkitdirectory pick works for the current session.
 
 import { audioContext } from '../audio/engine';
+import { LruBytes, budgets, bufferBytes } from '../audio/memory';
 
 export interface LibraryFile {
   id: string;           // `${placeId}:${path}`
@@ -181,7 +182,8 @@ export function allFiles(): LibraryFile[] {
 
 // -------------------------------------------------------- loading / preview
 
-const decoded = new Map<string, AudioBuffer>();
+// Decoded files, within their memory budget (memory.ts)
+const decoded = new LruBytes<string, AudioBuffer>(budgets().decoded, bufferBytes);
 
 export async function getFile(fileId: string): Promise<File | null> {
   const get = fileGetters.get(fileId);
@@ -198,6 +200,9 @@ export async function decodeLibraryFile(fileId: string): Promise<AudioBuffer> {
   decoded.set(fileId, buf);
   return buf;
 }
+
+// For the tests: what the decode cache holds, and may
+export const decodedCache = () => ({ bytes: decoded.bytes, budget: decoded.budget, files: decoded.size });
 
 // Preview plays straight to the speakers, bypassing tracks and the master chain
 let previewSource: AudioBufferSourceNode | null = null;

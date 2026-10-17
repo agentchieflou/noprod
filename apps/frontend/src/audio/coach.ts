@@ -12,6 +12,7 @@ import { onMidiEvent } from './inputs';
 import { getPosition } from './transport';
 import { barAt, barsUntil, type TimeSig } from './timeline';
 import { subscribeKeyboard, getKeyboardState } from './computerKeyboard';
+import { adoptCoach } from './coachLoader';
 
 export interface CoachState {
   open: boolean;         // shown on the keyboard panel
@@ -235,3 +236,6 @@ export function initCoach(s: Store) {
     refresh();
   });
 }
+
+// Loaded, it starts (coachLoader.ts)
+adoptCoach({ initCoach, subscribeCoach, getCoachState });
