@@ -12,6 +12,10 @@ import { initCapture } from './audio/capture'
 import { initComputerKeyboard } from './audio/computerKeyboard'
 import { initCoachLoader } from './audio/coachLoader'
 import { useDAWStore } from './store/useDAWStore'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { installRootHandlers, rootErrorHandlers } from './resilience'
+
+installRootHandlers()
 
 // The audio engine registers its worklets before the first render so device
 // chains are fully built by the time the UI can touch them.
@@ -25,9 +29,11 @@ initCapture(useDAWStore)
 initComputerKeyboard(useDAWStore)
 initCoachLoader(useDAWStore)
 initEngine(useDAWStore).finally(() => {
-  createRoot(document.getElementById('root')!).render(
+  createRoot(document.getElementById('root')!, rootErrorHandlers).render(
     <StrictMode>
-      <App />
+      <ErrorBoundary name="app" top>
+        <App />
+      </ErrorBoundary>
     </StrictMode>,
   )
 })

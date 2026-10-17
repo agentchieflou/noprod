@@ -7,6 +7,7 @@
 import { audioContext, getCompensationSeconds } from './engine';
 import { playbackLatencySeconds } from './latency';
 import { getAudioInputNode, openAudioInput, onMidiEvent, midiEventTargets, type MidiEvent } from './inputs';
+import { notify } from '../notify';
 import { getSegments, onSegmentScheduled, getCountInEnd, type SegmentInfo } from './transport';
 
 interface AudioCapture {
@@ -71,9 +72,16 @@ function startRecording(st: any) {
       if (inp.type !== 'ext') return;
       const device = inp.device || 'default';
       let source = getAudioInputNode(device, inp.channel || '1/2');
-      const node = new AudioWorkletNode(audioContext, 'noprod-recorder', {
-        numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2, channelCountMode: 'explicit'
-      });
+      let node: AudioWorkletNode;
+      try {
+        node = new AudioWorkletNode(audioContext, 'noprod-recorder', {
+          numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2, channelCountMode: 'explicit'
+        });
+      } catch (err) {
+        console.error('Recorder worklet unavailable', err);
+        notify('Audio recording is unavailable: the recorder could not load in this browser. MIDI tracks still record.', 'error');
+        return;
+      }
       const cap: AudioCapture = { kind: 'audio', node, source: source as AudioNode, chunks: [], done: Promise.resolve() };
       cap.done = new Promise((resolve) => {
         node.port.onmessage = (e) => {
