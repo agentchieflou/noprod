@@ -34,6 +34,7 @@ jobs:
           (cd packages/theory && ../../node_modules/.bin/tsc -p .)
           (cd packages/pattern && ../../node_modules/.bin/tsc -p .)
           (cd packages/time && ../../node_modules/.bin/tsc -p .)
+          (cd packages/midi && ../../node_modules/.bin/tsc -p .)
 
   frontend:
     name: Frontend (types, lint, build)
