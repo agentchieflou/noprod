@@ -1688,17 +1688,29 @@ body {
   z-index: 100;
 }
 
-.recovery-banner {
+/* Recovery copies and storage problems, stacked under the transport bar */
+.file-banners {
   position: fixed;
   top: 54px;
   left: 50%;
   transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recovery-banner.storage-banner {
+  background: #3b0b0b;
+  border-color: #ef4444;
+}
+
+.recovery-banner {
   background: #3b2f0b;
   border: 1px solid #eab308;
   border-radius: 4px;
   padding: 6px 10px;
   font-size: 12px;
-  z-index: 100;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3152,6 +3164,26 @@ body {
   white-space: nowrap;
   user-select: text;
 }
+
+/* Resilience: notices, panel errors, the audio start bar */
+.notices { position: fixed; right: 12px; bottom: 12px; z-index: 1000; display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
+.notice { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; font-size: 12px; background: var(--bg-panel); color: var(--text-primary); border: 1px solid var(--border-color); border-left: 3px solid var(--accent-blue); border-radius: 4px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4); }
+.notice-error { border-left-color: var(--accent-red); }
+.notice span { flex: 1; }
+.panel-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; font-size: 12px; color: var(--text-primary); background: var(--bg-panel); border: 1px solid var(--accent-red); border-radius: 4px; }
+.panel-error-detail { color: var(--text-secondary); }
+.panel-error-top { margin: 24px; font-size: 14px; }
+.audio-bar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 6px 12px; font-size: 12px; color: var(--text-primary); background: var(--bg-panel); border-bottom: 1px solid var(--accent-blue); }
+.audio-bar-error { border-bottom-color: var(--accent-red); }
+
+/* Services dialog, native plug-in consent */
+.services-dialog { width: 460px; }
+.service-row { padding: 8px 0; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px; }
+.service-head { display: flex; align-items: center; gap: 8px; }
+.service-head .native-status { margin-left: auto; }
+.service-address { display: flex; align-items: center; gap: 8px; }
+.service-address input { flex: 1; }
+.native-consent-list { margin: 6px 0; padding-left: 18px; }
 
 /* Browser notes */
 .small-screen-notice {

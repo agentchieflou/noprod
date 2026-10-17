@@ -21,7 +21,11 @@ import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio
 import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from './audio/coachLoader';
 import { getPluginEditor, subscribePluginEditor } from './native/pluginEditor';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
-import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage } from './native/audioCore';
+import { handleOrchestratorMessage } from './native/audioCore';
+import { getOrchestratorStatus, onOrchestratorMessage, sendOrchestrator, subscribeOrchestrator } from './native/orchestrator';
+import { getServices, subscribeServices, getServicesDialogOpen, subscribeServicesDialog, setServicesDialogOpen } from './native/services';
+import { watchNativeConsent } from './native/consent';
+import NativeConsentDialog from './components/NativeConsentDialog';
 import ArrangementRuler from './components/ArrangementRuler';
 import TempoControls from './components/TempoControls';
 import Playhead from './components/Playhead';
@@ -32,7 +36,11 @@ import FileMenu from './components/FileMenu';
 import { SmallScreenNotice } from './components/BrowserNotes';
 import { automationParams } from './audio/automation';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
-import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
+import { audioContext, masterAnalyser, masterLimiter, getStripInput, resumeAudio } from './audio/engine';
+import { notify, guarded } from './notify';
+import { Panel } from './components/ErrorBoundary';
+import AudioStatus from './components/AudioStatus';
+import Notices from './components/Notices';
 import { liveModelStats } from './audio/liveModels';
 import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
 // Not lazy with the DSP Map: it notes each track's sound as it's selected, for the map's A/B
@@ -64,7 +72,10 @@ if (import.meta.env.DEV) {
     // the coach's band, once it has loaded (coachLoader.ts)
     get accompany() { return accompanyDebug(); } };
 }
-const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
+const ServicesDialog = lazy(() => import('./components/ServicesDialog'));
+
+// A project that wants native plug-ins asks before GhostDAW loads them
+watchNativeConsent(useDAWStore);
 
 // A hosted plug-in's own editor changed a parameter: its device keeps it
 onNativeEditorParameter((deviceId, parameterId, value, gesture) =>
@@ -172,7 +183,7 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggedOverTrack, setDraggedOverTrack] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'dspmap' | 'mixer' | 'vst-paths' | 'dictation'>('devices');
+  const [chosenTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'dspmap' | 'mixer' | 'vst-paths' | 'dictation'>('devices');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [showIO, setShowIO] = useState(false);
@@ -183,8 +194,13 @@ function App() {
   const capturable = useSyncExternalStore(onCaptureBufferChange, () => hasCapturable(useDAWStore.getState())) && tracks.length > 0;
 
   // AI Dictation (Orchestrator connection)
-  const orchestratorWsRef = useRef<WebSocket | null>(null);
-  const [orchestratorConnected, setOrchestratorConnected] = useState(false);
+  const services = useSyncExternalStore(subscribeServices, getServices);
+  const servicesOpen = useSyncExternalStore(subscribeServicesDialog, getServicesDialogOpen);
+  const orchestratorConnected = useSyncExternalStore(subscribeOrchestrator, getOrchestratorStatus) === 'connected';
+  const dictationOn = services.dictation.enabled;
+  const ghostdawOn = services.ghostdaw.enabled;
+  // A tab for a service that is off isn't there to stay on
+  const activeTab = (chosenTab === 'dictation' && !dictationOn) || (chosenTab === 'vst-paths' && !ghostdawOn) ? 'devices' : chosenTab;
   const [dictationInput, setDictationInput] = useState('');
   const [dictationStatus, setDictationStatus] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
   const [dictationCode, setDictationCode] = useState<string | null>(null);
@@ -192,45 +208,32 @@ function App() {
   const [dictationResult, setDictationResult] = useState<DictationResult | null>(null);
   const awaitingHaps = useRef(false); // only the window that dictated makes tracks from the result
 
-  useEffect(() => {
-    const ws = new WebSocket(ORCHESTRATOR_WS_URL);
-    orchestratorWsRef.current = ws;
-    attachOrchestrator(ws);
-
-    ws.onopen = () => setOrchestratorConnected(true);
-    ws.onclose = () => { setOrchestratorConnected(false); detachOrchestrator(ws); };
-    ws.onerror = () => setOrchestratorConnected(false);
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (handleOrchestratorMessage(msg)) return; // native plug-in host (Audio Core)
-      if (msg.type === 'GENERATED') {
-        setDictationCode(msg.code);
-        setDictationStatus('done');
-      } else if (msg.type === 'HAP_STREAM') {
-        // The evaluated pattern: its parts become tracks playing library sounds
-        if (!awaitingHaps.current) return;
-        awaitingHaps.current = false;
-        import('./audio/dictation').then((d) => setDictationResult(d.applyDictation(useDAWStore, msg)));
-      } else if (msg.type === 'ERROR') {
-        awaitingHaps.current = false;
-        setDictationError(msg.message);
-        setDictationStatus('error');
-      }
-    };
-
-    return () => { detachOrchestrator(ws); ws.close(); };
-  }, []);
+  useEffect(() => onOrchestratorMessage((msg) => {
+    if (handleOrchestratorMessage(msg)) return; // native plug-in host (Audio Core)
+    if (msg.type === 'GENERATED') {
+      setDictationCode(msg.code);
+      setDictationStatus('done');
+    } else if (msg.type === 'HAP_STREAM') {
+      // The evaluated pattern: its parts become tracks playing library sounds
+      if (!awaitingHaps.current) return;
+      awaitingHaps.current = false;
+      import('./audio/dictation').then((d) => setDictationResult(d.applyDictation(useDAWStore, msg)));
+    } else if (msg.type === 'ERROR') {
+      awaitingHaps.current = false;
+      setDictationError(msg.message);
+      setDictationStatus('error');
+    }
+  }), []);
 
   const handleSendDictation = () => {
-    const ws = orchestratorWsRef.current;
-    if (!dictationInput.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!dictationInput.trim() || !orchestratorConnected) return;
 
     setDictationStatus('sending');
     setDictationError(null);
     setDictationCode(null);
     setDictationResult(null);
     awaitingHaps.current = true;
-    ws.send(JSON.stringify({ type: 'DICTATION', text: dictationInput.trim() }));
+    sendOrchestrator({ type: 'DICTATION', text: dictationInput.trim() });
   };
 
   // Playhead display: the transport owns position and scheduling; this just
@@ -317,15 +320,13 @@ function App() {
       !fileNameLower.endsWith('.ogg') && 
       !fileNameLower.endsWith('.m4a')
     ) {
-      alert("Unsupported file format. Please drop a WAV, MP3, OGG, or M4A file.");
+      notify("Unsupported file format. Please drop a WAV, MP3, OGG, or M4A file.", 'error');
       return;
     }
 
     try {
       // Ensure audio context is running to decode
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-      }
+      await resumeAudio();
 
       const arrayBuffer = await file.arrayBuffer();
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
@@ -351,7 +352,7 @@ function App() {
       }
     } catch (err: any) {
       console.error("Audio Decoding Error:", err);
-      alert(`Audio decoding failed: ${err.message || err}. Ensure the file is not corrupted.`);
+      notify(`Audio decoding failed: ${err.message || err}. Ensure the file is not corrupted.`, 'error');
     }
   };
 
@@ -445,7 +446,7 @@ function App() {
   // Run grouping
   const handleGroupSelectedTracks = () => {
     if (selectedTrackIds.length < 2) {
-      alert("Please select at least 2 tracks using the checkboxes to group them.");
+      notify("Please select at least 2 tracks using the checkboxes to group them.");
       return;
     }
     groupTracks(selectedTrackIds);
@@ -480,7 +481,7 @@ function App() {
   // Audition a note immediately through the track's channel (instrument panel keyboard)
   const auditionNote = (track: any, pitch: number) => {
     if (!track?.instrument) return;
-    if (audioContext.state === 'suspended') audioContext.resume();
+    void resumeAudio();
     // played as a key is, so a note that isn't rendered yet still sounds
     const now = audioContext.currentTime;
     startVoice(audioContext, getStripInput(track.id), track.instrument.parameters, pitch, now, 1).release(now + 0.35);
@@ -488,7 +489,7 @@ function App() {
 
   // Freeze: render the track's clips offline (instrument included for MIDI),
   // store the buffer on the track and lock its devices. Unfreeze reverses it.
-  const handleFreezeTrack = async (track: any) => {
+  const handleFreezeTrack = guarded('Freezing the track', async (track: any) => {
     if (track.isFrozen) {
       unfreezeTrack(track.id);
       return;
@@ -496,7 +497,7 @@ function App() {
     if (isPlaying) togglePlayback();
     const trackRegions = regions.filter((r: any) => r.trackId === track.id);
     if (trackRegions.length === 0) {
-      alert('Nothing to freeze: this track has no clips.');
+      notify('Nothing to freeze: this track has no clips.');
       return;
     }
     const end = Math.max(...trackRegions.map((r: any) => r.startTime + clipTimelineLength(r, bpm))) + 0.5; // headroom for release tails
@@ -512,7 +513,7 @@ function App() {
     await whenRendered(offline); // library notes render in workers first
     const rendered = await offline.startRendering();
     setTrackFrozen(track.id, rendered, end);
-  };
+  });
 
   // Ableton Live Set (.als) Import Handler
   const handleAlsImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -523,23 +524,25 @@ function App() {
       const { parseAbletonSet } = await import('./alsImport');
       const set = await parseAbletonSet(file, returns, PRESET_COLORS);
       if (!set) {
-        alert("Invalid file format. Ensure this is a valid Ableton Live Set (.als) file.");
+        notify("Invalid file format. Ensure this is a valid Ableton Live Set (.als) file.", 'error');
         return;
       }
-      const { tempo, tracksList, regionsList } = set;
+      const { tempo, tracksList, regionsList, skippedAudioClips } = set;
 
       // Update store state
       loadAbletonSet(tempo, tracksList, regionsList);
-      alert(`Loaded Ableton Live Set: "${file.name}"!\nBPM: ${tempo}\nTracks: ${tracksList.length}\nRegions: ${regionsList.length}`);
+      notify(`Loaded Ableton Live Set “${file.name}”: ${tempo} BPM, ${tracksList.length} tracks, ${regionsList.length} MIDI clips${skippedAudioClips ? `; ${skippedAudioClips} audio clips not imported (their recordings aren't in the set)` : ''}`);
 
     } catch (err: any) {
       console.error("ALS Import Error:", err);
-      alert(`Failed to load Ableton Live Set: ${err.message || err}`);
+      notify(`Failed to load Ableton Live Set: ${err.message || err}`, 'error');
     }
   };
 
   return (
     <div className="daw-container">
+      <AudioStatus />
+      <Notices />
       <SmallScreenNotice />
       {/* Ableton-style Control Bar */}
       <div className="control-bar">
@@ -555,7 +558,7 @@ function App() {
           className={`btn-transport capture-btn ${capturable ? 'capturable' : ''}`}
           onClick={() => {
             const n = captureMidi(useDAWStore.getState());
-            if (!n) alert('Nothing to capture: play something on an armed MIDI track (or one with monitoring In) first.');
+            if (!n) notify('Nothing to capture: play something on an armed MIDI track (or one with monitoring In) first.');
           }}
           title="Capture MIDI: turn what you just played on armed MIDI tracks into a clip"
         >
@@ -630,7 +633,7 @@ function App() {
         <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
 
         {/* AI Dictation */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        {dictationOn && <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           <input
             type="text"
             placeholder="Describe a beat or melody..."
@@ -655,7 +658,13 @@ function App() {
           >
             {orchestratorConnected ? '●' : '○'}
           </span>
-        </div>
+        </div>}
+
+        <button className="btn-metronome" onClick={() => setServicesDialogOpen(!servicesOpen)} title="Turn local services on or off: GhostDAW plug-in host, AI dictation">
+          Services
+        </button>
+        {servicesOpen && <Suspense fallback={null}><ServicesDialog /></Suspense>}
+        <NativeConsentDialog />
 
         {/* View Switcher */}
         <div className="view-switcher">
@@ -1082,13 +1091,13 @@ function App() {
 
             </div>
           ) : (
-            <Suspense fallback={null}><SessionView tracks={visibleTracks} onDropFile={handleDrop} onOpenClip={() => setActiveTab('clip')} /></Suspense>
+            <Panel name="session"><Suspense fallback={null}><SessionView tracks={visibleTracks} onDropFile={handleDrop} onOpenClip={() => setActiveTab('clip')} /></Suspense></Panel>
           )}
         </div>
       </div>
 
-      {(keyboardMidi || coachOpen) && <Suspense fallback={null}><KeyboardPanel /></Suspense>}
-      {pluginEditor && <Suspense fallback={null}><PluginEditorWindow /></Suspense>}
+      {(keyboardMidi || coachOpen) && <Panel name="keyboard"><Suspense fallback={null}><KeyboardPanel /></Suspense></Panel>}
+      {pluginEditor && <Panel name="plugin-editor"><Suspense fallback={null}><PluginEditorWindow /></Suspense></Panel>}
 
       {/* Bottom Detail panel */}
       <div className={`bottom-detail-panel ${(activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi') || activeTab === 'sound' || activeTab === 'dspmap' || activeTab === 'mixer' ? 'tall' : ''}`}>
@@ -1098,12 +1107,13 @@ function App() {
           <button className={`detail-tab ${activeTab === 'sound' ? 'active' : ''}`} onClick={() => setActiveTab('sound')}>Sound Designer</button>
           <button className={`detail-tab ${activeTab === 'dspmap' ? 'active' : ''}`} onClick={() => setActiveTab('dspmap')}>DSP Map</button>
           <button className={`detail-tab ${activeTab === 'mixer' ? 'active' : ''}`} onClick={() => setActiveTab('mixer')}>Mixer</button>
-          <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>
-          <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>
+          {ghostdawOn && <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>}
+          {dictationOn && <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>}
         <span className="app-version" title={`noprod ${APP_VERSION}, build ${APP_COMMIT}`}>v{APP_VERSION} · {APP_COMMIT}</span>
         </div>
         
         <div className="detail-content">
+          <Panel key={activeTab} name={activeTab}>
           {activeTab === 'devices' && (
             <div className={`device-chain-view ${selectedTrack?.isFrozen ? 'frozen-locked' : ''}`}>
               {selectedTrack ? (
@@ -1151,15 +1161,16 @@ function App() {
 
           {activeTab === 'mixer' && <Suspense fallback={null}><Mixer onOpenDevices={() => setActiveTab('devices')} /></Suspense>}
 
-          {activeTab === 'vst-paths' && (
+          {activeTab === 'vst-paths' && ghostdawOn && (
             <Suspense fallback={null}><PluginFolders selectedTrack={selectedTrack} /></Suspense>
           )}
 
-          {activeTab === 'dictation' && (
+          {activeTab === 'dictation' && dictationOn && (
             <Suspense fallback={null}>
               <DictationPanel status={dictationStatus} code={dictationCode} result={dictationResult} error={dictationError} />
             </Suspense>
           )}
+          </Panel>
         </div>
       </div>
     </div>

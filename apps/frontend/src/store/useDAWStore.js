@@ -5,6 +5,7 @@ import { clipTimelineLength } from '../audio/clipPlayback';
 import { mapDeviceAnywhere } from './deviceTree';
 import { resolveTarget, splitMappings, targetKey } from '../audio/midiTargets';
 import { sliceClip, cutRange, overlapping } from '../project/comping';
+import { reportStorageError } from '../project/storage';
 import { boundHistory } from './historyBudget';
 
 // Undo/redo: which slice of the store is history-tracked. Transport/selection/UI
@@ -188,11 +189,8 @@ export const createDefaultProject = () => ({
   punchOutTime: 8,
   isPunchEnabled: false,
   
-  // Custom VST Paths for local scanning (Antares, FabFilter)
-  vstScanPaths: [
-    'C:/Program Files/Common Files/VST3',
-    'C:/Program Files/Steinberg/VstPlugins'
-  ],
+  // Folders GhostDAW scans for plug-ins, besides the system's own
+  vstScanPaths: [],
 
   // Tracks list
   tracks: [
@@ -209,9 +207,7 @@ export const createDefaultProject = () => ({
       isSoloed: false,
       isArmed: false,
       color: '#3b82f6',
-      plugins: [
-        { id: uuidv4(), name: 'Antares AutoTune', type: 'vst', parameters: { 'Retune Speed': 20, 'Humanize': 60 } }
-      ],
+      plugins: [],
     },
     {
       id: 'track-midi-2',
@@ -227,9 +223,7 @@ export const createDefaultProject = () => ({
       isArmed: false,
       color: '#10b981',
       instrument: createDefaultInstrument(),
-      plugins: [
-        { id: uuidv4(), name: 'FabFilter Pro-Q 3', type: 'vst', parameters: { 'Freq': 440, 'Gain': 0.0 } }
-      ],
+      plugins: [],
     },
   ],
   
@@ -274,8 +268,11 @@ export const useDAWStore = create((set, get) => ({
   // Plugins found by scanning real folders (persisted in localStorage, not per project).
   // [{ name, format, path }]
   scannedPlugins: (() => {
+    let saved = null;
+    try { saved = localStorage.getItem('noprod-scanned-plugins'); } catch (err) { reportStorageError('Plug-in list', err); }
     try {
-      return JSON.parse(localStorage.getItem('noprod-scanned-plugins') || '[]');
+      const list = JSON.parse(saved || '[]');
+      return Array.isArray(list) ? list : [];
     } catch {
       return [];
     }
@@ -480,7 +477,7 @@ export const useDAWStore = create((set, get) => ({
   setScannedPlugins: (scannedPlugins) => {
     try {
       localStorage.setItem('noprod-scanned-plugins', JSON.stringify(scannedPlugins));
-    } catch { /* storage full/unavailable: list still lives in memory */ }
+    } catch (err) { reportStorageError('Plug-in list', err); /* still lives in memory */ }
     set({ scannedPlugins });
   },
 

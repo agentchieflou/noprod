@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { useDAWStore } from '../store/useDAWStore';
 import { findNativePlugin, nativeDeviceFor } from '../native/audioCore';
+import { notify } from '../notify';
 import AudioCorePanel from './AudioCorePanel';
 import { LatencyInfo } from './BrowserNotes';
 import { canScanFolders, FOLDER_SCAN_REASON } from '../platform/support';
@@ -58,9 +59,9 @@ export default function PluginFolders({ selectedTrack }: { selectedTrack: any })
         if (!merged.some((m: any) => m.path === p.path)) merged.push(p);
       });
       setScannedPlugins(merged);
-      if (found.length === 0) alert(`No plugin files (.vst3/.dll/.clap/.component) found in "${dirHandle.name}".`);
+      if (found.length === 0) notify(`No plugin files (.vst3/.dll/.clap/.component) found in "${dirHandle.name}".`);
     } catch (err: any) {
-      if (err?.name !== 'AbortError') alert(`Scan failed: ${err.message || err}`);
+      if (err?.name !== 'AbortError') notify(`Scan failed: ${err.message || err}`);
     } finally {
       setIsScanning(false);
     }
@@ -128,11 +129,11 @@ export default function PluginFolders({ selectedTrack }: { selectedTrack: any })
                     className="btn-icon"
                     title={selectedTrack ? `Add to ${selectedTrack.name}'s device chain` : 'Select a track first'}
                     onClick={() => {
-                      if (!selectedTrack) { alert('Select a track first (click a track header).'); return; }
+                      if (!selectedTrack) { notify('Select a track first (click a track header).'); return; }
                       // The browser only knows the path inside the picked folder;
                       // the Audio Core's scan has the full path it loads from
                       const nativePlugin = findNativePlugin(p.name);
-                      if (!nativePlugin) { alert(`Scan this folder in the Audio Core (right) to host ${p.name}.`); return; }
+                      if (!nativePlugin) { notify(`Scan this folder in the Audio Core (right) to host ${p.name}.`); return; }
                       addDeviceToTrack(selectedTrack.id, nativeDeviceFor(nativePlugin));
                     }}
                   >

@@ -11,10 +11,12 @@ import {
   previewFile, stopPreview, decodeLibraryFile, type LibraryFolder, type LibraryFile
 } from '../browser/library';
 import { SOUND_PRESETS, DRUM_KIT_PRESETS, isDrumSample } from '../browser/presets';
+import { getServices, subscribeServices, setServicesDialogOpen } from '../native/services';
 import { subscribeAudioCore, getAudioCore, findNativePlugin, nativeDeviceFor } from '../native/audioCore';
 import {
   createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview
 } from '../audio/library';
+import { notify, guarded, errorMessage } from '../notify';
 import { subscribeUserSounds, getUserSounds, deleteUserSound } from '../audio/userSounds';
 
 export const SAMPLE_DRAG_TYPE = 'application/x-noprod-sample';
@@ -51,6 +53,7 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
   const places = useSyncExternalStore(subscribeLibrary, getPlaces);
   const mySounds = useSyncExternalStore(subscribeUserSounds, getUserSounds);
   const audioCore = useSyncExternalStore(subscribeAudioCore, getAudioCore);
+  const ghostdawOn = useSyncExternalStore(subscribeServices, getServices).ghostdaw.enabled;
   const [open, setOpen] = useState<Record<string, boolean>>({ library: true });
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState<string | null>(null);
@@ -172,7 +175,7 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
       // Plug-ins the Audio Core found (hostable on any track), then ones only
       // the browser's folder scan saw, which need scanning in the Audio Core
       id: 'plugins', label: 'Plug-ins', icon: <Plug size={13} />,
-      items: [
+      items: !ghostdawOn ? [] : [
         ...(audioCore.state?.availablePlugins ?? []).map((p) => ({
           key: `native:${p.path}:${p.pluginId}`, label: p.name, hint: `${p.format}${p.vendor ? ` · ${p.vendor}` : ''} · hosted by the Audio Core`,
           onLoad: () => loadAudioDevice(nativeDeviceFor(p))
@@ -182,7 +185,9 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
           onLoad: () => { flash('Scan this folder in the Audio Core first (VST Folders Scan tab)'); onShowPluginScan(); }
         }))
       ],
-      empty: <button className="browser-link" onClick={onShowPluginScan}>Scan plug-in folders…</button>
+      empty: ghostdawOn
+        ? <button className="browser-link" onClick={onShowPluginScan}>Scan plug-in folders…</button>
+        : <button className="browser-link" onClick={() => setServicesDialogOpen(true)}>Turn on GhostDAW to host plug-ins…</button>
     },
     {
       id: 'samples', label: 'Samples', icon: <Music size={13} />,
@@ -236,7 +241,8 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
                   e.stopPropagation();
                   flash(`Rendering ${group}…`);
                   import('../audio/designing').then((d) => d.exportZip(group, inGroup.flatMap((it) => (it.recipe ? [it.recipe] : []))))
-                    .then(() => flash(`${group}.zip downloaded`));
+                    .then(() => flash(`${group}.zip downloaded`))
+                    .catch((err) => notify(`Exporting ${group} failed: ${errorMessage(err)}`, 'error'));
                 }}>
                 <Download size={11} />
               </button>
@@ -305,7 +311,7 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
             {p.root ? renderFolder(p.root, 1, `place:${p.id}`) : (
               <div className="browser-folder" style={{ paddingLeft: 20 }}>
                 <Folder size={12} /> {p.name}
-                {p.status === 'needs-permission' && <button className="browser-link" onClick={() => reconnectPlace(p.id)}><RefreshCw size={10} /> reconnect</button>}
+                {p.status === 'needs-permission' && <button className="browser-link" onClick={guarded('Reconnecting the folder', () => reconnectPlace(p.id))}><RefreshCw size={10} /> reconnect</button>}
                 {p.status === 'scanning' && <span className="browser-count">scanning…</span>}
               </div>
             )}

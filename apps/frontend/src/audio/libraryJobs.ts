@@ -1,14 +1,15 @@
 // What the library's workers do (see libraryWorker.ts): render notes (prewarm,
 // playback, the Sound Designer), measure what a live physical model needs,
-// and resynthesize recordings. Where workers can't run, the main thread
+// resynthesize recordings, and stretch warped clips to the tempo (warp.ts). Where workers can't run, the main thread
 // loads this and does the same, so the renderer only loads there then.
 
-import { liveTunings, loudnessGain, render, resynthesize, type RenderOptions, type SoundRecipe } from '@noprod/sound';
+import { liveTunings, loudnessGain, render, resynthesize, stretch, type RenderOptions, type SoundRecipe, type StretchOptions } from '@noprod/sound';
 
 export type LibraryJob =
   | { kind?: 'render'; recipe: SoundRecipe; options: RenderOptions }
   | { kind: 'live'; recipe: SoundRecipe; sampleRate: number; notes: { note: number; velocity: number; transpose: number }[] }
-  | { kind: 'resynth'; samples: Float32Array; sampleRate: number; name: string; recipeId: string };
+  | { kind: 'resynth'; samples: Float32Array; sampleRate: number; name: string; recipeId: string }
+  | { kind: 'stretch'; channels: Float32Array[]; options: StretchOptions };
 
 // Recipes arrive as copies; keep one object per recipe so its loudness is
 // measured once (render caches it per object), for the last few recipes
@@ -33,6 +34,10 @@ function same(recipe: SoundRecipe) {
 export function runJob(m: LibraryJob): { data: Record<string, unknown>; transfer: Transferable[] } {
   if (m.kind === 'resynth') {
     return { data: { recipe: resynthesize(m.samples, m.sampleRate, { name: m.name, id: m.recipeId }) }, transfer: [] };
+  }
+  if (m.kind === 'stretch') {
+    const channels = stretch(m.channels, m.options);
+    return { data: { channels }, transfer: channels.map((c) => c.buffer) };
   }
   const recipe = same(m.recipe);
   if (m.kind === 'live') {

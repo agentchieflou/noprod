@@ -14,6 +14,7 @@ coach teaches as you play.
 | `apps/audio_core` | GhostDAW: C++/JUCE host for LPI and VST3 plugins on 8082 (see its README) |
 | `packages/sound` | `@noprod/sound`: sound recipes and their renderer, the library, physical models (`model.ts`), DSP chains (`chain.ts`), resynthesis. See its README |
 | `packages/theory` | `@noprod/theory`: keys, chords, voice leading, the Keyboard Coach. See its README |
+| `packages/time` | `@noprod/time`: musical time: the tempo map (with ramps), the meter map, beats to seconds and back, bars.beats.ticks, grids. See its README |
 | `packages/pattern` | `@noprod/pattern`: the pattern engine behind AI dictation: cycles as exact fractions, events, the mini-notation and its functions (#133). See its README |
 | `packages/shared` | WebSocket message types |
 
@@ -29,7 +30,7 @@ Frontend landmarks: `App.tsx` (layout, bottom-panel tabs), `audio/engine.ts`
 ## Commands
 
 ```sh
-npm test                                   # packages/sound, packages/theory and packages/pattern
+npm test                                   # packages/sound, theory, time and pattern, and the frontend's project files
 cd packages/sound && ../../node_modules/.bin/tsc -p .     # typecheck a package
 cd apps/frontend && npx tsc -b && npx oxlint src && npx vite build
 node scripts/check-licenses.mjs            # the dependency rule below, enforced in CI
@@ -42,10 +43,8 @@ E2E_SKIP=dictation npm run e2e             # without the one that needs unpkg
 - Packages run as TypeScript directly (Node 22.18+ strips types): imports
   carry `.ts` extensions, and nothing that needs compiling (no enums,
   namespaces or parameter properties).
-- oxlint: the accepted warnings are PianoRoll's `exhaustive-deps` and,
-  until #190 clears them, the seven from oxlint 1.88's React rules listed
-  there. Leave those to #190, and add no new ones. A
-  `.tsx` file exports only components (`only-export-components`); helpers and
+- oxlint: the one accepted warning is PianoRoll's `exhaustive-deps`. Add no new
+  ones. A `.tsx` file exports only components (`only-export-components`); helpers and
   constants go in a `.ts` file beside it.
 - A Vite dev server you started yourself must be restarted after you edit
   source files and before you run browser checks against it: hot reloads

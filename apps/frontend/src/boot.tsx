@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import { initEngine } from './audio/engine'
 import { initTransport } from './audio/transport'
+import { initWarpRenders } from './audio/warp'
 import { initSession } from './audio/session'
 import { initLiveMidi } from './audio/inputs'
 import { initMidiLearn } from './audio/midiLearn'
@@ -11,10 +12,15 @@ import { initCapture } from './audio/capture'
 import { initComputerKeyboard } from './audio/computerKeyboard'
 import { initCoachLoader } from './audio/coachLoader'
 import { useDAWStore } from './store/useDAWStore'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { installRootHandlers, rootErrorHandlers } from './resilience'
+
+installRootHandlers()
 
 // The audio engine registers its worklets before the first render so device
 // chains are fully built by the time the UI can touch them.
 initTransport(useDAWStore)
+initWarpRenders(useDAWStore)
 initSession(useDAWStore)
 initLiveMidi(useDAWStore)
 initMidiLearn(useDAWStore)
@@ -23,9 +29,11 @@ initCapture(useDAWStore)
 initComputerKeyboard(useDAWStore)
 initCoachLoader(useDAWStore)
 initEngine(useDAWStore).finally(() => {
-  createRoot(document.getElementById('root')!).render(
+  createRoot(document.getElementById('root')!, rootErrorHandlers).render(
     <StrictMode>
-      <App />
+      <ErrorBoundary name="app" top>
+        <App />
+      </ErrorBoundary>
     </StrictMode>,
   )
 })

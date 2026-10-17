@@ -1,7 +1,24 @@
-# Plugin-hosting tests (configure with -DGHOSTDAW_BUILD_TESTS=ON, then run
-# GhostDAWTests). Builds its own test plugins: an LPI gain in three variants
-# (good, wrong ABI major, no factory export), an LPI gain with an editor (and
-# its polling and latency variants), and a JUCE VST3 gain bundle.
+# The tests (configure with -DGHOSTDAW_BUILD_TESTS=ON).
+#
+# ghostdaw_tests covers the new host: the platform layer (the WebSocket
+# server over real sockets, JSON, the loop, pairing) and the host (the
+# insert chains, the mixer, the hap engine, the audio device on the null
+# backend, the watchdog). GhostDAWTests covers
+# the JUCE host until the switch (#134). Both build their own test plugins:
+# an LPI gain in three variants (good, wrong ABI major, no factory export),
+# an LPI gain with an editor (and its polling and latency variants), and a
+# JUCE VST3 gain bundle.
+
+add_executable(ghostdaw_tests main.cpp platform_tests.cpp host_tests.cpp)
+target_link_libraries(ghostdaw_tests PRIVATE ghostdaw_host)
+target_compile_definitions(ghostdaw_tests PRIVATE GHOSTDAW_EXE_PATH="$<TARGET_FILE:ghostdaw>")
+add_dependencies(ghostdaw_tests ghostdaw)
+ghostdaw_warnings(ghostdaw_tests)
+add_test(NAME ghostdaw_tests COMMAND ghostdaw_tests)
+
+if(NOT GHOSTDAW_JUCE_HOST)
+    return()
+endif()
 
 foreach(variant IN ITEMS good bad_major no_export)
     set(target lpi_test_gain_${variant})

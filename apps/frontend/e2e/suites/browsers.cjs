@@ -113,24 +113,35 @@ module.exports = async (page, ctx) => {
   const midiNote = await page.evaluate(() => [...document.querySelectorAll('.browser-note')].map((n) => n.textContent).find((t) => /MIDI blocked/.test(t)) ?? '');
   check('The MIDI input says why, and what to do', /MIDI blocked/.test(midiNote) && /(Allow MIDI|site-permission add-on)/.test(midiNote), midiNote.slice(0, 80));
 
-  // 6. Project files without CompressionStream
+  // 6. Project files without CompressionStream (#136's v2 file: project.json
+  // goes in plain, flagged so, and v1's plain JSON files still load)
+  await page.evaluate(async () => { window.__pf = await import('/src/project/projectFile.ts'); return 1; });
+  await page.evaluate(async () => { window.__format = await import('/src/project/format.ts'); return 1; });
+  await page.evaluate(async () => { window.__store = await import('/src/store/useDAWStore.js'); return 1; });
   const file = await page.evaluate(async () => {
-    const pf = await import('/src/project/projectFile.ts');
-    const gz = await pf.serializeProject(window.__dawStore.getState());
-    const gzMagic = new Uint8Array(await gz.slice(0, 2).arrayBuffer());
-    const saved = window.CompressionStream;
+    const pf = window.__pf, format = window.__format;
+    const flagsOf = async (blob) => new DataView(await blob.slice(16, 32).arrayBuffer()).getUint32(4, true);
+    const normal = await pf.serializeProject(window.__dawStore.getState());
+    const v2 = [...new Uint8Array(await normal.slice(0, 8).arrayBuffer())].join() === '137,78,80,82,74,13,10,26';
+    const { json } = pf.snapshotProject(window.__dawStore.getState());
+    const saved = [window.CompressionStream, window.DecompressionStream];
     delete window.CompressionStream;
-    let plain, plainMagic, back, backGz;
+    delete window.DecompressionStream;
+    let plainFlags, tracks;
     try {
-      plain = await pf.serializeProject(window.__dawStore.getState());
-      plainMagic = new Uint8Array(await plain.slice(0, 2).arrayBuffer());
-    } finally { window.CompressionStream = saved; }
-    back = await pf.deserializeProject(plain, window.__transport.audioContext);
-    backGz = await pf.deserializeProject(gz, window.__transport.audioContext);
-    return { gz: gzMagic[0] === 0x1f && gzMagic[1] === 0x8b, plain: plainMagic[0] === 0x7b, tracks: back.tracks.length, tracksGz: backGz.tracks.length, want: window.__dawStore.getState().tracks.length };
+      const plain = await format.writeProjectFile(json, []);
+      plainFlags = await flagsOf(plain);
+      const back = await format.readProjectFile(plain, window.__store.createDefaultProject());
+      tracks = back.doc.project.tracks.length;
+    } finally { [window.CompressionStream, window.DecompressionStream] = saved; }
+    const st = window.__dawStore.getState();
+    const v1plain = new Blob([JSON.stringify({ format: 'noprod-project', version: 1, project: Object.fromEntries(['bpm', 'timeSignatures', 'countInBars', 'masterVolume', 'masterPan', 'returns', 'masterPlugins', 'isLimiterEnabled', 'isLoopEnabled', 'loopStart', 'loopEnd', 'locators', 'punchInTime', 'punchOutTime', 'isPunchEnabled', 'vstScanPaths', 'tracks', 'regions', 'sessionClips', 'savedRacks'].map((k) => [k, st[k]])), buffers: {} })]);
+    const fromV1 = await pf.deserializeProject(v1plain, window.__transport.audioContext);
+    return { v2, gzFlags: await flagsOf(normal), plainFlags, tracks, v1Tracks: fromV1.tracks.length, want: st.tracks.length };
   });
-  check('Normally project files are gzipped', file.gz);
-  check('Without CompressionStream a project saves as plain JSON that loads', file.plain && file.tracks === file.want && file.tracksGz === file.want, JSON.stringify(file));
+  check('Normally project.json is gzipped inside the file', file.v2 && file.gzFlags === 1, JSON.stringify(file));
+  check('Without CompressionStream it is stored plain, and loads without DecompressionStream', file.plainFlags === 0 && file.tracks === file.want, JSON.stringify(file));
+  check('A plain-JSON v1 file still loads', file.v1Tracks === file.want, JSON.stringify(file));
 
   check('Nothing used an alert', dialogs.length === 0, dialogs.join(' | '));
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
