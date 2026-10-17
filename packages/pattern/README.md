@@ -95,8 +95,10 @@ Semantics worth knowing, matching the published language:
   the slot: `a b/2` plays `b` every other cycle.
 - `every(n, f)` applies `f` to cycles 0, n, 2n…; `lastOf` to n−1, 2n−1…
 - Euclidean rhythms are Bjorklund's: `(3,8)` is `x..x..x.`, `(5,8)` is
-  `x.xx.xx.`; the rotation moves the hits later by that many steps, and a
-  negative count of hits inverts hits and rests.
+  `x.xx.xx.`; the rotation moves the hits later by that many steps
+  (`(3,8,2)` is `x.x..x..`, steps 0, 2 and 5, as the published engine
+  plays it; Tidal's text describes the turn as leftward), and a negative
+  count of hits inverts hits and rests.
 - Randomness is a hash of the event's time and a seed, so the same pattern
   always gives the same events, and `degradeBy(p)` and `sometimesBy(p, f)`
   pick complementary shares (`f` is applied to the events `degradeBy`
@@ -119,7 +121,9 @@ over `[0, 2)` equals `[0, 1)` then `[1, 2)`; `fast(2)` equals the pattern
 with its time halved; the same input always gives the same events; every
 part lies inside its whole); and a fuzz test of the parser: thousands of
 generated, mutated and random strings only ever give events or a
-`PatternError`, within the limits, always the same way.
+`PatternError`, within the limits, always the same way. `test/observed.test.ts`
+pins a set of strings to the onsets the published engine was observed to
+give for them (Euclid rotation, nested alternation, `!`, `/`, polymeter).
 
 ## Clean-room
 

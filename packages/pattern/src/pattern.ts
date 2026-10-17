@@ -308,7 +308,10 @@ export class Pattern<T = unknown> {
   }
 
   // A Euclidean rhythm: k hits spread as evenly as possible over n steps,
-  // turned `rotation` steps later (a negative k inverts hits and rests)
+  // turned `rotation` steps later (a negative k inverts hits and rests).
+  // Later, not earlier: Tidal's text describes euclidOff as a leftward turn,
+  // but the engine dictation ran on gives a(3,8,2) at steps 0, 2, 5, and
+  // that is what dictated code means (test/observed.test.ts pins it)
   euclid(hits: Patternable<number>, steps: Patternable<number>, rotation: Patternable<number> = 0): Pattern<T> {
     return patternify((k: number, pat: Pattern<T>) => patternify((n: number, p: Pattern<T>) => patternify((r: number, q: Pattern<T>) =>
       q.struct(euclidBools(k, n, r)))(rotation, p))(steps, pat))(hits, this);
