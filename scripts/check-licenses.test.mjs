@@ -94,8 +94,8 @@ test('a vendored directory must be listed exactly, not as a prefix', () => {
   assert.deepEqual(r.failures, ['apps/audio_core/third_party/lp is not listed in THIRD_PARTY.md']);
 });
 
-test('submodules: restricted ones are exceptions, permissive ones are listed', () => {
-  const gitmodules = '[submodule "a"]\n\tpath = apps/audio_core/JUCE\n[submodule "b"]\n\tpath = vendor/vst3sdk\n';
+test('submodules: permissive ones are listed, anything else is an exception or fails', () => {
+  const gitmodules = '[submodule "b"]\n\tpath = vendor/vst3sdk\n';
   const listed = run({ workspaces: app({}), licenses: {}, gitmodules, thirdPartyMd: THIRD_PARTY + '\n| `vendor/vst3sdk` | MIT |' });
   assert.deepEqual(listed.failures, []);
   const unlisted = run({ workspaces: app({}), licenses: {}, gitmodules });

@@ -9,8 +9,8 @@ coach teaches as you play.
 | Path | What |
 |---|---|
 | `apps/frontend` | The DAW: React 19, Vite, TypeScript. Zustand store in `src/store/useDAWStore.js`; Web Audio engine in `src/audio/`; UI in `src/components/` |
-| `apps/orchestrator` | WebSocket hub on 8080: AI dictation (Gemini → pattern code, checked with `@noprod/pattern`), relays to the audio core |
-| `apps/audio_core` | GhostDAW: C++/JUCE host for LPI and VST3 plugins on 8082 (see its README) |
+| `apps/orchestrator` | WebSocket hub on 8080: AI dictation (Gemini → pattern code, checked with `@noprod/pattern`) |
+| `apps/audio_core` | GhostDAW: C++ host for VST3, AU and LPI plugins on 8082, paired with the browser (see its README) |
 | `packages/sound` | `@noprod/sound`: sound recipes and their renderer, the library, physical models (`model.ts`), DSP chains (`chain.ts`), resynthesis. See its README |
 | `packages/theory` | `@noprod/theory`: keys, chords, voice leading, the Keyboard Coach. See its README |
 | `packages/time` | `@noprod/time`: musical time: the tempo map (with ramps), the meter map, beats to seconds and back, bars.beats.ticks, grids. See its README |
@@ -81,7 +81,8 @@ envelopes, determinism (`packages/sound/src/analysis.ts`).
     start clean: each suite already gets a fresh browser. Several imports
     in one call early in a page's life can hang until Puppeteer reports
     "Promise was collected", which aborts the whole suite.
-  - End with a "No page errors" check that ignores `ws://localhost:8080`.
+  - End with a "No page errors" check that ignores `ws://localhost:808x`
+    (the Orchestrator and GhostDAW, which may be away).
   - Look at what you built: `ctx.shot('name')` writes
     `apps/frontend/e2e/.shots/name.png`.
 - A bug fix comes with a test that fails on the old code. Check this: put
@@ -116,9 +117,10 @@ be compatible with that.
 - Before adding a dependency, check its license and those of everything it
   pulls in, and name them in the PR. Dev tooling that never ships (the e2e
   runner, linters) may use any license that allows our use of it.
-- Still to rebuild: JUCE (GhostDAW). Strudel (AGPL) was: AI dictation runs
-  on `packages/pattern`, our own engine, and the lockfile test in
+- Nothing is left to rebuild. Strudel (AGPL) was: AI dictation runs on
+  `packages/pattern`, our own engine, and the lockfile test in
   `packages/pattern/test/licenses.test.ts` keeps the AGPL packages out.
+  JUCE (paid) was: GhostDAW is our own C++ host (#134).
 
 ## Work tiers
 

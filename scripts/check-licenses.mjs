@@ -24,7 +24,7 @@ const ALLOWED = new Set([
 // Temporary: each rebuild PR deletes its entry. A package-exception applies
 // only to packages reached from `only` and from no other workspace.
 //   - Strudel (AGPL) under apps/sequencer: #133
-//   - the JUCE submodule: #134
+// (The JUCE submodule's entry went with it, #134.)
 export const EXCEPTIONS = [
   {
     pkg: /^(@strudel|@kabelsalat)\/|^(superdough|supradough|hydra-synth)$/,
@@ -32,9 +32,7 @@ export const EXCEPTIONS = [
     why: 'Strudel and its AGPL dependencies; replaced by our own pattern engine (#133)',
   },
 ];
-export const SUBMODULE_EXCEPTIONS = [
-  { path: 'apps/audio_core/JUCE', why: 'JUCE is paid/GPL; GhostDAW is rebuilt without it (#134)' },
-];
+export const SUBMODULE_EXCEPTIONS = [];
 
 const NOT_INSTALLED = 'NOT INSTALLED (other platform)';
 

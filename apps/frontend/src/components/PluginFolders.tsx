@@ -7,8 +7,8 @@ import AudioCorePanel from './AudioCorePanel';
 import { LatencyInfo } from './BrowserNotes';
 import { canScanFolders, FOLDER_SCAN_REASON } from '../platform/support';
 
-// The VST Folders Scan tab: the folders the Audio Core scans, a scan of a
-// folder from the browser, and the Audio Core itself
+// The VST Folders Scan tab: the project's note of plug-in folders, a scan
+// of a folder from the browser, and the Audio Core itself
 export default function PluginFolders({ selectedTrack }: { selectedTrack: any }) {
   const { vstScanPaths, addVstScanPath, removeVstScanPath, addDeviceToTrack, scannedPlugins, setScannedPlugins } = useDAWStore();
   const [isScanning, setIsScanning] = useState(false);
@@ -72,7 +72,8 @@ export default function PluginFolders({ selectedTrack }: { selectedTrack: any })
     <div className="vst-paths-view">
       <h5>Local VST3 Plugin Scan Locations</h5>
       <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
-        Add the full paths of your plug-in folders. The Audio Core scans them for VST3 and LPI plug-ins; the button below lists a folder's plug-in files from the browser.
+        GhostDAW scans the platform's plug-in folders and the ones in its own settings (<code>ghostdaw --add-scan-folder DIR</code>), never folders a page names.
+        The paths here are kept with the project as a note; the button below lists a folder's plug-in files from the browser.
       </p>
       
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
@@ -157,7 +158,7 @@ export default function PluginFolders({ selectedTrack }: { selectedTrack: any })
         </div>
       )}
     </div>
-    <AudioCorePanel scanPaths={vstScanPaths} />
+    <AudioCorePanel />
     </div>
   );
 }

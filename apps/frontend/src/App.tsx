@@ -22,7 +22,7 @@ import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio
 import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from './audio/coachLoader';
 import { getPluginEditor, subscribePluginEditor } from './native/pluginEditor';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
-import { handleOrchestratorMessage } from './native/audioCore';
+import './native/audioCore'; // GhostDAW's own, paired connection (follows Services)
 import { getOrchestratorStatus, onOrchestratorMessage, sendOrchestrator, subscribeOrchestrator } from './native/orchestrator';
 import { getServices, subscribeServices, getServicesDialogOpen, subscribeServicesDialog, setServicesDialogOpen } from './native/services';
 import { watchNativeConsent } from './native/consent';
@@ -210,7 +210,6 @@ function App() {
   const awaitingCode = useRef(false); // only the window that dictated makes tracks from the result
 
   useEffect(() => onOrchestratorMessage((msg) => {
-    if (handleOrchestratorMessage(msg)) return; // native plug-in host (Audio Core)
     if (msg.type === 'GENERATED') {
       // The code Gemini wrote: our pattern engine plays a cycle of it here,
       // and its parts become tracks playing library sounds

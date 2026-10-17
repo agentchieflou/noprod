@@ -70,7 +70,7 @@ module.exports = async (page, ctx) => {
   check('The Clip View shows its empty message after a delete', empty.includes('No clip selected'), empty);
 
   await ctx.shot('clips_deleted');
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

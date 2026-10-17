@@ -450,6 +450,6 @@ module.exports = async (page, ctx) => {
     `${restarted.blocks} of ${restarted.expected} blocks processed, ${restarted.started} started, peak after 1.5 s ${restarted.late}, ${restarted.errors} processor errors`);
 
   await ctx.shot('engine');
-  const errors = ctx.logs.filter((l) => /^\[(pageerror|error)\]/.test(l) && !l.includes('ws://localhost:8080'));
+  const errors = ctx.logs.filter((l) => /^\[(pageerror|error)\]/.test(l) && !/ws:\/\/localhost:808\d/.test(l));
   check('No page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 };

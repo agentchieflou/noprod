@@ -245,7 +245,7 @@ module.exports = async (page, ctx) => {
   check('Every cache has a budget from the device’s memory', decoded.budget === budgets.decoded && budgets.renders > 0 && budgets.history > 0,
     `renders ${budgets.renders / 2 ** 20} MB, decoded previews ${budgets.decoded / 2 ** 20} MB, undo audio ${budgets.history / 2 ** 20} MB`);
 
-  const pageErrors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  const pageErrors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l));
   check('No page errors', pageErrors.length === 0, pageErrors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

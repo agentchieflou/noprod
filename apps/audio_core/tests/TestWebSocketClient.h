@@ -26,7 +26,7 @@ struct TestWebSocketClient
         std::string text() const { return std::string (payload.begin(), payload.end()); }
         uint16_t closeCode() const
         {
-            return payload.size() >= 2 ? static_cast<uint16_t> ((payload[0] << 8) | payload[1]) : 0;
+            return payload.size() >= 2 ? static_cast<uint16_t> ((payload[0] << 8) | payload[1]) : static_cast<uint16_t> (0);
         }
     };
 

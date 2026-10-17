@@ -1,18 +1,19 @@
 // Native plugins (VST3 / AU / LPI) on the browser's own tracks, hosted by
 // the Audio Core (#26). A track device with a `pluginPath` becomes a
 // native-insert worklet: its audio streams to GhostDAW's stream server
-// (apps/audio_core/src/TrackStreams.h) through a bridge worker and comes
+// (apps/audio_core/src/host/TrackStreams.h) through a bridge worker and comes
 // back processed after a fixed latency, which the engine compensates for
 // on the other tracks.
 //
 // Device objects look like
-//   { id, name, type: 'vst', pluginPath, format, pluginId, parameters: { [parameterId]: value } }
-// and keep their parameter values by the plugin's own parameter ids, so a
-// project reloads them into the plugin. Changes made in the plug-in's own
+//   { id, name, type: 'vst', pluginId, pluginPath, format, parameters: { [parameterId]: value } }
+// (pluginId is what GhostDAW loads by; the path is for showing) and keep
+// their parameter values by the plugin's own parameter ids, so a project
+// reloads them into the plugin. Changes made in the plug-in's own
 // editor (#44 B6) come back to the device through onNativeEditorParameter.
 
 import type { DeviceDSP, ParamValue } from '../audio/devices';
-import type { NativeInsert } from './audioCore';
+import { nativePluginIdOf, nativeStreamUrl, subscribeAudioCore, type NativeInsert } from './audioCore';
 import { hidePluginEditor, showPluginEditor } from './pluginEditor';
 import { getServices, subscribeServices } from './services';
 
@@ -22,7 +23,10 @@ export const BRIDGE_BLOCK = 256;
 // hiccups; the engine delays every other track by the same amount.
 export const bridgeLatencyFrames = (sampleRate: number) => Math.ceil((0.04 * sampleRate) / 128) * 128;
 
-export const isNativeDevice = (device: any) => device?.type === 'vst' && typeof device.pluginPath === 'string' && device.pluginPath.length > 0;
+// A device GhostDAW hosts: by its plug-in's id (pluginId), or, from before
+// ids, by a path the scanned list resolves to one
+export const isNativeDevice = (device: any) => device?.type === 'vst'
+  && ((typeof device.pluginId === 'string' && device.pluginId.length > 0) || (typeof device.pluginPath === 'string' && device.pluginPath.length > 0));
 
 export interface NativeDeviceState {
   connected: boolean;
@@ -112,14 +116,37 @@ const getWorker = () => {
 };
 
 // Turning GhostDAW off stops every stream's connection and its retries;
-// turning it on (or changing its address) connects them again
-let lastGhostDaw = getServices().ghostdaw;
-subscribeServices(() => {
-  const g = getServices().ghostdaw;
-  if (g === lastGhostDaw) return;
-  const was = lastGhostDaw;
-  lastGhostDaw = g;
-  if (g.enabled !== was.enabled || g.url !== was.url) worker?.postMessage({ type: g.enabled ? 'resume' : 'pause', url: g.url });
+// turning it on connects them again. The streams' address (GhostDAW's
+// host, the stream port it announces and the pairing token) follows the
+// service and the control connection: a change reconnects every stream.
+let lastEnabled = getServices().ghostdaw.enabled;
+let lastUrl: string | null = null;
+const followStreams = () => {
+  const enabled = getServices().ghostdaw.enabled;
+  const url = nativeStreamUrl();
+  if (enabled !== lastEnabled) {
+    lastEnabled = enabled;
+    lastUrl = url;
+    worker?.postMessage({ type: enabled ? 'resume' : 'pause', url });
+    return;
+  }
+  if (url === lastUrl) return;
+  lastUrl = url;
+  worker?.postMessage({ type: 'url', url });
+};
+subscribeServices(followStreams);
+subscribeAudioCore(followStreams);
+
+// Devices waiting for their plug-in's id (from before ids: a path the
+// scanned list hasn't matched yet); the LOAD goes out once it has
+const awaitingId = new Map<string, any>();
+subscribeAudioCore(() => {
+  awaitingId.forEach((device, streamId) => {
+    const pluginId = nativePluginIdOf(device);
+    if (!pluginId) return;
+    awaitingId.delete(streamId);
+    worker?.postMessage({ type: 'command', streamId, message: { type: 'LOAD', pluginId, parameters: sentValues.get(streamId) } });
+  });
 });
 
 // A native device may load (or no longer may): the engine looks again
@@ -170,13 +197,14 @@ export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): Devic
   const link = new MessageChannel();
   node.port.postMessage({ type: 'link', port: link.port1 }, [link.port1]);
   const w = getWorker();
-  w.postMessage({ type: 'open', streamId, url: getServices().ghostdaw.url, sampleRate: ctx.sampleRate, block: BRIDGE_BLOCK, port: link.port2 }, [link.port2]);
+  lastUrl = nativeStreamUrl();
+  w.postMessage({ type: 'open', streamId, url: lastUrl, sampleRate: ctx.sampleRate, block: BRIDGE_BLOCK, port: link.port2 }, [link.port2]);
 
+  // The plug-in loads by its id only (GhostDAW refuses a path)
   sentValues.set(streamId, { ...(device.parameters || {}) });
-  w.postMessage({
-    type: 'command', streamId,
-    message: { type: 'LOAD', path: device.pluginPath, format: device.format, pluginId: device.pluginId, parameters: sentValues.get(streamId) }
-  });
+  const pluginId = nativePluginIdOf(device);
+  if (pluginId) w.postMessage({ type: 'command', streamId, message: { type: 'LOAD', pluginId, parameters: sentValues.get(streamId) } });
+  else awaitingId.set(streamId, device);
 
   return {
     input: node,
@@ -199,6 +227,7 @@ export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): Devic
     },
     latencySeconds: () => (states.get(streamId)?.latencyFrames ?? latency) / ctx.sampleRate,
     dispose() {
+      awaitingId.delete(streamId);
       w.postMessage({ type: 'close', streamId });
       node.port.onmessage = null;
       node.disconnect();

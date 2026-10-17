@@ -210,7 +210,7 @@ module.exports = async (page, ctx) => {
   check('An unmapped note still plays, on the track a mapped note would have sounded on', heard > -60 && (await seen(60)) === 2, `${heard.toFixed(1)} dB, ${await seen(60)} seen`);
   await page.evaluate(() => window.__unseen());
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

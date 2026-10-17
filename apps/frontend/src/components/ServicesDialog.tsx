@@ -4,10 +4,11 @@ import { getServices, subscribeServices, setService, isWebSocketUrl, setServices
 import { getOrchestratorStatus, subscribeOrchestrator, type ConnectionStatus } from '../native/orchestrator';
 import { getAudioCore, subscribeAudioCore } from '../native/audioCore';
 
-const STATUS_TEXT: Record<ConnectionStatus, string> = { off: '○ off', trying: '◌ trying to connect…', connected: '● connected' };
+type RowStatus = ConnectionStatus | 'unpaired';
+const STATUS_TEXT: Record<RowStatus, string> = { off: '○ off', trying: '◌ trying to connect…', connected: '● connected', unpaired: '○ not paired' };
 
 function ServiceRow({ name, title, blurb, addressLabel, status }: {
-  name: ServiceName; title: string; blurb: string; addressLabel: string; status: ConnectionStatus;
+  name: ServiceName; title: string; blurb: string; addressLabel: string; status: RowStatus;
 }) {
   const setting = useSyncExternalStore(subscribeServices, getServices)[name];
   const [invalid, setInvalid] = useState(false);
@@ -43,7 +44,7 @@ export default function ServicesDialog() {
   const services = useSyncExternalStore(subscribeServices, getServices);
   const orchestrator = useSyncExternalStore(subscribeOrchestrator, getOrchestratorStatus);
   const audioCore = useSyncExternalStore(subscribeAudioCore, getAudioCore);
-  const ghostdaw: ConnectionStatus = !services.ghostdaw.enabled ? 'off' : audioCore.connected ? 'connected' : 'trying';
+  const ghostdaw: RowStatus = !services.ghostdaw.enabled ? 'off' : audioCore.connected ? 'connected' : audioCore.needsPairing ? 'unpaired' : 'trying';
 
   return (
     <div className="midi-map-dialog services-dialog" role="dialog" aria-label="Services">
@@ -53,8 +54,8 @@ export default function ServicesDialog() {
       </div>
       <p className="native-hint">Programs running on this computer that noprod can use. They're off until you turn them on, and the choice is kept in this browser.</p>
       <ServiceRow
-        name="ghostdaw" title="GhostDAW" status={ghostdaw} addressLabel="Audio stream address"
-        blurb="A companion app that runs VST3 and other native plug-ins for noprod. Its plug-in panel also connects through the AI dictation address below."
+        name="ghostdaw" title="GhostDAW" status={ghostdaw} addressLabel="GhostDAW address"
+        blurb="A companion app that runs VST3, AU and LPI plug-ins for noprod. Pair this browser with it once, in the VST Folders Scan tab, with the code it prints at launch."
       />
       <ServiceRow
         name="dictation" title="AI dictation" status={orchestrator === 'off' || !services.dictation.enabled ? 'off' : orchestrator} addressLabel="Orchestrator address"

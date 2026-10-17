@@ -29,8 +29,8 @@ Run each command in its own terminal, then open http://localhost:5173.
   `apps/orchestrator/.env.example` to `apps/orchestrator/.env` and set
   `GEMINI_API_KEY`.
 - GhostDAW (`ws://localhost:8082`) is optional. It hosts plugins. Build it
-  from [apps/audio_core/README.md](apps/audio_core/README.md), which covers
-  its JUCE submodule and its platform packages.
+  from [apps/audio_core/README.md](apps/audio_core/README.md) (CMake, no
+  submodules), then pair the web app with the code it prints.
 
 ## Browser support
 
@@ -57,8 +57,8 @@ Chromium, Firefox and WebKit in CI; the full suites run in Chromium.
 | Path | What it is |
 |---|---|
 | `apps/frontend` | The DAW: React, Vite and TypeScript |
-| `apps/orchestrator` | WebSocket hub on 8080: dictation (Gemini to pattern code, checked with `@noprod/pattern`), relays to GhostDAW |
-| `apps/audio_core` | GhostDAW: a C++/JUCE host for LPI and VST3 plugins, on 8082 |
+| `apps/orchestrator` | WebSocket hub on 8080: dictation (Gemini to pattern code, checked with `@noprod/pattern`) |
+| `apps/audio_core` | GhostDAW: a C++ host for VST3, AU and LPI plugins, on 8082, paired with the browser |
 | `packages/sound` | `@noprod/sound`: sound recipes, the renderer, the library and physical models |
 | `packages/theory` | `@noprod/theory`: keys, chords, voice leading and the Keyboard Coach |
 | `packages/pattern` | `@noprod/pattern`: the pattern engine behind dictation (cycles, events, the mini-notation and its functions) |
@@ -107,6 +107,6 @@ CI runs these from `.github/workflows/`:
 
 ## License
 
-noprod is open source under the [Apache License 2.0](LICENSE). One part
-still uses code under another license until it's rebuilt: GhostDAW (JUCE).
-See #147.
+noprod is open source under the [Apache License 2.0](LICENSE). Everything
+it ships is under permissive licenses (see `THIRD_PARTY.md`); see #147 for
+how it got there.

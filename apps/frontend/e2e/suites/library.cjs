@@ -216,7 +216,7 @@ module.exports = async (page, ctx) => {
   check('Prewarming a pad keeps the page responsive (worker)', jank.worst < 60, `longest stall ${jank.worst} ms while rendering 31 notes in ${jank.took} ms`);
   check('The selected pad is ready to play live', jank.selected && jank.live < 15, `3 keys in ${jank.live} ms`);
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080')); // no orchestrator here
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l)); // no orchestrator here
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(results.join('\n'));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);

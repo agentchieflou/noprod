@@ -71,7 +71,7 @@ module.exports = async (page, ctx) => {
   check('A fixed coach key shows in the lane', fixed.key === 'A minor' && fixed.chords[0].text === 'C III', `${fixed.key}: ${fixed.chords[0].text}`);
   await page.evaluate(() => { window.__coach.setCoachKey('auto'); return 1; });
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080')); // no orchestrator here
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l)); // no orchestrator here
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

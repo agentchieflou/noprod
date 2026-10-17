@@ -252,7 +252,7 @@ module.exports = async (page, ctx) => {
   await blur();
 
   // 8. No page errors
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080')); // no orchestrator here
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l)); // no orchestrator here
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(results.join('\n'));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);

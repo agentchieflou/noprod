@@ -1,9 +1,7 @@
 // GhostDAW, the NoProd Audio Core: a headless host for VST3, AU and LPI
 // plugins that the web app drives over WebSockets on the loopback
-// interface. Being rebuilt without JUCE (#134); this build has the
-// platform layer, the servers and pairing, the audio device, the hap
-// engine, the mixer and LPI hosting. VST3 and AU follow, and src/main.cpp
-// (the JUCE host) keeps working until the switch.
+// interface, built on its own platform layer (src/platform) and host
+// (src/host); see the README.
 //
 //   ghostdaw [--port 8082] [--stream-port 8083] [--editor-port 8085]
 //            [--data-dir DIR] [--new-token] [--null-audio] [--no-scan]
@@ -288,6 +286,7 @@ int main (int argc, char** argv)
     PluginHost host (mixer, loop, registry, args.dataDir / "state.json");
     host.hostVersion = version;
     host.editorPort = args.editorPort;
+    host.streamPort = args.streamPort;
     host.describeDevice = [&device] { return device.describe(); };
     host.takeOutputPeak = [&mixer] { return mixer.takePeak(); };
     host.broadcast = broadcast;
@@ -402,7 +401,7 @@ int main (int argc, char** argv)
 
     std::cout << "\n  GhostDAW is running. To pair the web app, enter this code in its Audio Core panel:\n\n"
                  "      " << pairing->getCode() << "\n\n"
-                 "  Press Ctrl+C to quit.\n\n";
+                 "  Press Ctrl+C to quit.\n\n" << std::flush; // (a pipe would hold it back)
     Log::info ("pairing code for this launch: " + pairing->getCode());
 
     onTerminationRequest ([&loop] { loop.stop(); });

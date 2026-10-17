@@ -176,9 +176,9 @@ try {
   check('A library note is audible at the master', level > 0.01, `peak ${level.toFixed(3)} after ${presses} press${presses === 1 ? '' : 'es'}`);
   await page.screenshot({ path: join(shotDir, 'dist-noprod.png') });
 
-  const unexpected = failedRequests.filter((r) => !r.includes('localhost:8080'));
+  const unexpected = failedRequests.filter((r) => !/localhost:808\d/.test(r));
   check('Every asset loads under the base path', unexpected.length === 0, unexpected.slice(0, 3).join(' | '));
-  const realErrors = errors.filter((e) => !e.includes('ws://localhost:8080') && !/ERR_CONNECTION_REFUSED|WebSocket/.test(e));
+  const realErrors = errors.filter((e) => !/ws:\/\/localhost:808\d/.test(e) && !/ERR_CONNECTION_REFUSED|WebSocket/.test(e));
   check('No page errors', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));
 } catch (e) {
   check(`dist suite stopped: ${e.message}`, false);

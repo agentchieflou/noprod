@@ -1,9 +1,8 @@
-// The connection to the Orchestrator (AI dictation, and the relay to
-// GhostDAW's plug-in panel). It exists only while a service that needs it is
-// on (services.ts); it retries with a capped backoff and reports where it
-// stands: off, trying or connected.
+// The connection to the Orchestrator (AI dictation). It exists only while
+// dictation is on (services.ts); it retries with a capped backoff and
+// reports where it stands: off, trying or connected. (GhostDAW has a
+// connection of its own: audioCore.ts.)
 
-import { attachOrchestrator, detachOrchestrator } from './audioCore';
 import { backoffMs } from './backoff';
 import { getServices, subscribeServices } from './services';
 
@@ -35,16 +34,13 @@ export const sendOrchestrator = (message: unknown) => {
   return true;
 };
 
-const wanted = () => {
-  const s = getServices();
-  return s.dictation.enabled || s.ghostdaw.enabled;
-};
+const wanted = () => getServices().dictation.enabled;
 
 function close() {
   if (retry) { clearTimeout(retry); retry = null; }
   const old = ws;
   ws = null;
-  if (old) { detachOrchestrator(old); old.onclose = old.onerror = old.onmessage = old.onopen = null; old.close(); }
+  if (old) { old.onclose = old.onerror = old.onmessage = old.onopen = null; old.close(); }
 }
 
 function open() {
@@ -61,7 +57,6 @@ function open() {
     return;
   }
   ws = socket;
-  attachOrchestrator(socket);
   socket.onopen = () => { attempt = 0; setStatus('connected'); };
   socket.onmessage = (event) => {
     let msg: any;
@@ -74,7 +69,6 @@ function open() {
   };
   socket.onclose = () => {
     if (ws !== socket) return;
-    detachOrchestrator(socket);
     ws = null;
     setStatus('trying');
     retry = setTimeout(() => { retry = null; if (wanted()) open(); }, backoffMs(attempt++));

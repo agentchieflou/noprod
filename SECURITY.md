@@ -23,3 +23,6 @@ These parts of noprod are in scope:
 
 GhostDAW and the local services are meant to run on your own machine, or behind
 authentication. Do not expose them directly to a network you don't control.
+GhostDAW answers only clients that paired with it, with the code it prints at
+each launch, and only pages served from this machine or the hosted app (see
+"Secure by design" in `apps/audio_core/README.md`).

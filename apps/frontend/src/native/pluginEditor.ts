@@ -7,7 +7,7 @@ export interface OpenPluginEditor {
   editorId: string;
   slotId: string;
   name: string;
-  url: string;     // the editor stream (apps/audio_core/src/editor/EditorStream.h)
+  url: string;     // the editor stream (apps/audio_core/src/host/editor/EditorStream.h), with the pairing token
   width: number;   // frame size in pixels
   height: number;
   scale: number;   // frame pixels per CSS pixel
@@ -16,6 +16,7 @@ export interface OpenPluginEditor {
 }
 
 import { serviceHost } from './services';
+import { withPairingToken } from './pairing';
 
 let current: OpenPluginEditor | null = null;
 const listeners = new Set<() => void>();
@@ -36,7 +37,7 @@ export function showPluginEditor(msg: any, close: () => void, fromGhostDaw: bool
   }
   current = {
     editorId: msg.editorId, slotId: msg.slotId, name: msg.name,
-    url: `ws://${serviceHost('ghostdaw')}:${msg.port}`,
+    url: withPairingToken(`ws://${serviceHost('ghostdaw')}:${msg.port}`),
     width: msg.width, height: msg.height, scale: msg.scale || 1,
     keyboard: !!msg.keyboard,
     close

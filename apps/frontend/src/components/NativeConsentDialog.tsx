@@ -12,7 +12,7 @@ export default function NativeConsentDialog() {
         “{pending.project}” wants GhostDAW to load these plug-ins from your computer. Plug-ins are programs, so load them only from projects you trust.
       </p>
       <ul className="native-consent-list">
-        {pending.plugins.map((p) => <li key={p.path}><b>{p.name}</b> <span className="native-hint">{p.path}</span></li>)}
+        {pending.plugins.map((p) => <li key={p.key}><b>{p.name}</b> <span className="native-hint">{p.path || p.pluginId}</span></li>)}
       </ul>
       <div className="native-row">
         <button className="btn-add-track" onClick={() => answerNativeLoad(true)}>Load them</button>
