@@ -166,11 +166,12 @@ const PLUCKED: SoundRecipe[] = [
     filter: { type: 'highpass', cutoff: 70 },
     env: { sustain: 1, release: 0.15 }
   }]),
-  // a solid body has no wooden cavity to radiate, only a low-pass for the air
+  // a solid body has no wooden cavity to radiate: the damping takes the top
+  // off the string's sound as it rings, so the low end is what's left
   sound('bass-electric-modeled', 'Electric Bass (Modeled)', 'bass', ['electric bass', 'bass', 'string', 'plucked', 'fingered'], 40, 4, [{
-    type: 'model', exciter: { kind: 'pluck', position: 0.15 },
+    type: 'model', exciter: { kind: 'pluck', position: 0.25, hardness: 0.3 },
     resonator: { kind: 'string', decay: 2.5, brightness: 0.45 },
-    radiators: [{ kind: 'damping', a: 0.3 }],
+    radiators: [{ kind: 'damping', a: 0.9 }],
     env: { sustain: 1, release: 0.2 }
   }])
 ];
