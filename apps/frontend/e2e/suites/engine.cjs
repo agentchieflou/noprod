@@ -15,6 +15,7 @@ module.exports = async (page, ctx) => {
   await page.evaluate(async () => { window.__tr = await import('/src/audio/transport.ts'); return 1; });
   await page.evaluate(async () => { window.__sched = await import('/src/audio/scheduler.ts'); return 1; });
   await page.evaluate(async () => { window.__voices = await import('/src/audio/engineVoices.ts'); return 1; });
+  await page.evaluate(async () => { window.__node = await import('/src/audio/engineNode.ts'); return 1; });
   await page.evaluate(async () => { await window.__tr.engineReady(); return 1; });
 
   // Helpers in the page: project builders, a stats reader, and an onset
@@ -352,6 +353,64 @@ module.exports = async (page, ctx) => {
   });
   check('A note 10 ms late plays and counts as late; one 200 ms late is dropped and reported', late.late === 1 && late.started === 1 && late.dropped === 1 && late.reported === 1,
     `${late.late} late, ${late.started} started, ${late.dropped} dropped, ${late.reported} reported to the transport`);
+
+  // 11. Buffers stay while events play them, however small the budget. An
+  // engine of its own on an offline context, with a 1 MB budget: six 1 s
+  // stereo clips (0.35 MB each) posted together all start, a buffer
+  // forgotten under a posted clip or note still plays (the event pins it),
+  // and only with the pin bypassed is the event dropped, with a reason.
+  await page.evaluate((sampleRate) => {
+    window.__render = async ({ clips, notes = 0, budget = 1 << 20, forget = null, force = false }) => {
+      const ctxO = new OfflineAudioContext(2, sampleRate * 1.5, sampleRate);
+      await window.__node.loadEngine(ctxO);
+      const reported = [];
+      const engine = new window.__node.Engine(ctxO, { connect: (n, o) => n.connect(ctxO.destination, o), budget, onDropped: (key, lateBy, reason) => reported.push(`${key}:${reason}`) }, 8);
+      engine.span({ id: 1, ctxStart: 0, posStart: 0, posEnd: 1.5 });
+      const tone = (i) => {
+        const b = ctxO.createBuffer(2, sampleRate, sampleRate);
+        const l = b.getChannelData(0);
+        for (let k = 0; k < l.length; k++) l[k] = 0.3 * Math.sin((k * 2 * Math.PI * (220 + 55 * i)) / sampleRate);
+        b.copyToChannel(l, 1);
+        return b;
+      };
+      const ids = [];
+      const events = [];
+      for (let i = 0; i < clips; i++) {
+        const buf = engine.bufferId(tone(i));
+        ids.push(buf);
+        events.push({ key: `c${i}`, strip: engine.output(`clip-${i}`), span: 1, pos: 0.1, endPos: 1.1, buf, offset: 0, rate: 1, loop: null, gain: 1, grains: null });
+      }
+      engine.clips(events);
+      for (let i = 0; i < notes; i++) {
+        const buf = engine.bufferId(tone(clips + i));
+        ids.push(buf);
+        engine.notes([{ key: `n${i}`, strip: engine.output(`note-${i}`), span: 1, pos: 0.1, voice: { kind: 'buffer', buf, rate: 1, level: 1 }, duration: 0.5 }]);
+      }
+      if (forget) engine.forget(forget(ids), force);
+      await engine.sync();
+      const out = await ctxO.startRendering();
+      const stats = await engine.stats();
+      engine.dispose();
+      const x = out.getChannelData(0);
+      let peak = 0;
+      for (let k = 0; k < x.length; k += 3) peak = Math.max(peak, Math.abs(x[k]));
+      return { started: stats.started, dropped: stats.dropped, retracted: stats.retracted, reported, peak: +peak.toFixed(3) };
+    };
+    return 1;
+  }, sampleRate);
+  const past = await page.evaluate(() => window.__render({ clips: 6 }));
+  check('Six clips past a 1 MB budget, posted together, all start', past.started === 6 && past.dropped === 0 && past.peak > 0.1,
+    `${past.started} started, ${past.dropped} dropped (${past.reported.join(' ')}), peak ${past.peak}`);
+  const pinnedClip = await page.evaluate(() => window.__render({ clips: 1, forget: (ids) => ids }));
+  check('A buffer forgotten under a posted clip still plays: the clip pins it', pinnedClip.started === 1 && pinnedClip.dropped === 0 && pinnedClip.peak > 0.1,
+    `${pinnedClip.started} started, ${pinnedClip.dropped} dropped, peak ${pinnedClip.peak}`);
+  const pinnedNote = await page.evaluate(() => window.__render({ clips: 0, notes: 1, forget: (ids) => ids }));
+  check('…and so does a note', pinnedNote.started === 1 && pinnedNote.dropped === 0 && pinnedNote.peak > 0.1,
+    `${pinnedNote.started} started, ${pinnedNote.dropped} dropped, peak ${pinnedNote.peak}`);
+  const forced = await page.evaluate(() => window.__render({ clips: 1, notes: 1, forget: (ids) => ids, force: true }));
+  check('With the pin bypassed, the clip and the note are dropped and reported, with the reason',
+    forced.started === 0 && forced.dropped === 2 && forced.reported.length === 2 && forced.reported.every((r) => r.endsWith(':buffer')) && forced.peak === 0,
+    `${forced.started} started, ${forced.dropped} dropped, reported: ${forced.reported.join(' ')}; peak ${forced.peak}`);
 
   await ctx.shot('engine');
   const errors = ctx.logs.filter((l) => /^\[(pageerror|error)\]/.test(l) && !l.includes('ws://localhost:8080'));

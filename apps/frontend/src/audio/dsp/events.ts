@@ -57,7 +57,7 @@ export interface ClipEvent {
 
 export type EngineMessage =
   | { type: 'buffer'; id: number; l: Float32Array; r: Float32Array }
-  | { type: 'forget'; ids: number[] }
+  | { type: 'forget'; ids: number[]; force?: boolean } // force: for the tests, even a buffer in use
   | { type: 'span'; span: SpanSpec }
   | { type: 'closeSpan'; id: number; at: number }
   | { type: 'notes'; notes: NoteEvent[] }
@@ -95,4 +95,7 @@ export interface EngineStats {
 export type EngineReply =
   | { type: 'synced' }
   | ({ type: 'stats' } & EngineStats)
-  | { type: 'dropped'; key: string; lateBy: number };
+  | { type: 'dropped'; key: string; lateBy: number; reason: DropReason };
+
+// Why an event was dropped: past the late budget, its buffer gone, or its span
+export type DropReason = 'late' | 'buffer' | 'span';

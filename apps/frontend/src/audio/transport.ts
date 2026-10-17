@@ -31,6 +31,7 @@ let timer: ReturnType<typeof setInterval> | null = null;
 let countInEnd = 0;      // ctx time at which a count-in finishes (0 = none)
 let clickSources: Stoppable[] = [];
 let dropped = 0;         // events the engine dropped during this playback
+let droppedLate = 0;     // ...of which past the late budget (the rest had no buffer to play)
 const listeners = new Set<() => void>();
 
 const spans = (): Span[] => scheduler?.spans ?? [];
@@ -76,7 +77,7 @@ export function initTransport(store: { getState: () => any; subscribe: (fn: (s: 
   ready = initLiveEngine(audioContext, {
     stripIdOf, getStripInput, onStripInputChange,
     onReset: () => { if (playing) reschedule(); },
-    onDropped: () => { dropped++; }
+    onDropped: (_key, _lateBy, reason) => { dropped++; if (reason === 'late') droppedLate++; }
   }).then((engine) => {
     scheduler = new Scheduler(engine, audioContext, getState);
     scheduler.owned = sessionOwnedTracks;
@@ -328,6 +329,7 @@ export function play(countInSeconds = 0, countInGrid?: { time: number; accent: b
   scheduler.prepare(stoppedPosition, stoppedPosition + POST_AHEAD);
   playing = true;
   dropped = 0;
+  droppedLate = 0;
   setAutomationPlaying(true);
   const startCtx = audioContext.currentTime + 0.05;
   countInEnd = 0;
@@ -365,7 +367,12 @@ export function stop() {
   timer = null;
   stopAllSources();
   setAutomationPlaying(false, getState());
-  if (dropped > 0) notify(`The audio engine dropped ${dropped} note${dropped === 1 ? '' : 's'}: the audio thread fell behind. A smaller project, or fewer devices, helps.`, 'error');
+  if (dropped > 0) {
+    const why = droppedLate === dropped ? 'the audio thread fell behind. A smaller project, or fewer devices, helps'
+      : droppedLate === 0 ? 'their audio was no longer in the engine'
+      : `${droppedLate} because the audio thread fell behind, the rest because their audio was no longer in the engine`;
+    notify(`The audio engine dropped ${dropped} note${dropped === 1 ? '' : 's'}: ${why}.`, 'error');
+  }
   notify_();
 }
 

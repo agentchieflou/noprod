@@ -15,7 +15,7 @@
 import { makeVoice, BufferVoice, type Voice, type Buf } from '../dsp/voices.ts';
 import { ClipPlayer } from '../dsp/clipPlayer.ts';
 import { LiveVoices, warmUpLiveModels } from '../dsp/liveVoices.ts';
-import { BLOCK, LATE_SECONDS, type ClipEvent, type EngineMessage, type EngineReply, type NoteEvent, type SpanSpec, type VoiceSpec } from '../dsp/events.ts';
+import { BLOCK, LATE_SECONDS, type ClipEvent, type DropReason, type EngineMessage, type EngineReply, type NoteEvent, type SpanSpec, type VoiceSpec } from '../dsp/events.ts';
 
 // The AudioWorkletGlobalScope's (not in the DOM types)
 declare const sampleRate: number;
@@ -30,6 +30,7 @@ interface Pending {
   strip: number;
   frame: number;
   span: number | null;
+  buf: number | null;      // the buffer it plays, pinned while it is queued or sounding
   note?: NoteEvent;
   clip?: ClipEvent;
   live?: VoiceSpec;        // a held voice (liveOn)
@@ -37,7 +38,11 @@ interface Pending {
   releaseAt?: number;      // let go before it started
 }
 
-interface Sounding { strip: number; span: number | null; voice?: Voice; clip?: ClipPlayer }
+interface Sounding { strip: number; span: number | null; buf: number | null; voice?: Voice; clip?: ClipPlayer }
+
+// The buffer an event plays, if any
+const bufferOf = (spec: VoiceSpec | undefined, clip: ClipEvent | undefined) =>
+  clip ? clip.buf : spec?.kind === 'buffer' ? spec.buf : null;
 
 interface Strip {
   voices: Voice[];
@@ -58,6 +63,10 @@ const seedOf = (key: string, inSpan: boolean) => {
 
 class EngineProcessor extends AudioWorkletProcessor {
   private bufs = new Map<number, Buf>();
+  // Buffers stay while an event pending or sounding plays them: the main
+  // thread's forget is a request, kept until the last such event ends
+  private refs = new Map<number, number>();
+  private forgotten = new Set<number>();
   private spans = new Map<number, Span>();
   private pending: Pending[] = [];          // sorted by frame
   private strips: Strip[] = [];
@@ -92,27 +101,54 @@ class EngineProcessor extends AudioWorkletProcessor {
     return at === undefined ? null : Math.round(at * sampleRate);
   }
 
+  private drop(key: string, reason: DropReason, lateBy = 0) {
+    this.dropped++;
+    this.reply({ type: 'dropped', key, lateBy, reason });
+  }
+
+  private pin(buf: number | null) {
+    if (buf !== null) this.refs.set(buf, (this.refs.get(buf) ?? 0) + 1);
+  }
+
+  private unpin(buf: number | null) {
+    if (buf === null) return;
+    const n = (this.refs.get(buf) ?? 1) - 1;
+    if (n > 0) { this.refs.set(buf, n); return; }
+    this.refs.delete(buf);
+    if (this.forgotten.delete(buf)) this.bufs.delete(buf);
+  }
+
+  private forget(ids: number[], force: boolean) {
+    for (const id of ids) {
+      if (!force && this.refs.has(id)) this.forgotten.add(id);
+      else { this.bufs.delete(id); this.forgotten.delete(id); }
+    }
+  }
+
   // Queue an event at its frame, or now if it's a little late; drop it if very late
   private enqueue(p: Pending) {
     const now = currentFrame;
     if (p.frame < now) {
-      if (now - p.frame > this.lateFrames) {
-        this.dropped++;
-        this.reply({ type: 'dropped', key: p.key, lateBy: (now - p.frame) / sampleRate });
-        return;
-      }
+      if (now - p.frame > this.lateFrames) { this.drop(p.key, 'late', (now - p.frame) / sampleRate); return; }
       this.late++;
       p.frame = now;
     }
+    this.pin(p.buf);
     let at = this.pending.length;
     while (at > 0 && this.pending[at - 1].frame > p.frame) at--;
     this.pending.splice(at, 0, p);
   }
 
+  // A queued event that never starts
+  private discard(p: Pending) {
+    this.retracted++;
+    this.unpin(p.buf);
+  }
+
   private receive(m: EngineMessage) {
     switch (m.type) {
-      case 'buffer': this.bufs.set(m.id, { l: m.l, r: m.r }); return;
-      case 'forget': for (const id of m.ids) this.bufs.delete(id); return;
+      case 'buffer': this.bufs.set(m.id, { l: m.l, r: m.r }); this.forgotten.delete(m.id); return;
+      case 'forget': this.forget(m.ids, !!m.force); return;
       case 'span': this.addSpan(m.span); return;
       case 'closeSpan': this.closeSpan(m.id, Math.round(m.at * sampleRate)); return;
       case 'notes': for (const n of m.notes) this.addNote(n); return;
@@ -125,7 +161,7 @@ class EngineProcessor extends AudioWorkletProcessor {
           if (!s.live) s.live = new LiveVoices(sampleRate);
           s.live.on(m.key, m.voice, frame, currentFrame);
         } else {
-          this.enqueue({ key: m.key, strip: m.strip, frame, span: null, live: m.voice });
+          this.enqueue({ key: m.key, strip: m.strip, frame, span: null, buf: bufferOf(m.voice, undefined), live: m.voice });
         }
         return;
       }
@@ -158,24 +194,28 @@ class EngineProcessor extends AudioWorkletProcessor {
     span.endFrame = Math.min(span.endFrame, at);
     this.pending = this.pending.filter((p) => {
       if (p.span !== id || p.frame < at) return true;
-      this.retracted++;
+      this.discard(p);
       return false;
     });
-    for (const [key, s] of this.sounding) {
-      if (s.span === id) { s.clip?.stop(at); if (s.clip) this.sounding.delete(key); }
-    }
+    for (const s of this.sounding.values()) if (s.span === id) s.clip?.stop(at);
+  }
+
+  // A voice or clip has ended: what it played may go
+  private ended(key: string, s: Sounding) {
+    this.sounding.delete(key);
+    this.unpin(s.buf);
   }
 
   private addNote(n: NoteEvent) {
     const frame = this.frameOf(n.span, n.pos, n.at);
-    if (frame === null) { this.retracted++; return; } // its span is gone
-    this.enqueue({ key: n.key, strip: n.strip, frame, span: n.span ?? null, note: n });
+    if (frame === null) { this.drop(n.key, 'span'); return; } // its span is gone
+    this.enqueue({ key: n.key, strip: n.strip, frame, span: n.span ?? null, buf: bufferOf(n.voice, undefined), note: n });
   }
 
   private addClip(c: ClipEvent) {
     const frame = this.frameOf(c.span, c.pos, undefined);
-    if (frame === null) { this.retracted++; return; }
-    this.enqueue({ key: c.key, strip: c.strip, frame, span: c.span, clip: c });
+    if (frame === null) { this.drop(c.key, 'span'); return; }
+    this.enqueue({ key: c.key, strip: c.strip, frame, span: c.span, buf: c.buf, clip: c });
   }
 
   // Take events back: pending ones never start; sounding ones fade from `at`
@@ -184,7 +224,7 @@ class EngineProcessor extends AudioWorkletProcessor {
     this.pending = this.pending.filter((p) => {
       if (!set.has(p.key)) return true;
       if (p.frame < at) { p.stopAt = at; return true; } // it starts before the cut: cut it then
-      this.retracted++;
+      this.discard(p);
       return false;
     });
     for (const key of set) {
@@ -207,7 +247,7 @@ class EngineProcessor extends AudioWorkletProcessor {
   private silence(strip: number, at: number) {
     this.pending = this.pending.filter((p) => {
       if (!(p.strip === strip && p.span !== null && p.frame >= at)) return true;
-      this.retracted++;
+      this.discard(p);
       return false;
     });
     for (const s of this.sounding.values()) {
@@ -218,7 +258,7 @@ class EngineProcessor extends AudioWorkletProcessor {
   }
 
   private stopAll(at: number) {
-    this.retracted += this.pending.length;
+    for (const p of this.pending) this.discard(p);
     this.pending = [];
     for (const s of this.sounding.values()) { s.voice?.stop(at); s.clip?.stop(at); }
     for (const strip of this.strips) strip.live?.stop();
@@ -231,18 +271,18 @@ class EngineProcessor extends AudioWorkletProcessor {
     if (p.clip) {
       const buf = this.bufs.get(p.clip.buf);
       const span = this.spans.get(p.clip.span);
-      if (!buf || !span) return;
+      if (!buf || !span) { this.drop(p.key, buf ? 'span' : 'buffer'); this.unpin(p.buf); return; }
       const end = Math.min(span.endFrame, span.startFrame + Math.round((p.clip.endPos - span.posStart) * sampleRate));
       const player = new ClipPlayer(p.key, p.frame, p.clip, buf, end, sampleRate, seed);
       if (p.stopAt !== undefined) player.stop(p.stopAt);
       strip.clips.push(player);
-      this.sounding.set(p.key, { strip: p.strip, span: p.span, clip: player });
+      this.sounding.set(p.key, { strip: p.strip, span: p.span, buf: p.buf, clip: player });
       this.started++;
       return;
     }
     const spec = p.note ? p.note.voice : p.live!;
     const voice = makeVoice(p.key, p.frame, spec, p.note ? p.note.duration : null, this.bufs, sampleRate, seed);
-    if (!voice) return;
+    if (!voice) { this.drop(p.key, 'buffer'); this.unpin(p.buf); return; }
     if (voice instanceof BufferVoice && voice.chokeGroup >= 0) {
       // a closed hat cuts an open one off: the group's earlier hits fade
       const group = strip.chokes.get(voice.chokeGroup) ?? [];
@@ -254,7 +294,7 @@ class EngineProcessor extends AudioWorkletProcessor {
     if (p.stopAt !== undefined) voice.stop(p.stopAt);
     if (p.releaseAt !== undefined) voice.release(Math.max(p.releaseAt, p.frame));
     strip.voices.push(voice);
-    this.sounding.set(p.key, { strip: p.strip, span: p.span, voice });
+    this.sounding.set(p.key, { strip: p.strip, span: p.span, buf: p.buf, voice });
     this.started++;
   }
 
@@ -273,14 +313,14 @@ class EngineProcessor extends AudioWorkletProcessor {
       for (let k = 0; k < strip.voices.length; k++) {
         const v = strip.voices[k];
         v.render(l, r, Math.max(0, v.start - frame), BLOCK, frame);
-        if (v.done) this.sounding.delete(v.key); else strip.voices[kept++] = v;
+        if (v.done) this.ended(v.key, this.sounding.get(v.key)!); else strip.voices[kept++] = v;
       }
       strip.voices.length = kept;
       kept = 0;
       for (let k = 0; k < strip.clips.length; k++) {
         const c = strip.clips[k];
         c.render(l, r, Math.max(0, c.start - frame), BLOCK, frame);
-        if (c.done) this.sounding.delete(c.key); else strip.clips[kept++] = c;
+        if (c.done) this.ended(c.key, this.sounding.get(c.key)!); else strip.clips[kept++] = c;
       }
       strip.clips.length = kept;
       strip.live?.render(l, r, frame);

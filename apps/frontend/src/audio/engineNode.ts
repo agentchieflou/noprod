@@ -7,13 +7,15 @@
 // Buffers: a rendered note or a clip's audio is copied into the worklet the
 // first time something plays it and kept there, least recently used out
 // first within a budget (memory.ts), so a project's audio lives twice, on
-// the main thread for drawing and saving and here for playing. Step 5 of
-// #159 moves ownership here.
+// the main thread for drawing and saving and here for playing. The budget
+// is for what isn't playing: the worklet keeps a buffer while an event
+// queued or sounding plays it, however much that comes to, and forgets it
+// when the last of them ends. Step 5 of #159 moves ownership here.
 
 import type { LiveTarget } from '@noprod/sound';
 import engineUrl from './worklets/engine-processor.ts?worker&url';
 import { LruBytes, budgets, bufferBytes } from './memory';
-import type { ClipEvent, EngineMessage, EngineReply, EngineStats, NoteEvent, SpanSpec, VoiceSpec } from './dsp/events';
+import type { ClipEvent, DropReason, EngineMessage, EngineReply, EngineStats, NoteEvent, SpanSpec, VoiceSpec } from './dsp/events';
 
 const loaded = new WeakSet<BaseAudioContext>();
 
@@ -33,7 +35,8 @@ export interface EngineOptions {
   connect: (node: AudioWorkletNode, output: number, stripId: string) => void;
   // Called when the node had to be remade (more outputs): what was queued is gone
   onReset?: () => void;
-  onDropped?: (key: string, lateBy: number) => void;
+  onDropped?: (key: string, lateBy: number, reason: DropReason) => void;
+  budget?: number; // bytes of buffers kept beyond those playing (the tests set a small one)
 }
 
 const bufferIds = new WeakMap<AudioBuffer, number>();
@@ -45,6 +48,8 @@ export class Engine {
   private stripOutputs = new Map<string, number>();
   private resident: LruBytes<number, AudioBuffer>;
   private waiting: ((r: EngineReply) => boolean)[] = [];
+  // Evicted ids, forgotten after the events being built with them are posted
+  private forgets: number[] = [];
 
   readonly ctx: BaseAudioContext;
   private opts: EngineOptions;
@@ -53,7 +58,7 @@ export class Engine {
     this.ctx = ctx;
     this.opts = opts;
     const b = budgets();
-    this.resident = new LruBytes<number, AudioBuffer>(b.renders + b.stretch, bufferBytes, (id) => this.post({ type: 'forget', ids: [id] }));
+    this.resident = new LruBytes<number, AudioBuffer>(opts.budget ?? b.renders + b.stretch, bufferBytes, (id) => this.evicted(id));
     this.outputs = outputs;
     this.node = this.make(outputs);
   }
@@ -66,7 +71,7 @@ export class Engine {
     });
     node.port.onmessage = (e: MessageEvent<EngineReply>) => {
       const r = e.data;
-      if (r.type === 'dropped') { this.opts.onDropped?.(r.key, r.lateBy); return; }
+      if (r.type === 'dropped') { this.opts.onDropped?.(r.key, r.lateBy, r.reason); return; }
       this.waiting = this.waiting.filter((fn) => !fn(r));
     };
     return node;
@@ -89,7 +94,8 @@ export class Engine {
     this.node.disconnect();
     this.outputs = outputs;
     this.node = this.make(outputs);
-    this.resident = new LruBytes<number, AudioBuffer>(this.resident.budget, bufferBytes, (id) => this.post({ type: 'forget', ids: [id] }));
+    this.forgets = [];
+    this.resident = new LruBytes<number, AudioBuffer>(this.resident.budget, bufferBytes, (id) => this.evicted(id));
     for (const [id, index] of this.stripOutputs) this.opts.connect(this.node, index, id);
     this.opts.onReset?.();
   }
@@ -119,6 +125,26 @@ export class Engine {
     return id;
   }
 
+  // A buffer left the budget while a window was being built: the forget
+  // goes after that window's events, which pin what they play
+  private evicted(id: number) {
+    if (!this.forgets.length) queueMicrotask(() => this.flushForgets());
+    this.forgets.push(id);
+  }
+
+  private flushForgets() {
+    if (!this.forgets.length) return;
+    const ids = this.forgets;
+    this.forgets = [];
+    this.post({ type: 'forget', ids });
+  }
+
+  // For the tests: forget now; `force` even what is playing
+  forget(ids: number[], force = false) {
+    for (const id of ids) this.resident.delete(id);
+    this.post({ type: 'forget', ids, force });
+  }
+
   post(m: EngineMessage) { this.node.port.postMessage(m); }
 
   span(span: SpanSpec) { this.post({ type: 'span', span }); }
@@ -133,6 +159,7 @@ export class Engine {
   stopAll(at: number) { this.post({ type: 'stop', at }); }
 
   private ask<T extends EngineReply>(m: EngineMessage, type: T['type']): Promise<T> {
+    this.flushForgets(); // so a sync covers them
     return new Promise((resolve) => {
       this.waiting.push((r) => { if (r.type !== type) return false; resolve(r as T); return true; });
       this.post(m);
@@ -159,7 +186,7 @@ export interface LiveEngineHooks {
   getStripInput: (id: string) => AudioNode;
   onStripInputChange: (fn: (id: string, input: AudioNode | null) => void) => unknown;
   onReset?: () => void;
-  onDropped?: (key: string, lateBy: number) => void;
+  onDropped?: (key: string, lateBy: number, reason: DropReason) => void;
 }
 
 let hooks: LiveEngineHooks | null = null;
