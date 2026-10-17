@@ -39,9 +39,9 @@ export default function MidiLearnControls() {
         Mappings ({midiMappings.length})
       </button>
       {midiLearn.dropped > 0 && (
-        <span className="midi-dropped" title="Click to dismiss" onClick={() => setMidiLearn({ dropped: 0 })}>
+        <button className="row-main midi-dropped" title="Click to dismiss" onClick={() => setMidiLearn({ dropped: 0 })}>
           {midiLearn.dropped} MIDI mapping{midiLearn.dropped > 1 ? 's' : ''} dropped: missing track or device
-        </span>
+        </button>
       )}
       {listOpen && (
         <div className="midi-map-dialog" role="dialog" aria-label="MIDI mappings">

@@ -430,8 +430,10 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
             <Power size={9} />
           </button>
         )}
-        <span className="dsp-block-label">{b.label}</span>
-        {b.detail && <span className="dsp-block-detail">{b.detail}</span>}
+        <button className="row-main dsp-block-main" aria-pressed={selected}>
+          <span className="dsp-block-label">{b.label}</span>
+          {b.detail && <span className="dsp-block-detail">{b.detail}</span>}
+        </button>
         {b.removable && (
           <button className="dsp-remove" title="Remove" onClick={(e) => { e.stopPropagation(); edit(c, removeBlock(c.recipe, b.layer, b.id)); }}>
             <X size={9} />

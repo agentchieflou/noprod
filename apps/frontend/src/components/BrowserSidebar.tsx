@@ -214,7 +214,7 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
       onClick={it.onClick}
       onDoubleClick={it.onLoad}
     >
-      <span className="browser-item-label">{it.label}</span>
+      <button className="row-main browser-item-label">{it.label}</button>
       {it.onDelete && <button className="btn-icon browser-load" title="Delete" onClick={(e) => { e.stopPropagation(); it.onDelete!(); }}><Trash2 size={11} /></button>}
       {it.onEdit && <button className="btn-icon browser-load" title="Edit in the Sound Designer" onClick={(e) => { e.stopPropagation(); it.onEdit!(); }}><Pencil size={11} /></button>}
       {it.onResynth && <button className="btn-icon browser-load" title="Resynthesize: rebuild it from its frequencies as a playable sound" onClick={(e) => { e.stopPropagation(); it.onResynth!(); }}><Wand2 size={11} /></button>}
@@ -233,8 +233,10 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
       return (
         <div key={key}>
           <div className="browser-folder" style={{ paddingLeft: 20 }} onClick={() => toggle(key)}>
-            {groupOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<Folder size={12} /> {group}
-            <span className="browser-count">{inGroup.length}</span>
+            <button className="row-main" aria-expanded={groupOpen}>
+              {groupOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<Folder size={12} /> {group}
+              <span className="browser-count">{inGroup.length}</span>
+            </button>
             {inGroup.some((it) => it.recipe) && (
               <button className="btn-icon browser-load" title={`Download ${group} as WAVs (zip)`}
                 onClick={(e) => {
@@ -259,7 +261,9 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
     return (
       <div key={key}>
         <div className="browser-folder" style={{ paddingLeft: 8 + depth * 12 }} onClick={() => toggle(key)}>
-          {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<Folder size={12} /> {folder.name || 'Folder'}
+          <button className="row-main" aria-expanded={!!isOpen}>
+            {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<Folder size={12} /> {folder.name || 'Folder'}
+          </button>
         </div>
         {isOpen && (
           <>
@@ -287,10 +291,10 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
           const isOpen = open[c.id] || (!!q && items.length > 0);
           return (
             <div key={c.id}>
-              <div className={`btn-category ${isOpen ? 'active' : ''}`} onClick={() => toggle(c.id)}>
+              <button className={`btn-category ${isOpen ? 'active' : ''}`} aria-expanded={!!isOpen} onClick={() => toggle(c.id)}>
                 {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}{c.icon} {c.label}
                 <span className="browser-count">{c.items.length}</span>
-              </div>
+              </button>
               {isOpen && (items.length ? renderItems(c.id, items) : <div className="browser-empty">{c.empty || 'Nothing here yet'}</div>)}
             </div>
           );
@@ -298,8 +302,10 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
 
         {/* Places: user folders as expandable trees */}
         <div className={`btn-category ${open.places ? 'active' : ''}`} onClick={() => toggle('places')}>
-          {open.places ? <ChevronDown size={12} /> : <ChevronRight size={12} />}<FolderOpen size={13} /> Places
-          <span className="browser-count">{places.length}</span>
+          <button className="row-main" aria-expanded={!!open.places}>
+            {open.places ? <ChevronDown size={12} /> : <ChevronRight size={12} />}<FolderOpen size={13} /> Places
+            <span className="browser-count">{places.length}</span>
+          </button>
           <button className="btn-icon" style={{ marginLeft: 'auto' }} title="Add a folder" onClick={(e) => { e.stopPropagation(); addPlace(); setOpen((o) => ({ ...o, places: true })); }}>
             <FolderPlus size={12} />
           </button>

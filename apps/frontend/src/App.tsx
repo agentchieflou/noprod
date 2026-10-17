@@ -41,6 +41,7 @@ import { notify, guarded } from './notify';
 import { Panel } from './components/ErrorBoundary';
 import AudioStatus from './components/AudioStatus';
 import Notices from './components/Notices';
+import { onEnter } from './components/a11y';
 import { liveModelStats } from './audio/liveModels';
 import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
 // Not lazy with the DSP Map: it notes each track's sound as it's selected, for the map's A/B
@@ -715,6 +716,9 @@ function App() {
               {/* Arranger Track Grid (Moved to left) */}
               <div
                 className="arranger-timeline"
+                role="region"
+                aria-label="Arrangement timeline"
+                tabIndex={0}
                 ref={arrangerScrollRef}
                 onScroll={() => syncScroll(arrangerScrollRef.current, headersScrollRef.current)}
                 onClick={() => setSelectedRegionId(null)}
@@ -830,6 +834,10 @@ function App() {
                   <Fragment key={track.id}>
                   <div
                     className={`track-header-box ${selectedTrackId === track.id ? 'selected' : ''} ${track.type === 'group' ? 'group-track' : ''}`}
+                    role="group"
+                    aria-label={track.name}
+                    tabIndex={0}
+                    onKeyDown={onEnter(() => setSelectedTrackId(track.id))}
                     onClick={() => setSelectedTrackId(track.id)}
                     style={{
                       borderLeft: `4px solid ${track.color}`,
@@ -866,8 +874,10 @@ function App() {
                         
                         {/* Custom Color Panel Picker */}
                         <div style={{ position: 'relative' }}>
-                          <div 
-                            className="color-dot" 
+                          <button
+                            className="color-dot"
+                            title="Track colour"
+                            aria-expanded={activeColorPickerTrackId === track.id}
                             style={{ backgroundColor: track.color }}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -877,9 +887,10 @@ function App() {
                           {activeColorPickerTrackId === track.id && (
                             <div className="color-palette-popover">
                               {PRESET_COLORS.map(c => (
-                                <div 
-                                  key={c} 
-                                  className="color-palette-square" 
+                                <button
+                                  key={c}
+                                  className="color-palette-square"
+                                  title={c}
                                   style={{ backgroundColor: c }}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -1036,6 +1047,10 @@ function App() {
                   <div
                     key={r.id}
                     className={`track-header-box return-master ${selectedTrackId === r.id ? 'selected' : ''}`}
+                    role="group"
+                    aria-label={r.name}
+                    tabIndex={0}
+                    onKeyDown={onEnter(() => setSelectedTrackId(r.id))}
                     onClick={() => setSelectedTrackId(r.id)}
                   >
                     <div className="track-title-row">
@@ -1070,6 +1085,10 @@ function App() {
                 {/* Master strip: its device chain sits before the master fader and limiter */}
                 <div
                   className={`track-header-box return-master master-strip ${selectedTrackId === MASTER_STRIP_ID ? 'selected' : ''}`}
+                  role="group"
+                  aria-label="Master"
+                  tabIndex={0}
+                  onKeyDown={onEnter(() => setSelectedTrackId(MASTER_STRIP_ID))}
                   onClick={() => setSelectedTrackId(MASTER_STRIP_ID)}
                   title="Click to edit the master device chain"
                 >

@@ -141,15 +141,15 @@ export default function SessionView({ tracks, onDropFile, onOpenClip }: Props) {
                       <button className="session-launch" title="Launch clip" onClick={(e) => { e.stopPropagation(); launchClip(track.id, slot); }}>
                         <Play size={10} fill="#fff" />
                       </button>
-                      <span
-                        className="session-clip-name"
+                      <button
+                        className="row-main session-clip-name"
                         onClick={(e) => { e.stopPropagation(); selectClip(track.id, slot); }}
                         onDoubleClick={(e) => { e.stopPropagation(); selectClip(track.id, slot); onOpenClip(); }}
                         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); removeSessionClip(track.id, slot); }}
                         title="Click to select, double-click to edit in Clip View, right-click to delete"
                       >
                         {clip.file}
-                      </span>
+                      </button>
                     </div>
                   ) : (
                     <Square size={8} className="session-empty-stop" />
@@ -182,9 +182,9 @@ export default function SessionView({ tracks, onDropFile, onOpenClip }: Props) {
               <button className="btn-scene-launch" title="Launch scene" onClick={() => launchScene(i)}>
                 <Play size={10} fill="currentColor" />
               </button>
-              <span className="scene-name" onClick={() => setSceneSel(i)} title="Click to edit this scene">
+              <button className="row-main scene-name" onClick={() => setSceneSel(i)} title="Click to edit this scene">
                 {sc.name || `Scene ${i + 1}`}
-              </span>
+              </button>
               <span className="scene-badges">
                 {sc.tempo ? <span>{Number(sc.tempo).toFixed(0)}</span> : null}
                 {sc.signature ? <span>{sc.signature.numerator}/{sc.signature.denominator}</span> : null}
