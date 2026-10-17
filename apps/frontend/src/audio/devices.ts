@@ -12,6 +12,7 @@ import recorderProcessorUrl from './worklets/recorder-processor.js?url';
 import onsetProcessorUrl from './worklets/onset-processor.js?url';
 import nativeInsertProcessorUrl from './worklets/native-insert-processor.js?url';
 import { createNativeInsertDSP, isNativeDevice } from '../native/trackBridge';
+import { nativeLoadAllowed } from '../native/consent';
 
 export type ParamValue = number | boolean | string;
 
@@ -587,6 +588,7 @@ export const sliderToValue = (spec: ParamSpec, pos: number) => {
 // Instantiate a device's DSP (null for pass-through devices like unlinked VSTs).
 export const createDeviceDSP = (ctx: BaseAudioContext, device: any): DeviceDSP | null => {
   if (isNativeDevice(device)) {
+    if (!nativeLoadAllowed(device)) return null; // GhostDAW is off, or the user hasn't agreed to this plug-in
     try {
       return createNativeInsertDSP(ctx, device);
     } catch (err) {

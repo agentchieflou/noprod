@@ -1,0 +1,17 @@
+{
+  "name": "@noprod/time",
+  "version": "0.1.0",
+  "description": "noprod's musical time: the tempo map, the meter map, and beats to seconds and back",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p ."
+  },
+  "license": "Apache-2.0"
+}

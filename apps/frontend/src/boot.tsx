@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import { initEngine } from './audio/engine'
 import { initTransport } from './audio/transport'
+import { initWarpRenders } from './audio/warp'
 import { initSession } from './audio/session'
 import { initLiveMidi } from './audio/inputs'
 import { initMidiLearn } from './audio/midiLearn'
@@ -15,6 +16,7 @@ import { useDAWStore } from './store/useDAWStore'
 // The audio engine registers its worklets before the first render so device
 // chains are fully built by the time the UI can touch them.
 initTransport(useDAWStore)
+initWarpRenders(useDAWStore)
 initSession(useDAWStore)
 initLiveMidi(useDAWStore)
 initMidiLearn(useDAWStore)
