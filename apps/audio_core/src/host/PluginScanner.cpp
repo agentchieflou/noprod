@@ -199,6 +199,7 @@ std::string PluginScanner::scan()
    #if GHOSTDAW_MAC
     // The Audio Units, from the system's registry rather than files (the
     // listing loads no plugin code, so no dead man's pedal for it)
+    if (options.audioUnits)
     {
         auto result = runChildProcess (options.worker, { "--scan-au" }, options.timeoutMs);
         auto parsed = result.started && ! result.timedOut && ! result.crashed && result.exitCode == 0 ? Json::parse (result.output) : std::nullopt;

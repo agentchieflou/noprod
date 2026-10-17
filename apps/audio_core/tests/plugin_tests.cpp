@@ -1170,6 +1170,7 @@ void testScanner()
     PluginScanner::Options options;
     options.worker = worker;
     options.timeoutMs = 3000;
+    options.audioUnits = false; // (the system's units would be counted on macOS)
     PluginScanner scanner (registry, loop, options);
     std::string summary;
     auto t0 = monotonicMs();
@@ -1524,6 +1525,7 @@ void testVst3()
         PluginScanner::Options options;
         options.worker = pathFromUtf8 (GHOSTDAW_EXE_PATH);
         options.timeoutMs = 20000;
+        options.audioUnits = false; // (the system's units would be counted on macOS)
         PluginScanner scanner (registry, loop, options);
         std::string summary;
         CHECK (scanner.start ([&] (const std::string& s) { summary = s; }));
@@ -1626,7 +1628,9 @@ void testAudioUnits()
         if (mix >= 0)
         {
             CHECK (delay->setParameterValue (mix, 0.0f));
-            CHECK (delay->getParameterText (mix).find ("%") != std::string::npos);
+            // (its own string if it has them, else "0 %": either starts with the value)
+            std::cout << "  AUDelay's mix at 0: \"" << delay->getParameterText (mix) << "\"" << std::endl;
+            CHECK (startsWith (delay->getParameterText (mix), "0"));
             runProcessor (*delay, signal);
             CHECK (errorAgainst (runProcessor (*delay, signal), signal, 1.0f) < 1e-3f);
         }

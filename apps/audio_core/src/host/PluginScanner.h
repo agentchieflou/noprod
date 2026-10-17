@@ -31,6 +31,7 @@ public:
     {
         fs::path worker;       // the executable to run with --scan-file
         int timeoutMs = 20000; // per binary
+        bool audioUnits = true; // list the system's Audio Units too (macOS)
     };
 
     PluginScanner (PluginRegistry& registryToFill, MessageLoop& loopToReportOn, Options scanOptions);

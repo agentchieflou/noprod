@@ -204,7 +204,7 @@ OSStatus getProperty (void* self, AudioUnitPropertyID id, AudioUnitScope scope, 
                 info.minValue = 0.0f;
                 info.maxValue = 1.0f;
                 info.defaultValue = 1.0f;
-                info.flags |= kAudioUnitParameterFlag_IsWritable;
+                info.flags |= kAudioUnitParameterFlag_IsWritable | kAudioUnitParameterFlag_ValuesHaveStrings; // (the "%.2f x" below)
             }
             else
             {
