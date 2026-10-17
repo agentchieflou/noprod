@@ -2709,6 +2709,32 @@ body {
   white-space: nowrap;
 }
 
+.dsp-head-ab {
+  gap: 6px;
+  font-size: 9px;
+}
+
+.dsp-head-ab .designer-link {
+  font-size: 9px;
+  padding: 0;
+  white-space: nowrap;
+}
+
+.dsp-ab {
+  display: flex;
+  gap: 1px;
+}
+
+.dsp-ab .designer-button {
+  padding: 0 6px;
+  font-size: 9px;
+}
+
+.dsp-ab .designer-button.active {
+  background: var(--accent-primary, #4a9eff);
+  color: #fff;
+}
+
 .dsp-map-stage {
   display: flex;
   flex-direction: column;

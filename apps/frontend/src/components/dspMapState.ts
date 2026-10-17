@@ -23,3 +23,30 @@ export const saveColumns = (columns: MapColumn[]) => { saved = columns; };
 
 export const savedNote = () => savedNoteValue;
 export const saveNote = (note: number) => { savedNoteValue = note; };
+
+// Each column's recipe as it was when it joined the map (a track's, when it
+// became the selected one), for A/B and Revert. Keyed by the column's key.
+const originals = new Map<string, SoundRecipe>();
+
+export const originalOf = (key: string, recipe: SoundRecipe): SoundRecipe => {
+  if (!originals.has(key)) originals.set(key, structuredClone(recipe));
+  return originals.get(key)!;
+};
+// Columns that left the map take their original with them
+export const keepOriginals = (keys: string[]) => {
+  for (const k of [...originals.keys()]) if (!keys.includes(k)) originals.delete(k);
+};
+
+// What the last play rendered, for the browser suite to check A against B
+export let lastPlayed: { key: string; recipe: SoundRecipe } | null = null;
+export const notePlayed = (key: string, recipe: SoundRecipe) => { lastPlayed = { key, recipe }; };
+
+// Deep equality for plain recipe data (key order and undefined fields don't count)
+export const sameRecipe = (a: unknown, b: unknown): boolean => {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || !a || !b || Array.isArray(a) !== Array.isArray(b)) return false;
+  const x = a as Record<string, unknown>, y = b as Record<string, unknown>;
+  const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
+  for (const k of keys) if (!sameRecipe(x[k], y[k])) return false;
+  return true;
+};
