@@ -76,7 +76,7 @@ export default function AudioCorePanel() {
 
           <div className="native-row">
             <span className="native-hint">Bus</span>
-            <select className="rack-map-select" value={String(bus)} title="Where added plug-ins go. Patterns pick a track with .orbit(n); orbit 1 is the default."
+            <select aria-label="Where added plug-ins go" className="rack-map-select" value={String(bus)} title="Where added plug-ins go. Patterns pick a track with .orbit(n); orbit 1 is the default."
               onChange={(e) => setBus(e.target.value === 'master' ? 'master' : Number(e.target.value))}>
               {busIds.map((id) => {
                 const count = busInserts(state, id).length;
@@ -146,10 +146,10 @@ function InsertCard({ insert, index, count }: { insert: NativeInsert; index: num
           <div key={p.index} className="param-slider-row" title={p.id || p.name}>
             <span className="param-name">{p.name}</span>
             {p.boolean ? (
-              <input type="checkbox" checked={p.value >= (p.min + p.max) / 2} disabled={p.readOnly}
+              <input type="checkbox" aria-label={p.name} checked={p.value >= (p.min + p.max) / 2} disabled={p.readOnly}
                 onChange={(e) => setNativeParameter(insert.slotId, p.index, e.target.checked ? p.max : p.min)} />
             ) : (
-              <input type="range" className="param-slider" min={p.min} max={p.max} disabled={p.readOnly}
+              <input aria-label={p.name} type="range" className="param-slider" min={p.min} max={p.max} disabled={p.readOnly}
                 step={p.stepped && p.max - p.min >= 1 ? 1 : (p.max - p.min) / 1000}
                 value={p.value}
                 onChange={(e) => setNativeParameter(insert.slotId, p.index, parseFloat(e.target.value))} />

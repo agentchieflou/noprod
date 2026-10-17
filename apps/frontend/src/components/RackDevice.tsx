@@ -51,7 +51,7 @@ export default function RackDevice({ trackId, rack, browserPlugins, onRemove }: 
                 <span>{macro.name}</span>
                 <span style={{ fontFamily: 'monospace' }}>{Math.round(macro.value)}</span>
               </div>
-              <input
+              <input aria-label={`${macro.name} macro`}
                 type="range" min="0" max="100" step="1"
                 value={macro.value}
                 onChange={(e) => updateMacroValue(trackId, rack.id, macro.id, parseFloat(e.target.value))}
@@ -61,13 +61,13 @@ export default function RackDevice({ trackId, rack, browserPlugins, onRemove }: 
                 {macro.mappings.map((mp: any, i: number) => (
                   <span key={`${mp.deviceId}-${mp.paramName}`} className="rack-mapping-chip" title={`${deviceName(mp.deviceId)} — ${mp.paramName}`}>
                     {mp.paramName}
-                    <button className="btn-icon" style={{ fontSize: '9px', lineHeight: 1 }} onClick={() => removeMacroMapping(trackId, rack.id, macro.id, i)}>×</button>
+                    <button className="btn-icon" title="Remove this mapping" style={{ fontSize: '9px', lineHeight: 1 }} onClick={() => removeMacroMapping(trackId, rack.id, macro.id, i)}>×</button>
                   </span>
                 ))}
               </div>
               {rack.devices.length > 0 && (
                 <div style={{ display: 'flex', gap: '3px' }}>
-                  <select
+                  <select aria-label={`Map ${macro.name} to`}
                     className="rack-map-select"
                     value={pendingMap[macro.id] || ''}
                     onChange={(e) => setPendingMap({ ...pendingMap, [macro.id]: e.target.value })}
@@ -116,7 +116,7 @@ export default function RackDevice({ trackId, rack, browserPlugins, onRemove }: 
           ))}
 
           <div className="rack-add-device">
-            <select className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(parseInt(e.target.value))}>
+            <select aria-label="Device to add" className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(parseInt(e.target.value))}>
               {browserPlugins.map((p, i) => <option key={p.name} value={i}>{p.name}</option>)}
             </select>
             <button className="btn-icon" title="Add device to rack" onClick={() => addDeviceToRack(trackId, rack.id, browserPlugins[newDeviceIdx])}>

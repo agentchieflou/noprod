@@ -30,7 +30,7 @@ export default function DeviceChain({ track: selectedTrack, onAudition, onEditSo
     <div style={{ marginRight: '1rem', borderRight: '1px solid var(--border-color)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
       <h5 style={{ color: selectedTrack.color }}>{selectedTrack.name} Device Chain</h5>
       <div style={{ display: 'flex', gap: '3px' }}>
-        <select className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(e.target.value)} title="Device to add">
+        <select aria-label="Device to add" className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(e.target.value)} title="Device to add">
           <optgroup label="Audio Effects">
             {BROWSER_PLUGINS.map((p: any, i: number) => <option key={p.name} value={`audio:${i}`}>{p.name}</option>)}
           </optgroup>
@@ -59,7 +59,7 @@ export default function DeviceChain({ track: selectedTrack, onAudition, onEditSo
         </button>
       )}
       {savedRacks.length > 0 && (
-        <select
+        <select aria-label="Insert a saved rack preset"
           className="rack-map-select"
           title="Insert a saved rack preset"
           value=""

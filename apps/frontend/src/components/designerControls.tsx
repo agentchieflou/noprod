@@ -19,7 +19,7 @@ export function Param({ label, value, def, min, max, log, unit = '', onChange }:
   return (
     <div className="param-slider-row" title={`${label} (double-click to reset)`} onDoubleClick={() => onChange(undefined)}>
       <span className="param-name">{label}</span>
-      <input
+      <input aria-label={label}
         type="range" className="param-slider" min={0} max={1000}
         value={Math.round(Math.min(1, Math.max(0, toPos(v))) * 1000)}
         onChange={(e) => onChange(clean(fromPos(Number(e.target.value) / 1000)))}
@@ -35,7 +35,7 @@ export function Choice<T extends string>({ label, value, options, onChange }: {
   return (
     <div className="param-slider-row">
       <span className="param-name">{label}</span>
-      <select className="rack-map-select designer-select" value={value} onChange={(e) => onChange(e.target.value as T)}>
+      <select aria-label={label} className="rack-map-select designer-select" value={value} onChange={(e) => onChange(e.target.value as T)}>
         {options.map(([v, name]) => <option key={v} value={v}>{name}</option>)}
       </select>
     </div>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X } from 'lucide-react';
 import { forgetKey, getKey, hasKey, setKey, setKeyDialogOpen } from '../dictation/key';
 import { provider } from '../dictation/session';
+import { useDialogFocus } from './a11y';
 
 type Test = { state: 'idle' | 'testing' | 'ok' | 'failed'; message?: string };
 
@@ -10,6 +11,8 @@ export default function DictationSettings() {
   const [draft, setDraft] = useState(getKey());
   const [test, setTest] = useState<Test>({ state: 'idle' });
   const saved = hasKey();
+  // (saving a key swaps the add-key button for the Key button, so focus goes back by attribute)
+  const dialog = useDialogFocus<HTMLDivElement>(() => setKeyDialogOpen(false), true, () => document.querySelector('[data-dictation-key]'));
 
   const save = () => { setKey(draft); setTest({ state: 'idle' }); };
   const runTest = async () => {
@@ -24,7 +27,7 @@ export default function DictationSettings() {
   };
 
   return (
-    <div className="midi-map-dialog services-dialog" role="dialog" aria-label="Dictation settings" data-dictation-settings>
+    <div ref={dialog} className="midi-map-dialog services-dialog" role="dialog" aria-label="Dictation settings" tabIndex={-1} data-dictation-settings>
       <div className="midi-map-head">
         <b>AI dictation</b>
         <button className="btn-icon" title="Close" onClick={() => setKeyDialogOpen(false)}><X size={12} /></button>

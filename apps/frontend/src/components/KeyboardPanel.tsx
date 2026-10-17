@@ -141,10 +141,10 @@ export default function KeyboardPanel() {
         </div>
         {mode === 'scale' && (
           <div className="kb-row">
-            <select className="rack-map-select" value={kb.root} onChange={(e) => setScale({ root: parseInt(e.target.value) })} title="Key">
+            <select aria-label="Key" className="rack-map-select" value={kb.root} onChange={(e) => setScale({ root: parseInt(e.target.value) })} title="Key">
               {NOTE_NAMES.map((n, i) => <option key={n} value={i}>{n === spellNote(i, true) ? n : `${n} / ${spellNote(i, true)}`}</option>)}
             </select>
-            <select className="rack-map-select" value={kb.scale} onChange={(e) => setScale({ scale: e.target.value })} title="Scale">
+            <select aria-label="Scale" className="rack-map-select" value={kb.scale} onChange={(e) => setScale({ scale: e.target.value })} title="Scale">
               {Object.keys(SCALES).map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
             <label className="kb-check" title="Each key plays a chord built from the scale">
@@ -162,7 +162,7 @@ export default function KeyboardPanel() {
         )}
         <div className="kb-row">
           <span className="kb-label">Velocity</span>
-          <input type="range" min="0.05" max="1" step="0.05" value={kb.velocity} className="param-slider kb-velocity"
+          <input aria-label="Velocity" type="range" min="0.05" max="1" step="0.05" value={kb.velocity} className="param-slider kb-velocity"
             onChange={(e) => setVelocity(parseFloat(e.target.value))} title="Velocity (↑/↓); hold Shift for accents" />
           <span className="kb-value">{Math.round(kb.velocity * 127)}</span>
         </div>

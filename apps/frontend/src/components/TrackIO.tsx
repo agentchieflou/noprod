@@ -36,21 +36,21 @@ export default function TrackIO({ track, tracks, returns }: { track: any; tracks
           <span className="io-label">In</span>
           {isMidi ? (
             <>
-              <select className="rack-map-select" value={input.type} onFocus={() => initMidi()}
+              <select aria-label="Input source" className="rack-map-select" value={input.type} onFocus={() => initMidi()}
                 onChange={(e) => setTrackInput(track.id, { ...input, type: e.target.value })}>
                 <option value="all">All Ins</option>
                 <option value="computer">Computer Keyboard</option>
                 {getMidiDevices().map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                 <option value="none">No Input</option>
               </select>
-              <select className="rack-map-select io-channel" value={input.channel ?? 'all'}
+              <select aria-label="Input MIDI channel" className="rack-map-select io-channel" value={input.channel ?? 'all'}
                 onChange={(e) => setTrackInput(track.id, { ...input, channel: e.target.value })}>
                 {MIDI_CHANNELS.map((c) => <option key={c} value={c}>{c === 'all' ? 'All Ch.' : `Ch. ${c}`}</option>)}
               </select>
             </>
           ) : (
             <>
-              <select className="rack-map-select"
+              <select aria-label="Audio input" className="rack-map-select"
                 value={input.type === 'ext' ? `ext:${input.device || 'default'}` : 'none'}
                 onFocus={() => refreshAudioDevices()}
                 onChange={(e) => {
@@ -60,7 +60,7 @@ export default function TrackIO({ track, tracks, returns }: { track: any; tracks
                 {getAudioInputDevices().map((d) => <option key={d.id} value={`ext:${d.id}`}>Ext. In: {d.label}</option>)}
                 <option value="none">No Input</option>
               </select>
-              <select className="rack-map-select io-channel" value={input.channel || '1/2'} disabled={input.type !== 'ext'}
+              <select aria-label="Audio input channels" className="rack-map-select io-channel" value={input.channel || '1/2'} disabled={input.type !== 'ext'}
                 onChange={(e) => setTrackInput(track.id, { ...input, channel: e.target.value })}>
                 <option value="1/2">1/2</option>
                 <option value="1">1</option>
@@ -73,7 +73,7 @@ export default function TrackIO({ track, tracks, returns }: { track: any; tracks
       {!isGroup && isMidi && <MidiNote />}
       <div className="track-io-row">
         <span className="io-label">Out</span>
-        <select className="rack-map-select" value={output} onChange={(e) => updateTrackRouting(track.id, e.target.value)}>
+        <select aria-label="Output" className="rack-map-select" value={output} onChange={(e) => updateTrackRouting(track.id, e.target.value)}>
           <option value="master">Master</option>
           {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
           {returns.map((r, i) => <option key={r.id} value={r.id}>{RETURN_LETTERS[i]} {r.name}</option>)}
