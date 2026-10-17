@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
 import { midiNoteName } from '../audio/synth';
 import { keyName } from '@noprod/theory';
@@ -25,7 +25,7 @@ export default function PianoRoll({ region, trackColor, bpm, onAudition, onNotes
   const { updateRegionNotes: updateArrangementNotes } = useDAWStore();
   // Session clips pass their own writer; arrangement clips use the store's
   const notesChangeRef = useRef(onNotesChange);
-  notesChangeRef.current = onNotesChange;
+  useLayoutEffect(() => { notesChangeRef.current = onNotesChange; });
   const updateRegionNotes = useCallback((id: string, next: any[]) => (
     notesChangeRef.current ? notesChangeRef.current(next) : updateArrangementNotes(id, next)
   ), [updateArrangementNotes]);

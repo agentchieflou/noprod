@@ -36,6 +36,8 @@ module.exports = async (page, ctx) => {
     window.__cols = ids.map((id) => s2.tracks.filter((t) => t.type !== 'group').findIndex((t) => t.id === id));
     return 1;
   });
+  // The view may load lazily: wait for the grid rather than a fixed delay
+  await page.waitForSelector('.session-view .session-track-column', { timeout: 10000 });
   await ctx.sleep(300);
   const ids = await page.evaluate(() => window.__ids);
   const cols = await page.evaluate(() => window.__cols);

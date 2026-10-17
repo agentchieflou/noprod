@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useRef, useState, useSyncExternalStore } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
 import { barAt } from '../audio/timeline';
 import { subscribePlayhead, getPlayhead } from './playhead';
@@ -39,8 +39,11 @@ export default function TempoControls() {
   const sigText = `${bar.numerator}/${bar.denominator}`;
   const [sigDraft, setSigDraft] = useState(sigText);
   const [bpmDraft, setBpmDraft] = useState(bpm.toFixed(2));
-  useEffect(() => setSigDraft(sigText), [sigText]);
-  useEffect(() => setBpmDraft(bpm.toFixed(2)), [bpm]);
+  // Reset a draft when its value changes, during render rather than in an effect
+  const [sigSeen, setSigSeen] = useState(sigText);
+  if (sigSeen !== sigText) { setSigSeen(sigText); setSigDraft(sigText); }
+  const [bpmSeen, setBpmSeen] = useState(bpm);
+  if (bpmSeen !== bpm) { setBpmSeen(bpm); setBpmDraft(bpm.toFixed(2)); }
 
   // Tap tempo: average the last few intervals; a pause over 2s starts over
   const tap = () => {
