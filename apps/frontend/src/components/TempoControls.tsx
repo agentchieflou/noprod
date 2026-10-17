@@ -1,29 +1,15 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
 import { barAt } from '../audio/timeline';
-import { startFollowing, stopFollowing, subscribeFollower, getFollowerState } from '../audio/tempoFollower';
-import { getAudioInputDevices, refreshAudioDevices } from '../audio/inputs';
+import { subscribePlayhead, getPlayhead } from './playhead';
+import { useMidiLearn } from './useMidiLearn';
+
+const TempoFollow = lazy(() => import('./TempoFollow'));
 
 // Tempo Following: while on, the project tempo tracks the tempo detected in
-// the chosen audio input. Small changes are applied at most every 2s so the
-// arrangement isn't constantly rescheduled.
+// the chosen audio input (TempoFollow.tsx, loaded when switched on)
 function FollowControl() {
   const { tempoFollow, setTempoFollow } = useDAWStore();
-  const follower = useSyncExternalStore(subscribeFollower, getFollowerState);
-  const lastApplied = useRef(0);
-
-  useEffect(() => {
-    if (!tempoFollow.enabled) { stopFollowing(); return; }
-    startFollowing(tempoFollow.device, tempoFollow.channel, (bpm) => {
-      const st = useDAWStore.getState();
-      const now = performance.now();
-      if (Math.abs(bpm - st.bpm) < 0.3 || now - lastApplied.current < 2000) return;
-      lastApplied.current = now;
-      st.setBpmLive(bpm);
-    }).then((ok) => { if (!ok) setTempoFollow({ enabled: false }); });
-    return () => stopFollowing();
-  }, [tempoFollow.enabled, tempoFollow.device, tempoFollow.channel, setTempoFollow]);
-
   return (
     <>
       <button
@@ -33,17 +19,7 @@ function FollowControl() {
       >
         FOLLOW
       </button>
-      {tempoFollow.enabled && (
-        <>
-          <select className="rack-map-select follow-input" value={tempoFollow.device} onFocus={() => refreshAudioDevices()}
-            onChange={(e) => setTempoFollow({ device: e.target.value })} title="Input to follow">
-            {getAudioInputDevices().map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
-          </select>
-          <span className="follow-readout" title={`Detected tempo (confidence ${(follower.confidence * 100).toFixed(0)}%)`}>
-            {follower.detectedBpm ? `≈${follower.detectedBpm.toFixed(1)}` : follower.listening ? 'listening…' : '—'}
-          </span>
-        </>
-      )}
+      {tempoFollow.enabled && <Suspense fallback={null}><TempoFollow /></Suspense>}
     </>
   );
 }
@@ -52,8 +28,10 @@ const VALID_DENOMINATORS = [1, 2, 4, 8, 16];
 
 // Transport-bar tempo section: editable BPM, tap tempo, the time signature at
 // the playhead's bar (editing it inserts a change there), and count-in length.
-export default function TempoControls({ position }: { position: number }) {
+export default function TempoControls() {
+  const position = useSyncExternalStore(subscribePlayhead, getPlayhead);
   const { bpm, setBpm, timeSignatures, setTimeSignature, countInBars, setCountInBars } = useDAWStore();
+  const learn = useMidiLearn();
   const taps = useRef<number[]>([]);
   const [tapFlash, setTapFlash] = useState(false);
 
@@ -97,7 +75,7 @@ export default function TempoControls({ position }: { position: number }) {
   return (
     <div className="tempo-controls">
       <input
-        className="bpm-input"
+        {...learn({ kind: 'tempo' }, 'bpm-input')}
         value={bpmDraft}
         onChange={(e) => setBpmDraft(e.target.value)}
         onBlur={commitBpm}

@@ -94,8 +94,10 @@ function triggerDrum(
   }
 }
 
-// Schedules a single note. Returns the main source so callers can force-stop
-// it (it self-stops after release otherwise).
+type Stoppable = { stop: (when?: number) => void };
+
+// Schedules a single note. Returns what callers can force-stop (it
+// self-stops after release otherwise).
 export function triggerNote(
   ctx: BaseAudioContext,
   destination: AudioNode,
@@ -104,7 +106,7 @@ export function triggerNote(
   when: number,
   duration: number,
   velocity = 1
-): AudioScheduledSourceNode {
+): Stoppable {
   if (params.Kit === 'drums') return triggerDrum(ctx, destination, params, midiNote, when, velocity);
   if (params.Kit === 'library') return triggerLibrary(ctx, destination, params, midiNote, when, duration, velocity);
   const osc = ctx.createOscillator();

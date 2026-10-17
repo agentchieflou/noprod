@@ -5,10 +5,13 @@
 // rendered notes, which are cached and the same every time.
 //
 // What a note needs that can't be measured on the audio thread is measured
-// here, once, and cached: the sound's loudness (by rendering it once, as
-// `render` normalizes it) and its closed loops' tunings, per note.
+// in a worker, once, and cached: the sound's loudness (by rendering it once,
+// as `render` normalizes it) and its closed loops' tunings, per note. A key
+// pressed before they're ready starts when they are, if still held (#137);
+// the selected track's keys are measured ahead (libraryWarmup.ts).
 
-import { liveTunings, loudnessGain, playsLive, type LiveTarget, type SoundRecipe } from '@noprod/sound';
+import { playsLive, type LiveTarget, type SoundRecipe } from '@noprod/sound';
+import { measureLive } from './library';
 import liveModelsUrl from './worklets/live-models.ts?worker&url';
 import type { LiveModelsMessage } from './worklets/live-models';
 
@@ -41,24 +44,38 @@ function nodeFor(ctx: BaseAudioContext, destination: AudioNode) {
 
 const send = (node: AudioWorkletNode, m: LiveModelsMessage) => node.port.postMessage(m);
 
-const gains = new WeakMap<SoundRecipe, Map<number, number>>();
-const tunings = new WeakMap<SoundRecipe, Map<string, number[]>>();
+// Measured, per sound: its gain by sample rate, and tunings by note
+interface Measured { gain: number; tunings: number[] }
+const measured = new WeakMap<SoundRecipe, Map<string, Measured | Promise<Measured>>>();
+type LiveNoteKey = { note: number; velocity: number; transpose: number };
+const noteKey = (n: LiveNoteKey, sampleRate: number) => `${n.note}|${n.velocity}|${n.transpose}|${sampleRate}`;
 
-function gainOf(sound: SoundRecipe, sampleRate: number) {
-  let byRate = gains.get(sound);
-  if (!byRate) gains.set(sound, (byRate = new Map()));
-  let gain = byRate.get(sampleRate);
-  if (gain === undefined) byRate.set(sampleRate, (gain = loudnessGain(sound, sampleRate) * Math.pow(10, (sound.gain ?? 0) / 20)));
-  return gain;
+function measure(sound: SoundRecipe, notes: LiveNoteKey[], sampleRate: number, soon: boolean) {
+  let byNote = measured.get(sound);
+  if (!byNote) measured.set(sound, (byNote = new Map()));
+  const todo = notes.filter((n) => !byNote.has(noteKey(n, sampleRate)));
+  if (todo.length) {
+    const job = measureLive(sound, sampleRate, todo, soon);
+    todo.forEach((n, i) => {
+      const key = noteKey(n, sampleRate);
+      const one = job.then((m) => { const x = { gain: m.gain, tunings: m.tunings[i] }; byNote.set(key, x); return x; });
+      one.catch(() => byNote.delete(key)); // try again next time
+      byNote.set(key, one);
+    });
+  }
+  return notes.map((n) => byNote.get(noteKey(n, sampleRate))!);
 }
 
-function tuningsOf(sound: SoundRecipe, note: number, velocity: number, transpose: number, sampleRate: number) {
-  let byNote = tunings.get(sound);
-  if (!byNote) tunings.set(sound, (byNote = new Map()));
-  const key = `${note}|${velocity}|${transpose}|${sampleRate}`;
-  let t = byNote.get(key);
-  if (!t) byNote.set(key, (t = liveTunings(sound, note, velocity, sampleRate, transpose)));
-  return t;
+// velocities to 1/16, as rendered notes are, so tunings are shared
+const sixteenth = (velocity: number) => Math.max(1, Math.round(Math.min(1, Math.max(0, velocity)) * 16)) / 16;
+
+// Measures a sound's keys (at a velocity) ahead of playing them
+export function prewarmLive(sound: SoundRecipe, params: any, pitches: number[], velocity: number, sampleRate: number) {
+  if (!playsLive(sound)) return;
+  const transpose = params.Tune ?? 0;
+  measure(sound, pitches.map((note) => ({ note, velocity: sixteenth(velocity), transpose })), sampleRate, false).forEach((m) => {
+    if (m instanceof Promise) m.catch(() => {});
+  });
 }
 
 let nextId = 1;
@@ -70,22 +87,28 @@ export function startLiveVoice(
 ): { release: (at: number) => void } | null {
   if (!ready.has(ctx) || !playsLive(sound)) return null;
   const node = nodeFor(ctx, destination);
-  // velocities to 1/16, as rendered notes are, so tunings are shared
-  const v = Math.max(1, Math.round(Math.min(1, Math.max(0, velocity)) * 16)) / 16;
+  const v = sixteenth(velocity);
   const transpose = params.Tune ?? 0;
   const id = nextId++;
-  send(node, {
-    type: 'on', id, recipe: sound, note, velocity: v, transpose,
-    gain: gainOf(sound, ctx.sampleRate) * (params.Gain ?? 0.8),
-    tunings: tuningsOf(sound, note, v, transpose, ctx.sampleRate),
-    at: when
-  });
-  let released = false;
+  let started = false, released = false;
+  const on = (m: Measured, at: number) => {
+    started = true;
+    send(node, {
+      type: 'on', id, recipe: sound, note, velocity: v, transpose,
+      gain: m.gain * (params.Gain ?? 0.8), tunings: m.tunings, at
+    });
+  };
+  const [m] = measure(sound, [{ note, velocity: v, transpose }], ctx.sampleRate, true);
+  if (m instanceof Promise) {
+    m.then((x) => { if (!released) on(x, Math.max(when, ctx.currentTime)); }, () => {});
+  } else {
+    on(m, when);
+  }
   return {
     release(at: number) {
       if (released) return;
       released = true;
-      send(node, { type: 'off', id, at });
+      if (started) send(node, { type: 'off', id, at });
     }
   };
 }

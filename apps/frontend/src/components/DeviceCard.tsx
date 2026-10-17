@@ -65,7 +65,8 @@ export default function DeviceCard({ device, onChange, onRemove, className = '',
       <div className="device-card-params">
         {specs
           ? specs.filter((spec) => !spec.hidden).map((spec) => (
-            <ParamControl key={spec.name} spec={spec} value={params[spec.name]} onChange={(v) => onChange(spec.name, v)} />
+            <ParamControl key={spec.name} spec={spec} value={params[spec.name]} onChange={(v) => onChange(spec.name, v)}
+              learnTarget={{ kind: 'device', deviceId: device.id, param: spec.name }} />
           ))
           : Object.keys(params).map((paramName) => (
             // Unhosted third-party plugin: generic normalized controls

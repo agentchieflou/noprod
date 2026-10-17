@@ -1,58 +1,65 @@
-import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
+import { Fragment, lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
   Layers, CheckSquare, Square as SquareIcon, Sliders, Wand2,
   Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic, GraduationCap
 } from 'lucide-react';
-import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
-import { triggerNote } from './audio/synth';
+import { APP_VERSION, APP_COMMIT } from './buildInfo';
+import { useDAWStore, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
+import { startVoice } from './audio/synth';
 import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
-import ClipView from './components/ClipView';
-import SessionView from './components/SessionView';
-import TrackIO from './components/TrackIO';
-import InstrumentCard from './components/InstrumentCard';
-import TakeLane from './components/TakeLane';
 import BrowserSidebar, { SAMPLE_DRAG_TYPE, SOUND_DRAG_TYPE } from './components/BrowserSidebar';
 import { getFile } from './browser/library';
-import { createLibraryInstrument, soundAsBuffer } from './audio/library';
+import { createLibraryInstrument, soundAsBuffer, whenRendered, libraryStats } from './audio/library';
 import { startLibraryWarmup } from './audio/libraryWarmup';
 import { findAnySound, loadUserSounds } from './audio/userSounds';
-import { applyDictation, type DictationResult } from './audio/dictation';
-import SoundDesigner from './components/SoundDesigner';
-import DspMap from './components/DspMap';
-import Mixer from './components/Mixer';
+import type { DictationResult } from './audio/dictation';
 import type { SoundRecipe } from '@noprod/sound';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
 import { initMidi } from './audio/inputs';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
-import KeyboardPanel from './components/KeyboardPanel';
-import { subscribeCoach, getCoachState, setCoachOpen } from './audio/coach';
-import AudioCorePanel from './components/AudioCorePanel';
-import PluginEditorWindow from './components/PluginEditorWindow';
+import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from './audio/coachLoader';
+import { getPluginEditor, subscribePluginEditor } from './native/pluginEditor';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
-import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage, findNativePlugin, nativeDeviceFor } from './native/audioCore';
-import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
-import RackDevice from './components/RackDevice';
-import DeviceCard from './components/DeviceCard';
+import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage } from './native/audioCore';
 import ArrangementRuler from './components/ArrangementRuler';
 import TempoControls from './components/TempoControls';
+import Playhead from './components/Playhead';
+import { setPlayhead } from './components/playhead';
+import MidiLearnControls from './components/MidiLearnControls';
+import { useMidiLearn } from './components/useMidiLearn';
 import FileMenu from './components/FileMenu';
-import AutomationLane from './components/AutomationLane';
 import { automationParams } from './audio/automation';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
-import { DEVICE_DEFS, createDevice } from './audio/devices';
-import { MIDI_EFFECT_DEFS, createMidiEffect } from './audio/midiEffects';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
 import { liveModelStats } from './audio/liveModels';
-import { accompanyDebug } from './audio/accompany';
 import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
 import './App.css';
+
+// Panels that aren't on screen at first load arrive when opened (#137)
+const SoundDesigner = lazy(() => import('./components/SoundDesigner'));
+const DspMap = lazy(() => import('./components/DspMap'));
+const Mixer = lazy(() => import('./components/Mixer'));
+const KeyboardPanel = lazy(() => import('./components/KeyboardPanel'));
+const DeviceChain = lazy(() => import('./components/DeviceChain'));
+const PluginFolders = lazy(() => import('./components/PluginFolders'));
+const DictationPanel = lazy(() => import('./components/DictationPanel'));
+const ClipView = lazy(() => import('./components/ClipView'));
+const SessionView = lazy(() => import('./components/SessionView'));
+const PluginEditorWindow = lazy(() => import('./components/PluginEditorWindow'));
+const TrackIO = lazy(() => import('./components/TrackIO'));
+const TakeLane = lazy(() => import('./components/TakeLane'));
+const AutomationLane = lazy(() => import('./components/AutomationLane'));
+const MidiRegionNode = lazy(() => import('./components/ClipNodes').then((m) => ({ default: m.MidiRegionNode })));
+const AudioRegionNode = lazy(() => import('./components/ClipNodes').then((m) => ({ default: m.AudioRegionNode })));
 
 
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
   (window as any).__dawStore = useDAWStore;
-  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, accompany: accompanyDebug };
+  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, libraryStats,
+    // the coach's band, once it has loaded (coachLoader.ts)
+    get accompany() { return accompanyDebug(); } };
 }
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 
@@ -81,14 +88,6 @@ const PRESET_COLORS = [
   '#a855f7', // Purple
   '#ec4899', // Pink
   '#6b7280'  // Grey
-];
-
-// Add Device choices: stock devices with real DSP first, then third-party
-// plugins (passed through untouched until Audio Core hosts them natively).
-const BROWSER_PLUGINS = [
-  ...Object.keys(DEVICE_DEFS).map(createDevice),
-  { name: 'FabFilter Pro-Q 3', type: 'vst', parameters: { 'Freq': 440, 'Gain': 0.0, 'Q': 1.0 } },
-  { name: 'Antares AutoTune', type: 'vst', parameters: { 'Retune Speed': 20, 'Humanize': 60, 'Key': 'C min' } },
 ];
 
 // Live peak meter + clip LED + limiter gain-reduction readout for the master bus.
@@ -148,39 +147,35 @@ const MasterMeter = ({ limiterEnabled }: { limiterEnabled: boolean }) => {
 };
 
 function App() {
+  const learn = useMidiLearn();
   const { 
     tracks, regions, isPlaying, isRecording, isMetronomeEnabled, viewMode,
-    selectedTrackId, selectedRegionId, masterVolume, returns, masterPlugins, sessionClips, vstScanPaths, bpm,
+    selectedTrackId, selectedRegionId, masterVolume, returns, masterPlugins, sessionClips, bpm,
     togglePlayback, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
-    addTrack, removeTrack, addRegion, updateTrackColor, toggleArmTrack,
+    addTrack, removeTrack, addRegion, removeRegion, updateTrackColor, toggleArmTrack,
     updateTrackVolume, updateTrackPan, updateTrackSend, toggleMuteTrack, toggleSoloTrack,
-    setMasterVolume, addReturn, removeReturn, updateReturn, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
-    setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
+    setMasterVolume, addReturn, removeReturn, updateReturn,
+    setSessionClip, groupTracks, loadAbletonSet,
     undo, redo, past, future,
     addMidiRegion, setTrackInstrument,
     isLimiterEnabled, toggleLimiter, toggleGroupCollapse,
-    savedRacks, addRackToTrack, groupTrackDevicesIntoRack, addSavedRackToTrack,
     setTrackFrozen, unfreezeTrack, flattenTrack,
     punchInTime, punchOutTime, isPunchEnabled, togglePunch,
     isLoopEnabled, loopStart, loopEnd, toggleLoop, locators, addLocator, timeSignatures,
     toggleAutomationView, setAutomationLanes, clearAutomation,
     selectedSessionClip, updateSessionClip, updateClip,
-    compTakeRange, removeTakeLane, toggleTakesView,
-    addMidiEffect, removeMidiEffect, updateMidiEffectParameter,
-    scannedPlugins, setScannedPlugins
+    compTakeRange, removeTakeLane, toggleTakesView
   } = useDAWStore();
-  const [isScanning, setIsScanning] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggedOverTrack, setDraggedOverTrack] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'dspmap' | 'mixer' | 'vst-paths' | 'dictation'>('devices');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
-  const [newVstPathInput, setNewVstPathInput] = useState('');
-  const [newDeviceIdx, setNewDeviceIdx] = useState('audio:0');
   const [showIO, setShowIO] = useState(false);
   const keyboardMidi = useSyncExternalStore(subscribeKeyboard, () => getKeyboardState().enabled);
-  const coachOpen = useSyncExternalStore(subscribeCoach, () => getCoachState().open);
+  const coachOpen = useSyncExternalStore(subscribeCoachOpen, getCoachOpen);
+  const pluginEditor = useSyncExternalStore(subscribePluginEditor, getPluginEditor);
   // Capture lights up when there is uncaptured playing for an armed MIDI track
   const capturable = useSyncExternalStore(onCaptureBufferChange, () => hasCapturable(useDAWStore.getState())) && tracks.length > 0;
 
@@ -212,7 +207,7 @@ function App() {
         // The evaluated pattern: its parts become tracks playing library sounds
         if (!awaitingHaps.current) return;
         awaitingHaps.current = false;
-        setDictationResult(applyDictation(useDAWStore, msg));
+        import('./audio/dictation').then((d) => setDictationResult(d.applyDictation(useDAWStore, msg)));
       } else if (msg.type === 'ERROR') {
         awaitingHaps.current = false;
         setDictationError(msg.message);
@@ -237,17 +232,16 @@ function App() {
 
   // Playhead display: the transport owns position and scheduling; this just
   // follows it (rAF while playing) and runs punch-in/out at the punch points.
-  const [localPlaybackPosition, setLocalPlaybackPosition] = useState(0);
   const [countingIn, setCountingIn] = useState(false);
 
-  useEffect(() => onTransportChange(() => setLocalPlaybackPosition(Math.max(0, getPosition()))), []);
+  useEffect(() => onTransportChange(() => setPlayhead(Math.max(0, getPosition()))), []);
 
   useEffect(() => {
     if (!isPlaying) return;
     let raf: number;
     const updatePlayhead = () => {
       const currentPos = getPosition();
-      setLocalPlaybackPosition(Math.max(0, currentPos));
+      setPlayhead(Math.max(0, currentPos));
       setCountingIn(isCountingIn());
       const st = useDAWStore.getState();
       if (st.isPunchEnabled && !isCountingIn()) {
@@ -296,7 +290,8 @@ function App() {
         setTrackInstrument(trackId, createLibraryInstrument(sound));
         return;
       }
-      const audioBuffer = soundAsBuffer(sound);
+      const audioBuffer = await soundAsBuffer(sound).catch(() => null);
+      if (!audioBuffer) return;
       if (slotIndex !== undefined) {
         setSessionClip(trackId, slotIndex, { name: sound.name, audioBuffer, duration: audioBuffer.duration });
       } else {
@@ -367,6 +362,13 @@ function App() {
         e.preventDefault();
         togglePlayback();
       }
+      // Delete / Backspace removes the selected arrangement clip (Ctrl+Z restores
+      // it). A note selected in the Clip View's piano roll takes the key first.
+      const isTyping = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable || !!target.closest?.('[data-keyboard-capture]');
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !isTyping && selectedRegionId && !selectedSessionClip) {
+        e.preventDefault();
+        removeRegion(selectedRegionId);
+      }
       // Undo/Redo: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y (skip while typing in text fields)
       if ((e.ctrlKey || e.metaKey) && !isInput) {
         const key = e.key.toLowerCase();
@@ -381,7 +383,7 @@ function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlayback, undo, redo]);
+  }, [togglePlayback, undo, redo, removeRegion, selectedRegionId, selectedSessionClip]);
 
   // Find selected track and region
   // The device chain view edits whichever strip is selected: a track or a return
@@ -476,7 +478,9 @@ function App() {
   const auditionNote = (track: any, pitch: number) => {
     if (!track?.instrument) return;
     if (audioContext.state === 'suspended') audioContext.resume();
-    triggerNote(audioContext, getStripInput(track.id), track.instrument.parameters, pitch, audioContext.currentTime, 0.35);
+    // played as a key is, so a note that isn't rendered yet still sounds
+    const now = audioContext.currentTime;
+    startVoice(audioContext, getStripInput(track.id), track.instrument.parameters, pitch, now, 1).release(now + 0.35);
   };
 
   // Freeze: render the track's clips offline (instrument included for MIDI),
@@ -502,64 +506,9 @@ function App() {
         region.startTime, 0, clipTimelineLength(region, bpm), bpm, { midiEffects: track.midiEffects });
     });
 
+    await whenRendered(offline); // library notes render in workers first
     const rendered = await offline.startRendering();
     setTrackFrozen(track.id, rendered, end);
-  };
-
-  // Add custom path
-  const handleAddVstPath = () => {
-    if (newVstPathInput.trim()) {
-      addVstScanPath(newVstPathInput.trim());
-      setNewVstPathInput('');
-    }
-  };
-
-  // Real plugin folder scan via the File System Access API: the user picks a
-  // directory and we enumerate actual plugin binaries inside it.
-  const PLUGIN_EXTENSIONS: { [ext: string]: string } = {
-    '.vst3': 'VST3', '.dll': 'VST2', '.clap': 'CLAP', '.component': 'AU'
-  };
-
-  const scanDirectory = async (dirHandle: any, basePath: string, depth: number, found: any[]) => {
-    if (depth > 3) return;
-    for await (const entry of dirHandle.values()) {
-      const lower = entry.name.toLowerCase();
-      const ext = Object.keys(PLUGIN_EXTENSIONS).find(e => lower.endsWith(e));
-      if (ext) {
-        found.push({
-          name: entry.name.replace(/\.(vst3|dll|clap|component)$/i, ''),
-          format: PLUGIN_EXTENSIONS[ext],
-          path: `${basePath}/${entry.name}`
-        });
-      } else if (entry.kind === 'directory') {
-        await scanDirectory(entry, `${basePath}/${entry.name}`, depth + 1, found);
-      }
-    }
-  };
-
-  const handleScanPluginFolder = async () => {
-    const picker = (window as any).showDirectoryPicker;
-    if (!picker) {
-      alert('Folder scanning needs the File System Access API (Chromium-based browser).');
-      return;
-    }
-    try {
-      setIsScanning(true);
-      const dirHandle = await picker.call(window, { mode: 'read' });
-      const found: any[] = [];
-      await scanDirectory(dirHandle, dirHandle.name, 0, found);
-      // Merge with already-scanned plugins, de-duplicated by path
-      const merged = [...scannedPlugins];
-      found.forEach(p => {
-        if (!merged.some((m: any) => m.path === p.path)) merged.push(p);
-      });
-      setScannedPlugins(merged);
-      if (found.length === 0) alert(`No plugin files (.vst3/.dll/.clap/.component) found in "${dirHandle.name}".`);
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') alert(`Scan failed: ${err.message || err}`);
-    } finally {
-      setIsScanning(false);
-    }
   };
 
   // Ableton Live Set (.als) Import Handler
@@ -568,125 +517,13 @@ function App() {
     if (!file) return;
 
     try {
-      // Decompress using modern native browser DecompressionStream (GZIP)
-      const decompressedStream = file.stream().pipeThrough(new DecompressionStream('gzip'));
-      const response = new Response(decompressedStream);
-      const xmlText = await response.text();
-
-      // Parse decompressed XML text
-      const parser = new DOMParser();
-      const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-
-      // Validate Ableton XML root node
-      const abletonNode = xmlDoc.querySelector('Ableton');
-      if (!abletonNode) {
+      const { parseAbletonSet } = await import('./alsImport');
+      const set = await parseAbletonSet(file, returns, PRESET_COLORS);
+      if (!set) {
         alert("Invalid file format. Ensure this is a valid Ableton Live Set (.als) file.");
         return;
       }
-
-      // 1. Extract BPM/Tempo
-      const tempoNode = xmlDoc.querySelector('Tempo Manual Value, Tempo Manual');
-      const tempo = tempoNode ? parseFloat(tempoNode.getAttribute('Value') || '120') : 120;
-
-      // 2. Extract Tracks & Placed clips
-      const tracksList: any[] = [];
-      const regionsList: any[] = [];
-
-      // Query both audio and midi tracks
-      const trackNodes = xmlDoc.querySelectorAll('Tracks AudioTrack, Tracks MidiTrack');
-      trackNodes.forEach((trackNode, index) => {
-        const type = trackNode.nodeName === 'AudioTrack' ? 'audio' : 'midi';
-        const id = `als-track-${index}-${Math.random().toString(36).substr(2, 9)}`;
-        
-        const nameNode = trackNode.querySelector('Name UserName');
-        const name = nameNode && nameNode.getAttribute('Value') 
-          ? nameNode.getAttribute('Value') 
-          : `${index + 1} ${type === 'audio' ? 'Audio' : 'MIDI'}`;
-        
-        const colorNode = trackNode.querySelector('Color');
-        const colorValue = colorNode ? parseInt(colorNode.getAttribute('Value') || '0') : 0;
-        const color = PRESET_COLORS[colorValue % PRESET_COLORS.length];
-
-        // Vol, Pan, Sends
-        const volNode = trackNode.querySelector('DeviceChain Mixer Volume Manual');
-        const volume = volNode ? parseFloat(volNode.getAttribute('Value') || '0.8') : 0.8;
-
-        const panNode = trackNode.querySelector('DeviceChain Mixer Pan Manual');
-        const pan = panNode ? parseFloat(panNode.getAttribute('Value') || '0.0') : 0.0;
-
-        // One TrackSendHolder per return, in return order
-        const sends: { [returnId: string]: number } = {};
-        trackNode.querySelectorAll('DeviceChain Mixer Sends TrackSendHolder Send Manual')
-          .forEach((sendNode, i) => {
-            const ret = returns[i];
-            if (ret) sends[ret.id] = parseFloat(sendNode.getAttribute('Value') || '0') || 0;
-          });
-
-        // Scanned plugins / VSTs under the track's device chain
-        const plugins: any[] = [];
-        const pluginNodes = trackNode.querySelectorAll('DeviceChain Devices *');
-        pluginNodes.forEach(dev => {
-          const devName = dev.nodeName;
-          if (devName.includes('Vst') || devName.includes('Plugin') || devName.includes('PluginDevice')) {
-            const pluginNameNode = dev.querySelector('PluginDescName, UserName');
-            const nameAttr = pluginNameNode ? pluginNameNode.getAttribute('Value') : null;
-            if (nameAttr) {
-              plugins.push({
-                id: Math.random().toString(36).substr(2, 9),
-                name: nameAttr,
-                type: 'vst',
-                parameters: {}
-              });
-            }
-          }
-        });
-
-        tracksList.push({
-          id,
-          name,
-          type,
-          routing: 'master',
-          groupId: null,
-          volume,
-          pan,
-          sends,
-          color,
-          instrument: type === 'midi' ? createDefaultInstrument() : null,
-          plugins
-        });
-
-        // Placed Clips / Arranger Regions
-        const clipNodes = trackNode.querySelectorAll('ArrangerClipSource AudioClip, ArrangerClipSource MidiClip');
-        clipNodes.forEach((clipNode, clipIdx) => {
-          const clipNameNode = clipNode.querySelector('Name');
-          const clipName = clipNameNode ? clipNameNode.getAttribute('Value') || 'Clip' : 'Clip';
-
-          const clipParent = clipNode.parentElement;
-          const startNode = clipParent ? clipParent.querySelector('CurrentStart') : null;
-          const endNode = clipParent ? clipParent.querySelector('CurrentEnd') : null;
-          const startTime = startNode ? parseFloat(startNode.getAttribute('Value') || '0') : 0;
-          const endTime = endNode ? parseFloat(endNode.getAttribute('Value') || '10') : 10;
-          const duration = Math.max(0.1, endTime - startTime);
-
-          // Create a faint playable 440Hz sine buffer for visual rendering and audio feedback
-          const sampleRate = audioContext.sampleRate;
-          const dummyBuffer = audioContext.createBuffer(1, Math.floor(sampleRate * duration), sampleRate);
-          const channelData = dummyBuffer.getChannelData(0);
-          for (let i = 0; i < channelData.length; i++) {
-            channelData[i] = Math.sin(2 * Math.PI * 440 * (i / sampleRate)) * 0.05; // 5% amplitude
-          }
-
-          regionsList.push({
-            id: `als-region-${index}-${clipIdx}-${Math.random().toString(36).substr(2, 9)}`,
-            trackId: id,
-            file: clipName,
-            audioBuffer: dummyBuffer,
-            startTime,
-            duration,
-            startOffset: 0
-          });
-        });
-      });
+      const { tempo, tracksList, regionsList } = set;
 
       // Update store state
       loadAbletonSet(tempo, tracksList, regionsList);
@@ -767,7 +604,8 @@ function App() {
           <button className="btn-metronome" onClick={() => jumpLocator(1)} disabled={locators.length === 0} title="Next locator">▶</button>
         </div>
 
-        <TempoControls position={localPlaybackPosition} />
+        <TempoControls />
+        <MidiLearnControls />
         {countingIn && <span className="count-in-badge">COUNT-IN</span>}
 
         {/* Keyboard Coach: opens the keyboard panel, computer keyboard on or off */}
@@ -832,7 +670,7 @@ function App() {
             type="range" min="0" max="1" step="0.01"
             value={masterVolume}
             onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
-            className="fader-input"
+            {...learn({ kind: 'master', param: 'volume' }, 'fader-input')}
           />
           <MasterMeter limiterEnabled={isLimiterEnabled} />
           <button
@@ -877,7 +715,7 @@ function App() {
                 {isLoopEnabled && (
                   <div className="loop-shade" style={{ left: loopStart * PIXELS_PER_SECOND, width: (loopEnd - loopStart) * PIXELS_PER_SECOND }} />
                 )}
-                <div className="playhead" style={{ left: `${localPlaybackPosition * PIXELS_PER_SECOND}px` }} />
+                <Playhead />
                 
                 {visibleTracks.map((track: any) => (
                   <Fragment key={track.id}>
@@ -897,6 +735,7 @@ function App() {
                       handleCreateMidiClip(track.id, clickTime);
                     }}
                   >
+                    <Suspense fallback={null}>
                     {regions.filter((r: any) => r.trackId === track.id).map((region: any) => (
                       region.type === 'midi' ? (
                         <MidiRegionNode
@@ -918,19 +757,20 @@ function App() {
                         />
                       )
                     ))}
+                    </Suspense>
                   </div>
                   {/* Automation lanes under the track */}
                   {track.showAutomation && (track.automationLanes || []).map((key: string) => {
                     const param = automationParams(track, returns).find((p) => p.key === key);
                     return param ? (
                       <div key={key} className="automation-lane-row" style={{ width: timelineWidth }}>
-                        <AutomationLane track={track} param={param} width={timelineWidth} color={track.color} />
+                        <Suspense fallback={null}><AutomationLane track={track} param={param} width={timelineWidth} color={track.color} /></Suspense>
                       </div>
                     ) : <div key={key} className="automation-lane-row" style={{ width: timelineWidth }} />;
                   })}
                   {/* Take lanes (recorded passes) under the track */}
                   {track.showTakes && (track.takeLanes || []).map((lane: any) => (
-                    <TakeLane key={lane.id} track={track} lane={lane} width={timelineWidth} />
+                    <Suspense key={lane.id} fallback={null}><TakeLane track={track} lane={lane} width={timelineWidth} /></Suspense>
                   ))}
                   </Fragment>
                 ))}
@@ -1081,8 +921,8 @@ function App() {
                       <button className={`btn-arm ${track.isArmed ? 'armed' : ''}`}
                         onClick={() => { if (track.type === 'midi') initMidi(); toggleArmTrack(track.id); }}
                         title="Arm recording (an armed track also monitors its input)"><Mic size={12} /></button>
-                      <button className={`btn-mute ${track.isMuted ? 'muted' : ''}`} onClick={() => toggleMuteTrack(track.id)} title="Mute Track">M</button>
-                      <button className={`btn-solo ${track.isSoloed ? 'soloed' : ''}`} onClick={() => toggleSoloTrack(track.id)} title="Solo Track">S</button>
+                      <button {...learn({ kind: 'track', trackId: track.id, param: 'mute' }, `btn-mute ${track.isMuted ? 'muted' : ''}`)} onClick={() => toggleMuteTrack(track.id)} title="Mute Track">M</button>
+                      <button {...learn({ kind: 'track', trackId: track.id, param: 'solo' }, `btn-solo ${track.isSoloed ? 'soloed' : ''}`)} onClick={() => toggleSoloTrack(track.id)} title="Solo Track">S</button>
                       
                       <div className="strip-val">
                         <span style={{ fontSize: '9px' }}>PAN</span>
@@ -1090,7 +930,7 @@ function App() {
                           type="range" min="-1" max="1" step="0.1" 
                           value={track.pan} 
                           onChange={(e) => updateTrackPan(track.id, parseFloat(e.target.value))}
-                          className="mixer-dial"
+                          {...learn({ kind: 'track', trackId: track.id, param: 'pan' }, 'mixer-dial')}
                         />
                       </div>
                       
@@ -1103,7 +943,7 @@ function App() {
                               type="range" min="0" max="1" step="0.01"
                               value={track.sends?.[r.id] ?? 0}
                               onChange={(e) => updateTrackSend(track.id, r.id, parseFloat(e.target.value))}
-                              className="mixer-dial"
+                              {...learn({ kind: 'send', trackId: track.id, returnId: r.id }, 'mixer-dial')}
                             />
                           </div>
                         ))}
@@ -1117,10 +957,10 @@ function App() {
                         type="range" min="0" max="1" step="0.01" 
                         value={track.volume} 
                         onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
-                        className="mixer-fader"
+                        {...learn({ kind: 'track', trackId: track.id, param: 'volume' }, 'mixer-fader')}
                       />
                     </div>
-                    {showIO && <TrackIO track={track} tracks={tracks} returns={returns} />}
+                    {showIO && <Suspense fallback={null}><TrackIO track={track} tracks={tracks} returns={returns} /></Suspense>}
                   </div>
                   {/* Automation lane headers: choose the parameter, clear, add/remove lanes */}
                   {track.showAutomation && (track.automationLanes || []).map((key: string, laneIdx: number) => {
@@ -1224,7 +1064,7 @@ function App() {
                       value={masterVolume}
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
-                      className="mixer-fader"
+                      {...learn({ kind: 'master', param: 'volume' }, 'mixer-fader')}
                     />
                   </div>
                 </div>
@@ -1238,13 +1078,13 @@ function App() {
 
             </div>
           ) : (
-            <SessionView tracks={visibleTracks} onDropFile={handleDrop} onOpenClip={() => setActiveTab('clip')} />
+            <Suspense fallback={null}><SessionView tracks={visibleTracks} onDropFile={handleDrop} onOpenClip={() => setActiveTab('clip')} /></Suspense>
           )}
         </div>
       </div>
 
-      {(keyboardMidi || coachOpen) && <KeyboardPanel />}
-      <PluginEditorWindow />
+      {(keyboardMidi || coachOpen) && <Suspense fallback={null}><KeyboardPanel /></Suspense>}
+      {pluginEditor && <Suspense fallback={null}><PluginEditorWindow /></Suspense>}
 
       {/* Bottom Detail panel */}
       <div className={`bottom-detail-panel ${(activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi') || activeTab === 'sound' || activeTab === 'dspmap' || activeTab === 'mixer' ? 'tall' : ''}`}>
@@ -1256,108 +1096,16 @@ function App() {
           <button className={`detail-tab ${activeTab === 'mixer' ? 'active' : ''}`} onClick={() => setActiveTab('mixer')}>Mixer</button>
           <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>
           <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>
+        <span className="app-version" title={`noprod ${APP_VERSION}, build ${APP_COMMIT}`}>v{APP_VERSION} · {APP_COMMIT}</span>
         </div>
         
         <div className="detail-content">
           {activeTab === 'devices' && (
             <div className={`device-chain-view ${selectedTrack?.isFrozen ? 'frozen-locked' : ''}`}>
               {selectedTrack ? (
-                <>
-                  {selectedTrack.isFrozen && (
-                    <div className="frozen-banner" title="Unfreeze the track to edit devices">
-                      <Snowflake size={12} /> Frozen
-                    </div>
-                  )}
-                  <div style={{ marginRight: '1rem', borderRight: '1px solid var(--border-color)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                    <h5 style={{ color: selectedTrack.color }}>{selectedTrack.name} Device Chain</h5>
-                    <div style={{ display: 'flex', gap: '3px' }}>
-                      <select className="rack-map-select" value={newDeviceIdx} onChange={(e) => setNewDeviceIdx(e.target.value)} title="Device to add">
-                        <optgroup label="Audio Effects">
-                          {BROWSER_PLUGINS.map((p: any, i: number) => <option key={p.name} value={`audio:${i}`}>{p.name}</option>)}
-                        </optgroup>
-                        {selectedTrack.type === 'midi' && (
-                          <optgroup label="MIDI Effects">
-                            {Object.values(MIDI_EFFECT_DEFS).map((d) => <option key={d.kind} value={`midi:${d.kind}`}>{d.name}</option>)}
-                          </optgroup>
-                        )}
-                      </select>
-                      <button className="btn-add-track" onClick={() => {
-                        const [group, key] = newDeviceIdx.split(':');
-                        if (group === 'midi') addMidiEffect(selectedTrack.id, createMidiEffect(key));
-                        else addDeviceToTrack(selectedTrack.id, BROWSER_PLUGINS[parseInt(key)] || BROWSER_PLUGINS[0]);
-                      }}>
-                        <Plus size={12} /> Add
-                      </button>
-                    </div>
-                    <button className="btn-add-track" style={{ backgroundColor: '#a855f7' }} onClick={() => addRackToTrack(selectedTrack.id)}>
-                      <Plus size={12} /> Add Rack
-                    </button>
-                    {selectedTrack.plugins.some((p: any) => p.type !== 'rack') && (
-                      <button className="btn-add-track" style={{ backgroundColor: '#6366f1' }}
-                        title="Wrap this track's devices into an Audio Effect Rack"
-                        onClick={() => groupTrackDevicesIntoRack(selectedTrack.id)}>
-                        Group into Rack
-                      </button>
-                    )}
-                    {savedRacks.length > 0 && (
-                      <select
-                        className="rack-map-select"
-                        title="Insert a saved rack preset"
-                        value=""
-                        onChange={(e) => {
-                          if (e.target.value !== '') addSavedRackToTrack(selectedTrack.id, parseInt(e.target.value));
-                        }}
-                      >
-                        <option value="">Saved racks…</option>
-                        {savedRacks.map((r: any, i: number) => <option key={i} value={i}>{r.name}</option>)}
-                      </select>
-                    )}
-                  </div>
-                  
-                  {/* MIDI effects run before the instrument */}
-                  {selectedTrack.type === 'midi' && (selectedTrack.midiEffects || []).map((fx: any) => (
-                    <DeviceCard
-                      key={fx.id}
-                      device={fx}
-                      onChange={(name, val) => updateMidiEffectParameter(selectedTrack.id, fx.id, name, val)}
-                      onRemove={() => removeMidiEffect(selectedTrack.id, fx.id)}
-                    />
-                  ))}
-
-                  {/* Instrument Card (MIDI tracks) */}
-                  {selectedTrack.type === 'midi' && (
-                    selectedTrack.instrument ? (
-                      <InstrumentCard track={selectedTrack} onAudition={(pitch: number) => auditionNote(selectedTrack, pitch)} onEditSound={() => setActiveTab('sound')} />
-                    ) : (
-                      <button className="btn-add-track" style={{ backgroundColor: '#10b981', alignSelf: 'flex-start' }}
-                        onClick={() => setTrackInstrument(selectedTrack.id, createDefaultInstrument())}>
-                        <Plus size={12} /> Add Instrument
-                      </button>
-                    )
-                  )}
-
-                  {/* Plugin Cards */}
-                  <div className="device-cards">
-                    {selectedTrack.plugins.map((plugin: any) => (
-                      plugin.type === 'rack' ? (
-                        <RackDevice
-                          key={plugin.id}
-                          trackId={selectedTrack.id}
-                          rack={plugin}
-                          browserPlugins={BROWSER_PLUGINS}
-                          onRemove={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}
-                        />
-                      ) : (
-                        <DeviceCard
-                          key={plugin.id}
-                          device={plugin}
-                          onChange={(paramName, val) => updateDeviceParameter(selectedTrack.id, plugin.id, paramName, val)}
-                          onRemove={() => removeDeviceFromTrack(selectedTrack.id, plugin.id)}
-                        />
-                      )
-                    ))}
-                  </div>
-                </>
+                <Suspense fallback={null}>
+                  <DeviceChain track={selectedTrack} onAudition={(pitch: number) => auditionNote(selectedTrack, pitch)} onEditSound={() => setActiveTab('sound')} />
+                </Suspense>
               ) : (
                 <div className="detail-empty-message">No track selected. Click a track header to configure its plugins.</div>
               )}
@@ -1366,6 +1114,7 @@ function App() {
           
           {activeTab === 'clip' && (
             <div className="clip-properties-view">
+              <Suspense fallback={null}>
               {selectedSessionClipData ? (
                 <ClipView
                   key={`${selectedSessionClip.trackId}-${selectedSessionClip.slot}`}
@@ -1379,148 +1128,33 @@ function App() {
                   key={selectedRegion.id}
                   region={selectedRegion}
                   onChange={(patch: any) => updateClip(selectedRegion.id, patch)}
+                  onDelete={() => removeRegion(selectedRegion.id)}
                   trackColor={tracks.find((t: any) => t.id === selectedRegion.trackId)?.color || '#3b82f6'}
                   onAudition={(pitch: number) => auditionNote(tracks.find((t: any) => t.id === selectedRegion.trackId), pitch)}
                 />
               ) : (
                 <div className="detail-empty-message">No clip selected. Click a clip on the timeline (double-click opens it here).</div>
               )}
+              </Suspense>
             </div>
           )}
           
           {activeTab === 'sound' && (
-            <SoundDesigner track={selectedTrack?.type === 'midi' ? selectedTrack : null} onOpenDspMap={() => setActiveTab('dspmap')} />
+            <Suspense fallback={null}><SoundDesigner track={selectedTrack?.type === 'midi' ? selectedTrack : null} onOpenDspMap={() => setActiveTab('dspmap')} /></Suspense>
           )}
 
-          {activeTab === 'dspmap' && <DspMap onOpenDesigner={() => setActiveTab('sound')} />}
+          {activeTab === 'dspmap' && <Suspense fallback={null}><DspMap onOpenDesigner={() => setActiveTab('sound')} /></Suspense>}
 
-          {activeTab === 'mixer' && <Mixer onOpenDevices={() => setActiveTab('devices')} />}
+          {activeTab === 'mixer' && <Suspense fallback={null}><Mixer onOpenDevices={() => setActiveTab('devices')} /></Suspense>}
 
           {activeTab === 'vst-paths' && (
-            <div className="plugin-tab-columns">
-            <div className="vst-paths-view">
-              <h5>Local VST3 Plugin Scan Locations</h5>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
-                Add the full paths of your plug-in folders. The Audio Core scans them for VST3 and LPI plug-ins; the button below lists a folder's plug-in files from the browser.
-              </p>
-              
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                <input 
-                  type="text" 
-                  placeholder="e.g. C:/Program Files/Common Files/VST3" 
-                  value={newVstPathInput}
-                  onChange={(e) => setNewVstPathInput(e.target.value)}
-                  className="vst-path-input"
-                />
-                <button className="btn-add-track" onClick={handleAddVstPath}>
-                  Add Path
-                </button>
-              </div>
-
-              <div className="vst-path-list">
-                {vstScanPaths.map((path: string) => (
-                  <div key={path} className="vst-path-row">
-                    <span style={{ fontSize: '12px', fontFamily: 'monospace' }}>{path}</span>
-                    <button className="btn-icon" onClick={() => removeVstScanPath(path)}>
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-              
-              <button
-                className="btn-add-track"
-                style={{ backgroundColor: 'var(--accent-green)', marginTop: '10px' }}
-                onClick={handleScanPluginFolder}
-                disabled={isScanning}
-              >
-                {isScanning ? 'Scanning…' : 'Scan Folder for Plugins…'}
-              </button>
-
-              {scannedPlugins.length > 0 && (
-                <div style={{ marginTop: '10px' }}>
-                  <h5>Discovered Plugins ({scannedPlugins.length})</h5>
-                  <div className="vst-path-list" style={{ maxHeight: '110px' }}>
-                    {scannedPlugins.map((p: any) => (
-                      <div key={p.path} className="vst-path-row">
-                        <span style={{ fontSize: '11px' }}>
-                          <b>{p.name}</b>
-                          <span style={{ color: 'var(--accent-green)', marginLeft: '6px', fontSize: '9px' }}>{p.format}</span>
-                          <span style={{ color: 'var(--text-secondary)', marginLeft: '6px', fontFamily: 'monospace', fontSize: '9px' }}>{p.path}</span>
-                        </span>
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                          <button
-                            className="btn-icon"
-                            title={selectedTrack ? `Add to ${selectedTrack.name}'s device chain` : 'Select a track first'}
-                            onClick={() => {
-                              if (!selectedTrack) { alert('Select a track first (click a track header).'); return; }
-                              // The browser only knows the path inside the picked folder;
-                              // the Audio Core's scan has the full path it loads from
-                              const nativePlugin = findNativePlugin(p.name);
-                              if (!nativePlugin) { alert(`Scan this folder in the Audio Core (right) to host ${p.name}.`); return; }
-                              addDeviceToTrack(selectedTrack.id, nativeDeviceFor(nativePlugin));
-                            }}
-                          >
-                            <Plus size={12} />
-                          </button>
-                          <button
-                            className="btn-icon"
-                            title="Remove from list"
-                            onClick={() => setScannedPlugins(scannedPlugins.filter((sp: any) => sp.path !== p.path))}
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <p style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px' }}>
-                    Found by the browser, which only sees the picked folder's contents. To host plug-ins natively,
-                    add the folder's full path above and scan it in the Audio Core (right).
-                  </p>
-                </div>
-              )}
-            </div>
-            <AudioCorePanel scanPaths={vstScanPaths} />
-            </div>
+            <Suspense fallback={null}><PluginFolders selectedTrack={selectedTrack} /></Suspense>
           )}
 
           {activeTab === 'dictation' && (
-            <div className="vst-paths-view">
-              <h5>AI Dictation</h5>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
-                Describe a beat or melody in the box at the top and click Dictate. The Orchestrator sends it to
-                Gemini, which generates Strudel code and passes it to the Sequencer to evaluate. Each part of the
-                result becomes a MIDI track playing a library sound, with a clip looping its bar.
-              </p>
-
-              {dictationStatus === 'sending' && (
-                <div className="detail-empty-message">Generating...</div>
-              )}
-
-              {dictationStatus === 'done' && dictationCode && (
-                <pre style={{ fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>
-                  {dictationCode}
-                </pre>
-              )}
-
-              {dictationResult && (
-                <div className="dictation-result">
-                  {dictationResult.tracks.length
-                    ? `New tracks: ${dictationResult.tracks.join(', ')}${dictationResult.bpm ? ` · tempo ${dictationResult.bpm} BPM` : ''}`
-                    : 'Nothing in the pattern to play.'}
-                  {dictationResult.unmapped.length > 0 && <div className="dictation-unmapped">No library sound for: {dictationResult.unmapped.join(', ')}</div>}
-                </div>
-              )}
-
-              {dictationStatus === 'error' && dictationError && (
-                <div style={{ fontSize: '12px', color: 'var(--accent-red)' }}>{dictationError}</div>
-              )}
-
-              {dictationStatus === 'idle' && (
-                <div className="detail-empty-message">No dictation request sent yet.</div>
-              )}
-            </div>
+            <Suspense fallback={null}>
+              <DictationPanel status={dictationStatus} code={dictationCode} result={dictationResult} error={dictationError} />
+            </Suspense>
           )}
         </div>
       </div>

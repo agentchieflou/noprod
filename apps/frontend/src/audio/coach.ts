@@ -4,14 +4,15 @@
 // mode, key and lesson are remembered between visits.
 
 import {
-  Coach, LESSONS, PROGRESSIONS, findLesson, parseNumeral, spellInKey, voiceLead,
-  type ChordQuality, type CoachMode, type CoachReadout, type Highlight, type Key
+  Coach, LESSONS, PROGRESSIONS, findLesson, lessonFromNotes, parseNumeral, spellInKey, voiceLead,
+  type ChordQuality, type CoachMode, type CoachReadout, type Highlight, type Key, type Lesson
 } from '@noprod/theory';
 import { v4 as uuidv4 } from 'uuid';
 import { onMidiEvent } from './inputs';
 import { getPosition } from './transport';
 import { barAt, barsUntil, type TimeSig } from './timeline';
 import { subscribeKeyboard, getKeyboardState } from './computerKeyboard';
+import { adoptCoach } from './coachLoader';
 
 export interface CoachState {
   open: boolean;         // shown on the keyboard panel
@@ -36,6 +37,8 @@ function load(): Saved {
     if (MODES.includes(raw.mode)) saved.mode = raw.mode;
     const k = raw.key;
     if (k && Number.isInteger(k.tonic) && k.tonic >= 0 && k.tonic < 12 && (k.mode === 'major' || k.mode === 'minor')) saved.key = { tonic: k.tonic, mode: k.mode };
+    // A lesson made from a clip (CLIP_LESSON) isn't in LESSONS, so it isn't
+    // found here: after a reload the picker shows no lesson
     if (typeof raw.lesson === 'string' && findLesson(raw.lesson)) saved.lesson = raw.lesson;
   } catch { /* no storage, or not ours */ }
   return saved;
@@ -78,8 +81,22 @@ const refresh = () => {
 export const setCoachOpen = (open: boolean) => { set({ open }); refresh(); };
 export const setCoachMode = (mode: CoachMode) => { coach.setMode(mode); set({ mode, focus: null }); save(); refresh(); };
 export const setCoachKey = (key: Key | 'auto') => { coach.setKey(key); set({ key }); save(); refresh(); };
+// The picker's value for the lesson made from a clip, which isn't in LESSONS
+export const CLIP_LESSON = 'clip';
+// The picker entry that makes one; the select never holds it
+export const CLIP_PICK = 'clip-pick';
+let clipLesson: Lesson | null = null;
+export const getClipLesson = () => clipLesson;
+
 export const setCoachLesson = (lesson: string | null) => { coach.setLesson(lesson); set({ lesson }); save(); refresh(); };
-export const restartLesson = () => { coach.setLesson(state.lesson); refresh(); };
+export const setCoachLessonFromNotes = (notes: { pitch: number; start: number; duration: number }[], name: string) => {
+  clipLesson = lessonFromNotes(notes, name);
+  coach.setLesson(clipLesson);
+  set({ lesson: CLIP_LESSON });
+  save();
+  refresh();
+};
+export const restartLesson = () => { coach.setLesson(state.lesson === CLIP_LESSON ? clipLesson : state.lesson); refresh(); };
 export const setCoachFocus = (focus: number | null) => set({ focus });
 
 export const LESSON_GROUPS = [
@@ -219,3 +236,6 @@ export function initCoach(s: Store) {
     refresh();
   });
 }
+
+// Loaded, it starts (coachLoader.ts)
+adoptCoach({ initCoach, subscribeCoach, getCoachState });

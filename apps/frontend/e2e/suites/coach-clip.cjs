@@ -4,17 +4,18 @@ module.exports = async (page, ctx) => {
   const results = [];
   const check = (name, ok, detail = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`); };
 
-  await page.evaluate(() => { localStorage.removeItem('noprod-coach'); return 1; });
-  await page.reload({ waitUntil: 'networkidle0' });
-  await page.evaluate(async () => {
-    window.__inputs = await import('/src/audio/inputs.ts');
-    window.__coach = await import('/src/audio/coach.ts');
-    window.__theory = await import(window.__fs + '/packages/theory/src/index.ts');
+  // A fresh browser: nothing saved. One import per call: several in one,
+  // early in a page's life, can hang until the promise is collected
+  await page.evaluate(async () => { window.__inputs = await import('/src/audio/inputs.ts'); return 1; });
+  await page.evaluate(async () => { window.__coach = await import('/src/audio/coach.ts'); return 1; });
+  await page.evaluate(async () => { window.__theory = await import(window.__fs + '/packages/theory/src/index.ts'); return 1; });
+  await page.evaluate(() => {
     const st = window.__dawStore.getState();
     st.setSelectedTrackId(st.tracks.find((t) => t.type === 'midi').id);
     return 1;
   });
   await page.click('.coach-toggle');
+  await page.waitForSelector('.kb-coach', { timeout: 15000 }).catch(() => {}); // the coach loads when first opened
   await ctx.sleep(200);
 
   const publish = (type, pitches) => page.evaluate((type, pitches) => {
