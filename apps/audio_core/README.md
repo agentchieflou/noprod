@@ -95,7 +95,9 @@ itself).
   which runs as the same user, reads the token file. The token covers what
   `Origin` cannot: other local pages and non-browser clients.
 - **Per-connection limits.** A connection cap per server (16 control, 64
-  stream, 8 editor connections), a 5 s handshake timeout, a message size
+  stream, 8 editor connections) and a shorter one on connections still in
+  their handshake (8), so idle sockets can't fill the cap: each holds a
+  slot for at most the 5 s handshake timeout. A message size
   limit per server (1 MiB, 4 MiB, 64 KiB), client masking enforced,
   fragmented messages reassembled, and the close codes RFC 6455 gives
   protocol errors (1002, 1007, 1009).

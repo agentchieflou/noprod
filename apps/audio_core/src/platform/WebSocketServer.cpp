@@ -260,6 +260,13 @@ void WebSocketServer::acceptLoop()
             respond (*socket, "503 Service Unavailable");
             continue; // the socket closes here
         }
+        auto handshaking = std::count_if (connections.begin(), connections.end(), [] (const ConnectionPtr& c) { return ! c->admitted.load(); });
+        if (handshaking >= options.maxHandshaking)
+        {
+            Log::warn (options.name + ": refused a connection, " + std::to_string (handshaking) + " still handshaking");
+            respond (*socket, "503 Service Unavailable");
+            continue;
+        }
         auto connection = std::make_shared<Connection>();
         connection->socket = std::move (socket);
         connections.push_back (connection);

@@ -652,6 +652,30 @@ static void testWebSocketLimits()
     got = partial.read (&c, 1, 3000);
     CHECK (got <= 0 && got != -2);
     server.stop();
+
+    section ("WebSocket: idle sockets can't fill the cap (the handshaking cap)");
+    WebSocketServer::Options pending;
+    pending.name = "pending";
+    pending.maxConnections = 8;
+    pending.maxHandshaking = 2;
+    pending.handshakeTimeoutMs = 300;
+    WebSocketServer server2 (pending, echoHandlers (received));
+    CHECK (server2.start (error));
+    auto port2 = server2.getPort();
+    TcpSocket idleA, idleB;
+    CHECK (idleA.connect (port2) && idleB.connect (port2));
+    CHECK (waitFor ([&] { return server2.getConnectionCount() == 2; }));
+    TestWebSocketClient refused;
+    status = refused.connect (port2);
+    CHECK (status == 503 || status == 0); // room under maxConnections, but two are still handshaking
+    CHECK (refused.waitForClose());
+    // Once they time out, a real client gets in
+    CHECK (waitFor ([&] { return server2.getConnectionCount() == 0; }, 3000));
+    TestWebSocketClient real;
+    CHECK (real.connect (port2) == 101);
+    real.sendClose (1000);
+    CHECK (real.waitForClose());
+    server2.stop();
 }
 
 static void testWebSocketToken()
