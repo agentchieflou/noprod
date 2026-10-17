@@ -119,6 +119,28 @@ module.exports = async (page, ctx) => {
   check('Edited on another tab: opening the map shows Revert, and A plays the pre-edit recipe',
     edited && (await count(`${head2} .dsp-revert`)) === 1 && (await same(a2.recipe, t4.sound)), `edited ${edited}`);
 
+  // 7. A kit's pads each have their own original: switching pads isn't a change
+  await page.evaluate(async () => {
+    const { KITS } = await import(window.__fs + '/packages/sound/src/index.ts');
+    const { createLibraryKit } = await import('/src/audio/library.ts');
+    window.__dawStore.getState().addMidiTrackWithInstrument(createLibraryKit(KITS[0]), 'Kit');
+  });
+  await ctx.sleep(400);
+  const kcol = await page.evaluate(() => window.__dawStore.getState().selectedTrackId);
+  const khead = `.dsp-map-head[data-col="track:${kcol}"]`;
+  const pads = await page.evaluate((h) => [...document.querySelector(h + ' .designer-pad').options].map((o) => o.value), khead);
+  const noRevert = [];
+  for (const pad of pads.slice(0, 3)) {
+    await page.evaluate((h, pad) => {
+      const el = document.querySelector(h + ' .designer-pad');
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, pad);
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, khead, pad);
+    await ctx.sleep(150);
+    noRevert.push((await count(`${khead} .dsp-revert`)) === 0);
+  }
+  check('Switching pads on a kit column shows no Revert', pads.length >= 2 && noRevert.every(Boolean), JSON.stringify(noRevert));
+
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);

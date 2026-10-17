@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work the way it should
+labels: []
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The steps, from a fresh page if you can.
+      placeholder: |
+        1. Open the app
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: browser-os
+    attributes:
+      label: Browser and OS
+      placeholder: Firefox 150 on Windows 11
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: The commit you are running. In a clone, run `git rev-parse --short HEAD`.
+      placeholder: e.g. 8dab6ad
+    validations:
+      required: true
