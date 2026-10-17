@@ -8,3 +8,4 @@ temporary exceptions in the script.
 | Directory | What | License | Source |
 |---|---|---|---|
 | `apps/audio_core/third_party/lpi` | The LPI plugin ABI header (`lpi.h`), copied verbatim | MIT | `PluginABI/include/lpi/lpi.h` in agentchieflou/v-loudio-t, commit `0907dc4` |
+| `apps/audio_core/third_party/miniaudio` | Audio device I/O (`miniaudio.h`, copied verbatim; `miniaudio.c` builds only its device parts) | Unlicense OR MIT-0 | [mackron/miniaudio](https://github.com/mackron/miniaudio) version 0.11.25, sha256 in its README |
