@@ -147,6 +147,303 @@
   ],
   "realtime": [
     {
+      "variant": "a-nodev",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 0.25,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 64,
+      "worstLateMs": 470.7256235827657,
+      "played": 1792,
+      "behindMs": 0,
+      "behindBlocks": 0,
+      "driftMs": -3.4766439911138036,
+      "tickMs": 0.18606403012972206,
+      "worstTickMs": 13.200000000186265,
+      "ticks": 531,
+      "maxLive": 168,
+      "nodes": 99,
+      "workletLoad": null,
+      "audioThreadLoad": {
+        "Realtime AudioW": 0.21034482758620687
+      },
+      "audioCpuSeconds": 3.05,
+      "wallSeconds": 14.856300062
+    },
+    {
+      "variant": "a-nodev",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 1,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 1792,
+      "behindMs": 107.2835358427219,
+      "behindBlocks": 483,
+      "driftMs": 107.01564625841087,
+      "tickMs": 0.18468809074463433,
+      "worstTickMs": 16.5,
+      "ticks": 529,
+      "maxLive": 240,
+      "nodes": 99,
+      "workletLoad": null,
+      "audioThreadLoad": {
+        "Realtime AudioW": 0.3062068965517242
+      },
+      "audioCpuSeconds": 4.44,
+      "wallSeconds": 14.755571567000002
+    },
+    {
+      "variant": "c-nodev",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 0.25,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 64,
+      "worstLateMs": 450.40816326530614,
+      "played": 1792,
+      "behindMs": 0,
+      "behindBlocks": 0,
+      "driftMs": 5.038321995369799,
+      "tickMs": 0.07589453859377492,
+      "worstTickMs": 3.2999999998137355,
+      "ticks": 531,
+      "maxLive": 0,
+      "nodes": 131,
+      "workletLoad": null,
+      "audioThreadLoad": {
+        "Realtime AudioW": 0.2013793103448276
+      },
+      "audioCpuSeconds": 2.92,
+      "wallSeconds": 14.915506705000004
+    },
+    {
+      "variant": "c-nodev",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 1,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 1792,
+      "behindMs": 21.30167643229106,
+      "behindBlocks": 1,
+      "driftMs": 16.548299319541826,
+      "tickMs": 0.05962264151839575,
+      "worstTickMs": 0.7000000001862645,
+      "ticks": 530,
+      "maxLive": 0,
+      "nodes": 131,
+      "workletLoad": null,
+      "audioThreadLoad": {
+        "Realtime AudioW": 0.1910344827586207
+      },
+      "audioCpuSeconds": 2.77,
+      "wallSeconds": 14.888891774999996
+    },
+    {
+      "variant": "b-nodev",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 1,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 1792,
+      "behindMs": 0,
+      "behindBlocks": 0,
+      "driftMs": -7.169160997824164,
+      "tickMs": 0.0866290018972704,
+      "worstTickMs": 2.2000000001862645,
+      "ticks": 531,
+      "maxLive": 0,
+      "nodes": 2,
+      "workletLoad": 0.0902084976340694,
+      "audioThreadLoad": {
+        "Realtime AudioW": 0.08689655172413795
+      },
+      "audioCpuSeconds": 1.2600000000000002,
+      "wallSeconds": 14.743122689999996
+    },
+    {
+      "variant": "a",
+      "tracks": 4,
+      "seconds": 14,
+      "window": 0.25,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 8,
+      "worstLateMs": 447.50566893424093,
+      "played": 224,
+      "behindMs": 0,
+      "behindBlocks": 0,
+      "driftMs": 10.94081632643551,
+      "tickMs": 0.05913371000028515,
+      "worstTickMs": 5.800000000279397,
+      "ticks": 531,
+      "maxLive": 21,
+      "nodes": 175,
+      "workletLoad": null,
+      "audioThreadLoad": {
+        "Realtime AudioW": 0.5903448275862068
+      },
+      "audioCpuSeconds": 8.559999999999999,
+      "wallSeconds": 14.86161067000001
+    },
+    {
+      "variant": "a-fdn",
+      "tracks": 4,
+      "seconds": 14,
+      "window": 0.25,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 8,
+      "worstLateMs": 456.2131519274377,
+      "played": 224,
+      "behindMs": 0,
+      "behindBlocks": 0,
+      "driftMs": -3.069160997730691,
+      "tickMs": 0.05668549902873945,
+      "worstTickMs": 5.100000000093132,
+      "ticks": 531,
+      "maxLive": 21,
+      "nodes": 159,
+      "workletLoad": null,
+      "audioThreadLoad": {
+        "Realtime AudioW": 0.34827586206896555
+      },
+      "audioCpuSeconds": 5.050000000000001,
+      "wallSeconds": 14.743719012999994
+    },
+    {
+      "variant": "c",
+      "tracks": 4,
+      "seconds": 14,
+      "window": 1,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 224,
+      "behindMs": 49.69612021240755,
+      "behindBlocks": 2342,
+      "driftMs": 41.17324263075872,
+      "tickMs": 0.025283018830847347,
+      "worstTickMs": 0.2999999998137355,
+      "ticks": 530,
+      "maxLive": 0,
+      "nodes": 179,
+      "workletLoad": null,
+      "audioThreadLoad": {
+        "Realtime AudioW": 0.5717241379310344
+      },
+      "audioCpuSeconds": 8.29,
+      "wallSeconds": 14.893486225999993
+    },
+    {
+      "variant": "b",
+      "tracks": 32,
+      "seconds": 14,
+      "window": 1,
+      "stalls": [
+        {
+          "at": 5,
+          "ms": 400
+        },
+        {
+          "at": 9,
+          "ms": 900
+        }
+      ],
+      "late": 0,
+      "worstLateMs": 0,
+      "played": 1792,
+      "behindMs": 346.89113155027553,
+      "behindBlocks": 3816,
+      "driftMs": 287.46530612263575,
+      "tickMs": 0.03935969866401816,
+      "worstTickMs": 0.6999999997206032,
+      "ticks": 531,
+      "maxLive": 0,
+      "nodes": 2,
+      "workletLoad": 0.9275681532663317,
+      "audioThreadLoad": {
+        "Realtime AudioW": 0.9365517241379309
+      },
+      "audioCpuSeconds": 13.579999999999998,
+      "wallSeconds": 14.778128375
+    },
+    {
       "variant": "a",
       "tracks": 32,
       "seconds": 14,
@@ -164,71 +461,20 @@
       "late": 0,
       "worstLateMs": 0,
       "played": 384,
-      "behindMs": 14391.904659487493,
-      "behindBlocks": 1464,
-      "driftMs": 11756.720408163454,
-      "tickMs": 0.06967984931017299,
-      "worstTickMs": 11.700000000186265,
+      "behindMs": 13412.321995464852,
+      "behindBlocks": 1102,
+      "driftMs": 11824.662811791197,
+      "tickMs": 0.0638418079225834,
+      "worstTickMs": 7.600000000093132,
       "ticks": 531,
       "maxLive": 144,
       "nodes": 1379,
-      "workletLoad": null
-    },
-    {
-      "variant": "a",
-      "tracks": 32,
-      "seconds": 14,
-      "window": 1,
-      "stalls": [
-        {
-          "at": 5,
-          "ms": 400
-        },
-        {
-          "at": 9,
-          "ms": 900
-        }
-      ],
-      "late": 0,
-      "worstLateMs": 0,
-      "played": 448,
-      "behindMs": 15221.904736992452,
-      "behindBlocks": 1378,
-      "driftMs": 11903.850113378592,
-      "tickMs": 0.07099811672785525,
-      "worstTickMs": 10.799999999813735,
-      "ticks": 531,
-      "maxLive": 240,
-      "nodes": 1379,
-      "workletLoad": null
-    },
-    {
-      "variant": "c",
-      "tracks": 32,
-      "seconds": 14,
-      "window": 0.25,
-      "stalls": [
-        {
-          "at": 5,
-          "ms": 400
-        },
-        {
-          "at": 9,
-          "ms": 900
-        }
-      ],
-      "late": 0,
-      "worstLateMs": 0,
-      "played": 320,
-      "behindMs": 15303.95454610881,
-      "behindBlocks": 1359,
-      "driftMs": 11957.415192743858,
-      "tickMs": 0.026226415074834565,
-      "worstTickMs": 0.7000000001862645,
-      "ticks": 530,
-      "maxLive": 0,
-      "nodes": 1411,
-      "workletLoad": null
+      "workletLoad": null,
+      "audioThreadLoad": {
+        "Realtime AudioW": 0.9972413793103448
+      },
+      "audioCpuSeconds": 14.46,
+      "wallSeconds": 17.043488591000003
     },
     {
       "variant": "c",
@@ -247,72 +493,21 @@
       ],
       "late": 0,
       "worstLateMs": 0,
-      "played": 320,
-      "behindMs": 15046.322007090595,
-      "behindBlocks": 1359,
-      "driftMs": 11915.597732426399,
-      "tickMs": 0.031261770261658564,
-      "worstTickMs": 0.6000000000931323,
+      "played": 352,
+      "behindMs": 16489.5896582917,
+      "behindBlocks": 1546,
+      "driftMs": 11903.162811791199,
+      "tickMs": 0.020527306962547835,
+      "worstTickMs": 0.5,
       "ticks": 531,
       "maxLive": 0,
       "nodes": 1411,
-      "workletLoad": null
-    },
-    {
-      "variant": "b",
-      "tracks": 32,
-      "seconds": 14,
-      "window": 1,
-      "stalls": [
-        {
-          "at": 5,
-          "ms": 400
-        },
-        {
-          "at": 9,
-          "ms": 900
-        }
-      ],
-      "late": 0,
-      "worstLateMs": 0,
-      "played": 1728,
-      "behindMs": 1033.210859441433,
-      "behindBlocks": 4477,
-      "driftMs": 1019.803854875283,
-      "tickMs": 0.046327683586178246,
-      "worstTickMs": 1.1000000000931323,
-      "ticks": 531,
-      "maxLive": 0,
-      "nodes": 2,
-      "workletLoad": 1.0045421742584746
-    },
-    {
-      "variant": "a-fdn",
-      "tracks": 32,
-      "seconds": 14,
-      "window": 0.25,
-      "stalls": [
-        {
-          "at": 5,
-          "ms": 400
-        },
-        {
-          "at": 9,
-          "ms": 900
-        }
-      ],
-      "late": 0,
-      "worstLateMs": 0,
-      "played": 608,
-      "behindMs": 10023.93198441486,
-      "behindBlocks": 1651,
-      "driftMs": 9897.796598639734,
-      "tickMs": 0.16610169491209723,
-      "worstTickMs": 55.60000000009313,
-      "ticks": 531,
-      "maxLive": 144,
-      "nodes": 1251,
-      "workletLoad": null
+      "workletLoad": null,
+      "audioThreadLoad": {
+        "Realtime AudioW": 1.2324137931034487
+      },
+      "audioCpuSeconds": 17.870000000000005,
+      "wallSeconds": 21.547872569
     }
   ],
   "latency": [
@@ -320,7 +515,29 @@
       "variant": "a",
       "loaded": false,
       "triggers": 12,
-      "measured": 1,
+      "measured": 12,
+      "minMs": 0,
+      "medianMs": 0,
+      "maxMs": 8.707482993197235,
+      "baseLatencyMs": 10,
+      "quantumMs": 2.9024943310657596
+    },
+    {
+      "variant": "c",
+      "loaded": false,
+      "triggers": 12,
+      "measured": 12,
+      "minMs": 0,
+      "medianMs": 0,
+      "maxMs": 11.609977324263054,
+      "baseLatencyMs": 10,
+      "quantumMs": 2.9024943310657596
+    },
+    {
+      "variant": "b",
+      "loaded": false,
+      "triggers": 12,
+      "measured": 12,
       "minMs": 0,
       "medianMs": 0,
       "maxMs": 0,
@@ -328,19 +545,19 @@
       "quantumMs": 2.9024943310657596
     },
     {
-      "variant": "a",
+      "variant": "a-nodev",
       "loaded": true,
       "triggers": 12,
-      "measured": 1,
-      "minMs": 2.902494331065597,
+      "measured": 12,
+      "minMs": 0,
       "medianMs": 2.902494331065597,
-      "maxMs": 2.902494331065597,
+      "maxMs": 5.804988662131194,
       "baseLatencyMs": 10,
       "quantumMs": 2.9024943310657596
     },
     {
-      "variant": "c",
-      "loaded": false,
+      "variant": "c-nodev",
+      "loaded": true,
       "triggers": 12,
       "measured": 12,
       "minMs": 0,
@@ -350,35 +567,13 @@
       "quantumMs": 2.9024943310657596
     },
     {
-      "variant": "c",
-      "loaded": true,
-      "triggers": 12,
-      "measured": 5,
-      "minMs": 11.609977324262832,
-      "medianMs": 142.22222222222226,
-      "maxMs": 153.83219954648507,
-      "baseLatencyMs": 10,
-      "quantumMs": 2.9024943310657596
-    },
-    {
       "variant": "b",
-      "loaded": false,
+      "loaded": true,
       "triggers": 12,
       "measured": 12,
       "minMs": 0,
-      "medianMs": 0,
-      "maxMs": 0,
-      "baseLatencyMs": 10,
-      "quantumMs": 2.9024943310657596
-    },
-    {
-      "variant": "b",
-      "loaded": true,
-      "triggers": 12,
-      "measured": 12,
-      "minMs": 2.902494331065819,
-      "medianMs": 8.707482993197235,
-      "maxMs": 11.609977324263054,
+      "medianMs": 5.804988662131416,
+      "maxMs": 8.707482993197235,
       "baseLatencyMs": 10,
       "quantumMs": 2.9024943310657596
     }
@@ -392,6 +587,6 @@
   "prepare": {
     "buffers": 32,
     "totalSeconds": 24.640068027210884,
-    "ms": 786.8000000000466
+    "ms": 788.2000000001863
   }
 }
