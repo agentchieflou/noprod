@@ -100,9 +100,10 @@ try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 1000 });
   const errors = [];
+  const messages = []; // everything the page logs, shown if the note stays silent
   const failedRequests = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('console', (m) => { messages.push(`${m.type()}: ${m.text()}`); if (m.type() === 'error') errors.push(m.text()); });
   page.on('response', (r) => { if (r.status() >= 400) failedRequests.push(`${r.status()} ${r.url()}`); });
   page.on('dialog', (d) => d.accept());
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
@@ -149,7 +150,12 @@ try {
   await sleep(600);
   await page.keyboard.up('KeyZ');
   const level = await peak;
-  check('A library note is audible at the master', level > 0.01, `peak ${level.toFixed(3)}`);
+  // A silent note says where it got stuck: the context, the track, the toggle, the logs
+  const why = level > 0.01 ? '' : await page.evaluate(() => {
+    const ctx = window.__analysers[0]?.context;
+    return ` · ${ctx?.state} at ${ctx?.sampleRate} Hz, ${document.querySelectorAll('.track-name').length} tracks, ${document.querySelector('button[title^="Computer MIDI keyboard"]')?.title.split(':')[0]}`;
+  }) + ` · console: ${messages.join(' | ') || 'quiet'}`;
+  check('A library note is audible at the master', level > 0.01, `peak ${level.toFixed(3)}${why}`);
   await page.screenshot({ path: join(shotDir, 'dist-noprod.png') });
 
   const unexpected = failedRequests.filter((r) => !r.includes('localhost:8080'));
