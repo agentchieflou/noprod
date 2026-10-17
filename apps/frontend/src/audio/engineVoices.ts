@@ -14,6 +14,9 @@ import { midiToFreq, type SynthParams } from './synth';
 
 type Stoppable = { stop: (when?: number) => void };
 
+// A key let go this long before its render arrives is forgotten (seconds)
+const FORGOTTEN = 1.5;
+
 let nextKey = 1;
 const key = (prefix: string) => `${prefix}:${nextKey++}`;
 
@@ -80,7 +83,9 @@ export function engineHeldVoice(engine: Engine, strip: number, params: SynthPara
     const post = (buffer: AudioBuffer, at: number, rate = 1, nearGain = 1) => {
       posted = true;
       engine.liveOn(k, strip, Math.max(at, ctx.currentTime), bufferSpec(engine, r, buffer, rate, gain * nearGain, release));
-      if (releasedAt !== null) engine.liveOff(k, Math.max(releasedAt, at));
+      // let go already (a render that came after the key): it plays late,
+      // for as long as the key was held
+      if (releasedAt !== null) engine.liveOff(k, at + Math.max(0.02, releasedAt - when));
     };
     const hit = cachedNoteBuffer(r, ctx.sampleRate);
     const near = hit ? null : nearestNoteBuffer(r, ctx.sampleRate);
@@ -92,14 +97,16 @@ export function engineHeldVoice(engine: Engine, strip: number, params: SynthPara
       post(near.buffer, when, near.rate, near.gain);
       noteBuffer(ctx, r, Infinity, () => {}, true);
     } else {
-      handle = noteBuffer(ctx, r, when, (buffer, at) => { if (releasedAt === null || !pitched) post(buffer, at); }, true);
+      // a render still to come: it plays when it arrives, unless the key was
+      // let go so long before that nobody is waiting for it any more
+      handle = noteBuffer(ctx, r, when, (buffer, at) => { if (releasedAt === null || at - releasedAt < FORGOTTEN) post(buffer, at); }, true);
     }
     return {
       release(at) {
         if (releasedAt !== null) return;
         releasedAt = at;
         if (posted) engine.liveOff(k, at);
-        else if (pitched) handle?.cancel(at);
+        else if (pitched) setTimeout(() => { if (!posted) handle?.cancel(); }, FORGOTTEN * 1000);
       }
     };
   }

@@ -127,11 +127,12 @@ class EngineProcessor extends AudioWorkletProcessor {
     }
   }
 
-  // Queue an event at its frame, or now if it's a little late; drop it if very late
+  // Queue an event at its frame, or now if it's a little late; drop it if
+  // very late. A key pressed (liveOn) always plays: late is still now.
   private enqueue(p: Pending) {
     const now = currentFrame;
     if (p.frame < now) {
-      if (now - p.frame > this.lateFrames) { this.drop(p.key, 'late', (now - p.frame) / sampleRate); return; }
+      if (!p.live && now - p.frame > this.lateFrames) { this.drop(p.key, 'late', (now - p.frame) / sampleRate); return; }
       this.late++;
       p.frame = now;
     }
@@ -152,7 +153,8 @@ class EngineProcessor extends AudioWorkletProcessor {
       case 'buffer': this.bufs.set(m.id, { l: m.l, r: m.r }); this.forgotten.delete(m.id); return;
       case 'forget': this.forget(m.ids, !!m.force); return;
       case 'span': this.addSpan(m.span); return;
-      case 'closeSpan': this.closeSpan(m.id, Math.round(m.at * sampleRate)); return;
+      case 'closeSpan': this.closeSpan(m.id, Math.round(m.at * sampleRate), !!m.cut); return;
+      case 'throw': this.throwNext = true; return;
       case 'notes': for (const n of m.notes) this.addNote(n); return;
       case 'clips': for (const c of m.clips) this.addClip(c); return;
       case 'retract': this.retract(m.keys, m.at === undefined ? currentFrame : Math.round(m.at * sampleRate)); return;
@@ -189,8 +191,9 @@ class EngineProcessor extends AudioWorkletProcessor {
   }
 
   // The span ends at `at`: what hasn't started by then never does; what is
-  // sounding plays on (a loop seam lets notes ring; a stop fades them, below)
-  private closeSpan(id: number, at: number) {
+  // sounding plays on (a loop seam lets notes ring) unless `cut` (a session
+  // clip stopped at the bar), when its notes stop too
+  private closeSpan(id: number, at: number, cut: boolean) {
     const span = this.spans.get(id);
     if (!span) return;
     span.endFrame = Math.min(span.endFrame, at);
@@ -199,7 +202,11 @@ class EngineProcessor extends AudioWorkletProcessor {
       this.discard(p);
       return false;
     });
-    for (const s of this.playing()) if (s.span === id) s.clip?.stop(at);
+    for (const s of this.playing()) {
+      if (s.span !== id) continue;
+      s.clip?.stop(at);
+      if (cut) s.voice?.stop(at);
+    }
   }
 
   private *playing() {
@@ -306,7 +313,10 @@ class EngineProcessor extends AudioWorkletProcessor {
     this.started++;
   }
 
+  private throwNext = false;
+
   process(_inputs: Float32Array[][], outputs: Float32Array[][]) {
+    if (this.throwNext) { this.throwNext = false; throw new Error('the engine was asked to fail (a test)'); }
     const began = Date.now();
     const frame = currentFrame;
     const end = frame + BLOCK;
