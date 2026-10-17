@@ -2241,6 +2241,12 @@ body {
   padding-bottom: 3px;
 }
 .kb-white.lit { background: #34d399; }
+/* The bright marks vanish on a white key (1.4-2.1:1): a white key gets darker shades, same hues */
+.kb-white {
+  --coach-next: #167cf8;
+  --coach-complement: #a34cfa;
+  --coach-target: #a57703;
+}
 .kb-black.lit { background: #059669; }
 .kb-key-label { font-size: 10px; font-weight: bold; font-family: monospace; white-space: nowrap; }
 .kb-note-label { font-size: 8px; color: var(--text-muted); }
@@ -2269,10 +2275,10 @@ body {
 
 /* Keyboard Coach: its column beside the keys, and its marks on them */
 .kb-panel {
-  --coach-next: #167cf8;
-  --coach-complement: #a34cfa;
-  --coach-target: #a57703;
-  --coach-wrong: #ed3131;
+  --coach-next: #60a5fa;
+  --coach-complement: #c084fc;
+  --coach-target: #fbbf24;
+  --coach-wrong: #ef4444;
 }
 .kb-panel.coached { height: 164px; }
 .kb-coach {

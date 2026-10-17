@@ -48,16 +48,18 @@ test('the fills behind light text reach 4.5:1 with it', () => {
   }
 });
 
-test('the coach colours reach 3:1 on white and black keys, and 4.5:1 as text in the coach column', () => {
+test('the coach colours reach 3:1 on the keys they mark, and 4.5:1 as text in the coach column', () => {
   const white = '#e5e7eb', black = '#1f1f1f', column = '#151515';
-  const marks = ['next', 'complement', 'target', 'wrong'].map((n) => [n, v(`--coach-${n}`)] as const);
-  for (const [name, c] of marks) {
-    assert.ok(contrastRatio(c, white) >= 3, `${name} on a white key: ${contrastRatio(c, white).toFixed(2)}`);
-    assert.ok(contrastRatio(c, black) >= 3, `${name} on a black key: ${contrastRatio(c, black).toFixed(2)}`);
+  const roles = ['next', 'complement', 'target', 'wrong'];
+  const panel = (name: string) => css.match(new RegExp(`\\.kb-panel \\{[^}]*--coach-${name}: (#[0-9a-fA-F]{6})`))![1];
+  // .kb-white overrides the roles it needs to; the rest keep the panel's colour
+  const onWhite = (name: string) => css.match(new RegExp(`\\.kb-white \\{[^}]*--coach-${name}: (#[0-9a-fA-F]{6})`))?.[1] ?? panel(name);
+  for (const name of roles) {
+    assert.ok(contrastRatio(panel(name), black) >= 3, `${name} on a black key: ${contrastRatio(panel(name), black).toFixed(2)}`);
+    assert.ok(contrastRatio(onWhite(name), white) >= 3, `${name} on a white key: ${contrastRatio(onWhite(name), white).toFixed(2)}`);
+    assert.ok(contrastRatio(panel(name), column) >= 4.5, `${name} as text: ${contrastRatio(panel(name), column).toFixed(2)}`);
   }
-  for (const name of ['next', 'target']) assert.ok(contrastRatio(v(`--coach-${name}`), column) >= 4.5, `${name} as text: ${contrastRatio(v(`--coach-${name}`), column).toFixed(2)}`);
-  // and still apart from each other: every pair differs in hue or lightness enough to tell
-  for (const [i, [a, ca]] of marks.entries()) for (const [b, cb] of marks.slice(i + 1)) assert.notEqual(ca, cb, `${a} and ${b} are different colours`);
+  assert.equal(new Set(roles.map(panel)).size, roles.length, 'the four roles are four colours');
 });
 
 test('readableOn keeps a colour that passes and lightens one that does not, in the same hue', () => {
