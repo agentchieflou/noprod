@@ -1387,10 +1387,10 @@ function App() {
           )}
           
           {activeTab === 'sound' && (
-            <SoundDesigner track={selectedTrack?.type === 'midi' ? selectedTrack : null} />
+            <SoundDesigner track={selectedTrack?.type === 'midi' ? selectedTrack : null} onOpenDspMap={() => setActiveTab('dspmap')} />
           )}
 
-          {activeTab === 'dspmap' && <DspMap />}
+          {activeTab === 'dspmap' && <DspMap onOpenDesigner={() => setActiveTab('sound')} />}
 
           {activeTab === 'vst-paths' && (
             <div className="plugin-tab-columns">
