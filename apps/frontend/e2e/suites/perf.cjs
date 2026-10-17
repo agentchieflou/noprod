@@ -132,7 +132,7 @@ module.exports = async (page, ctx) => {
   // on the note workers and the Sound Designer's
   const errors = await page.evaluate(async () => {
     const lib = window.__lib, { findSound } = window.__sound, ac = window.__transport.audioContext;
-    const designing = lib; // the Sound Designer's renders
+    const designing = await import('/src/audio/designing.ts');
     const broken = { id: 'broken', name: 'Broken', category: 'fx', pitched: false, length: 1, layers: null };
     const sink = ac.createGain();
     const before = lib.libraryStats().failed;

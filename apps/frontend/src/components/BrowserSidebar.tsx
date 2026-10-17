@@ -12,7 +12,7 @@ import {
 import { SOUND_PRESETS, DRUM_KIT_PRESETS, isDrumSample } from '../browser/presets';
 import { subscribeAudioCore, getAudioCore, findNativePlugin, nativeDeviceFor } from '../native/audioCore';
 import {
-  createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview, exportZip, resynthesizeBuffer
+  createLibraryInstrument, createLibraryKit, kitSounds, previewKit, previewSound, stopSoundPreview
 } from '../audio/library';
 import { subscribeUserSounds, getUserSounds, deleteUserSound } from '../audio/userSounds';
 
@@ -88,6 +88,7 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
   const resynthSample = async (f: LibraryFile) => {
     try {
       flash(`Resynthesizing ${f.name}…`);
+      const { resynthesizeBuffer } = await import('../audio/designing');
       const recipe = await resynthesizeBuffer(await decodeLibraryFile(f.id), f.name.replace(/\.[^.]+$/, ''));
       onEditSound(recipe);
       flash(`${recipe.name}: ${recipe.pitched ? 'pitched' : 'unpitched'}, ${recipe.layers.length} layers`);
@@ -229,7 +230,8 @@ export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onSh
                 onClick={(e) => {
                   e.stopPropagation();
                   flash(`Rendering ${group}…`);
-                  exportZip(group, inGroup.flatMap((it) => (it.recipe ? [it.recipe] : []))).then(() => flash(`${group}.zip downloaded`));
+                  import('../audio/designing').then((d) => d.exportZip(group, inGroup.flatMap((it) => (it.recipe ? [it.recipe] : []))))
+                    .then(() => flash(`${group}.zip downloaded`));
                 }}>
                 <Download size={11} />
               </button>

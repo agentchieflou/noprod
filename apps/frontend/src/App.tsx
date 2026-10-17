@@ -12,7 +12,7 @@ import { getFile } from './browser/library';
 import { createLibraryInstrument, soundAsBuffer, whenRendered, libraryStats } from './audio/library';
 import { startLibraryWarmup } from './audio/libraryWarmup';
 import { findAnySound, loadUserSounds } from './audio/userSounds';
-import { applyDictation, type DictationResult } from './audio/dictation';
+import type { DictationResult } from './audio/dictation';
 import type { SoundRecipe } from '@noprod/sound';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
 import { initMidi } from './audio/inputs';
@@ -201,7 +201,7 @@ function App() {
         // The evaluated pattern: its parts become tracks playing library sounds
         if (!awaitingHaps.current) return;
         awaitingHaps.current = false;
-        setDictationResult(applyDictation(useDAWStore, msg));
+        import('./audio/dictation').then((d) => setDictationResult(d.applyDictation(useDAWStore, msg)));
       } else if (msg.type === 'ERROR') {
         awaitingHaps.current = false;
         setDictationError(msg.message);

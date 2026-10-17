@@ -5,7 +5,8 @@ import {
   type Block, type BlockKind, type Category, type Chain, type Layer, type SharedBlock, type SoundRecipe, type Stage
 } from '@noprod/sound';
 import { useDAWStore } from '../store/useDAWStore';
-import { libraryOf, createLibraryInstrument, renderSound, toAudioBuffer, playRendered } from '../audio/library';
+import { libraryOf, createLibraryInstrument } from '../audio/library';
+import { renderSound, toAudioBuffer, playRendered } from '../audio/designing';
 import { getStripInput } from '../audio/engine';
 import { midiNoteName } from '../audio/synth';
 import { Param, Choice, EnvelopeParams, FilterParams } from './designerControls';
