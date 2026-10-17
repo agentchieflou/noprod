@@ -102,7 +102,14 @@ export interface MidiEvent {
 
 const midiListeners = new Set<(e: MidiEvent) => void>();
 export const onMidiEvent = (fn: (e: MidiEvent) => void) => { midiListeners.add(fn); return () => { midiListeners.delete(fn); }; };
-const publish = (e: MidiEvent) => midiListeners.forEach((fn) => fn(e));
+// Claims run before any listener. One that returns true consumes the event:
+// no listener sees it (a note that drives a control, say).
+const midiClaims = new Set<(e: MidiEvent) => boolean>();
+export const onMidiClaim = (fn: (e: MidiEvent) => boolean) => { midiClaims.add(fn); return () => { midiClaims.delete(fn); }; };
+const publish = (e: MidiEvent) => {
+  for (const claim of midiClaims) if (claim(e)) return;
+  midiListeners.forEach((fn) => fn(e));
+};
 export const publishMidi = publish;
 
 export interface MidiDevice { id: string; name: string }
