@@ -5,8 +5,12 @@
 //   npm run e2e:dist
 //   E2E_DIST_DIR=dist npm run e2e:dist   # test a build you made with NOPROD_BASE=/noprod/
 //
+//   E2E_BROWSER=firefox npm run e2e:dist   # Firefox, over WebDriver BiDi
+//   E2E_BROWSER=webkit npm run e2e:dist    # WebKit, through Playwright
+//
 // Chromium: CHROME_PATH, else /opt/pw-browsers/chromium if present, else
-// Puppeteer's own download.
+// Puppeteer's own download. Firefox: `npx puppeteer browsers install firefox`.
+// WebKit: `npx playwright install webkit` (Playwright is Apache-2.0, dev only).
 
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
@@ -37,6 +41,13 @@ if (ownBuild) {
   await build({ root: frontend, logLevel: 'error', build: { outDir, emptyOutDir: true } });
 }
 
+// Production builds have no test handles, so this host adds a script that taps
+// the master analyser as the engine creates it. (Puppeteer's
+// evaluateOnNewDocument raises a page error in Firefox.)
+const TAP = `window.__analysers = [];
+const create = AudioContext.prototype.createAnalyser;
+AudioContext.prototype.createAnalyser = function () { const an = create.call(this); window.__analysers.push(an); return an; };`;
+
 // A static host that serves dist only under BASE
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.json': 'application/json', '.wasm': 'application/wasm', '.map': 'application/json' };
 const server = createServer((req, res) => {
@@ -47,14 +58,35 @@ const server = createServer((req, res) => {
     res.writeHead(404).end('not found');
     return;
   }
-  res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' }).end(readFileSync(file));
+  const body = readFileSync(file);
+  res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' }).end(file === resolve(outDir, 'index.html') ? Buffer.from(body.toString().replace('<head>', `<head><script>${TAP}</script>`)) : body);
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const url = `http://127.0.0.1:${server.address().port}${BASE}`;
 console.log(`dist at ${url}`);
 
-const executablePath = process.env.CHROME_PATH || (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined);
-const browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
+// Playwright's page has Puppeteer's methods this suite uses, bar these two
+async function launchWebkit() {
+  const { webkit } = await import('playwright-core');
+  const b = await webkit.launch();
+  const newPage = b.newPage.bind(b);
+  b.newPage = async () => {
+    const page = await newPage();
+    page.setViewport = (v) => page.setViewportSize(v);
+    const goto = page.goto.bind(page);
+    page.goto = (u, o = {}) => goto(u, { ...o, waitUntil: o.waitUntil === 'networkidle0' ? 'networkidle' : o.waitUntil });
+    return page;
+  };
+  return b;
+}
+
+const which = process.env.E2E_BROWSER || 'chromium';
+const executablePath = which === 'chromium' ? (process.env.CHROME_PATH || (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined)) : undefined;
+const browser = which === 'webkit' ? await launchWebkit() : await puppeteer.launch(
+  which === 'firefox'
+    ? { browser: 'firefox', headless: true }
+    : { executablePath, headless: true, args: ['--no-sandbox', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
+console.log(`browser: ${which} ${await browser.version()}`);
 try {
   // The build itself
   const files = (dir) => readdirSync(dir, { recursive: true }).map(String);
@@ -73,17 +105,6 @@ try {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('response', (r) => { if (r.status() >= 400) failedRequests.push(`${r.status()} ${r.url()}`); });
   page.on('dialog', (d) => d.accept());
-  // Production builds have no test handles, so tap the master analyser as the
-  // engine creates it
-  await page.evaluateOnNewDocument(() => {
-    window.__analysers = [];
-    const create = AudioContext.prototype.createAnalyser;
-    AudioContext.prototype.createAnalyser = function () {
-      const an = create.call(this);
-      window.__analysers.push(an);
-      return an;
-    };
-  });
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
   await page.waitForSelector('.daw-container', { timeout: 30000 });
 
