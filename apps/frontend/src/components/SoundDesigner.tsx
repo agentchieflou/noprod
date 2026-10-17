@@ -9,7 +9,8 @@ import {
 } from '@noprod/sound';
 import { v4 as uuidv4 } from 'uuid';
 import { useDAWStore } from '../store/useDAWStore';
-import { libraryOf, renderSound, toAudioBuffer, playRendered, exportWav, resynthesizeBuffer } from '../audio/library';
+import { libraryOf } from '../audio/library';
+import { renderSound, toAudioBuffer, playRendered, exportWav, resynthesizeBuffer } from '../audio/designing';
 import { saveUserSound, findAnySound } from '../audio/userSounds';
 import { describeStorageError } from '../project/storage';
 import { audioContext, getStripInput } from '../audio/engine';
