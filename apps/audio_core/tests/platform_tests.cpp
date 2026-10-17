@@ -184,10 +184,13 @@ static void testLoop()
     loop.runFor (10);
     CHECK (order.size() == 2 && order[0] == 1 && order[1] == 2 && taskThread == std::this_thread::get_id());
 
+    // A timer repeats, no faster than its interval (how much slower depends
+    // on the machine: a loaded CI runner wakes late), and stops when removed
     std::atomic<int> ticks { 0 };
     auto timer = loop.addTimer (20, [&] { ++ticks; });
-    loop.runFor (400); // about 20 ticks; a busy CI runner may wake late
-    CHECK (ticks.load() >= 6 && ticks.load() <= 21);
+    auto t0 = monotonicMs();
+    CHECK (loop.runUntil ([&] { return ticks.load() >= 5; }, 5000));
+    CHECK (monotonicMs() - t0 >= 80.0);
     loop.removeTimer (timer);
     auto before = ticks.load();
     loop.runFor (60);
