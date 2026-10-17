@@ -2,8 +2,9 @@
 // One voice per note; the caller owns routing by passing a destination node.
 // Library instruments (Kit 'library', see library.ts) play from here too.
 
-import { triggerLibrary, startLibraryVoice, libraryOf, type LibraryInstrument } from './library';
-import { startLiveVoice } from './liveModels';
+import { triggerLibrary, startLibraryVoice, type LibraryInstrument } from './library';
+import { engineHeldVoice, engineNote } from './engineVoices';
+import { liveStrip } from './engineNode';
 
 export interface SynthParams {
   Waveform?: OscillatorType | string;
@@ -97,7 +98,9 @@ function triggerDrum(
 type Stoppable = { stop: (when?: number) => void };
 
 // Schedules a single note. Returns what callers can force-stop (it
-// self-stops after release otherwise).
+// self-stops after release otherwise). On a strip of the live engine the
+// note plays on the engine worklet (engineVoices.ts); elsewhere (previews,
+// a session clip, an offline context) it plays as nodes.
 export function triggerNote(
   ctx: BaseAudioContext,
   destination: AudioNode,
@@ -107,6 +110,8 @@ export function triggerNote(
   duration: number,
   velocity = 1
 ): Stoppable {
+  const strip = liveStrip(ctx, destination);
+  if (strip) return engineNote(strip.engine, strip.output, params, midiNote, when, duration, velocity);
   if (params.Kit === 'drums') return triggerDrum(ctx, destination, params, midiNote, when, velocity);
   if (params.Kit === 'library') return triggerLibrary(ctx, destination, params, midiNote, when, duration, velocity);
   const osc = ctx.createOscillator();
@@ -144,17 +149,14 @@ export function startVoice(
   when: number,
   velocity = 1
 ): { release: (at: number) => void } {
+  const strip = liveStrip(ctx, destination);
+  if (strip) return engineHeldVoice(strip.engine, strip.output, params, midiNote, when, velocity);
   if (params.Kit === 'drums') {
     // drum hits are one-shots: nothing to hold or release
     triggerDrum(ctx, destination, params, midiNote, when, velocity);
     return { release: () => {} };
   }
-  if (params.Kit === 'library') {
-    // physical models play live, for as long as the key is held
-    const sound = libraryOf(params)?.sound;
-    return (sound && startLiveVoice(ctx, destination, sound, params, midiNote, when, velocity))
-      || startLibraryVoice(ctx, destination, params, midiNote, when, velocity);
-  }
+  if (params.Kit === 'library') return startLibraryVoice(ctx, destination, params, midiNote, when, velocity);
   const osc = ctx.createOscillator();
   const validTypes = ['sine', 'square', 'sawtooth', 'triangle'];
   osc.type = (validTypes.includes(params.Waveform as string) ? params.Waveform : 'sawtooth') as OscillatorType;

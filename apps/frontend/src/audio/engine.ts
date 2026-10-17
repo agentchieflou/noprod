@@ -11,7 +11,6 @@
 
 import { getAudioInputNode, isMonitoring, onInputsChange } from './inputs';
 import { createDeviceDSP, dspKind, resolvedParameters, loadDeviceWorklets, type DeviceDSP, type ParamTarget } from './devices';
-import { loadLiveModels } from './liveModels';
 import { onNativeLatencyChange } from '../native/trackBridge';
 import type { LoudnessReadings } from './meterWorker';
 import meterProcessorUrl from './worklets/meter-processor.js?url';
@@ -91,7 +90,15 @@ interface Strip {
 }
 
 const strips = new Map<string, Strip>();
+const inputStrips = new WeakMap<AudioNode, string>(); // a strip's input node -> its id
 const dsps = new Map<string, DeviceDSP>();
+
+// The engine worklet (engineNode.ts) feeds strips by id: it hears when a
+// strip's input node comes or goes, to connect its output there
+const stripListeners = new Set<(id: string, input: AudioNode | null) => void>();
+export const onStripInputChange = (fn: (id: string, input: AudioNode | null) => void) => { stripListeners.add(fn); return () => { stripListeners.delete(fn); }; };
+// Which strip a node is the input of (what a note's destination names)
+export const stripIdOf = (node: AudioNode): string | null => inputStrips.get(node) ?? null;
 const lastDeviceState = new Map<string, any>(); // deviceId -> device object last applied
 
 const createStrip = (id: string): Strip => {
@@ -107,6 +114,8 @@ const createStrip = (id: string): Strip => {
   const meter = createMeterTap(mute);
   const strip = { id, input, compensation, panner, fader, mute, sends: new Map(), chainSig: '<unwired>', chainOutputs: [], outputTarget: null, monitorSource: null, meter };
   strips.set(id, strip);
+  inputStrips.set(input, id);
+  stripListeners.forEach((fn) => fn(id, input));
   return strip;
 };
 
@@ -121,6 +130,7 @@ const destroyStrip = (strip: Strip) => {
   strip.sends.forEach((g) => g.disconnect());
   strip.meter.split.disconnect();
   strips.delete(strip.id);
+  stripListeners.forEach((fn) => fn(strip.id, null));
 };
 
 // Racks are serial containers in this DAW, so a rack contributes its inner
@@ -417,8 +427,6 @@ export async function initEngine(store: { getState: () => any; subscribe: (fn: (
   } catch (err) {
     console.warn('Loudness meter unavailable', err);
   }
-  // physical models played live; without it they play rendered notes
-  loadLiveModels(audioContext).catch((err) => console.warn('Live physical models unavailable; they will play rendered notes', err));
   syncEngine(store.getState());
   store.subscribe(syncEngine);
   // an input finishing opening (async permission) may complete a monitor connection
