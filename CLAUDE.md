@@ -94,6 +94,9 @@ envelopes, determinism (`packages/sound/src/analysis.ts`).
 
 ## Dependencies: we own what we ship
 
+noprod is open source under Apache-2.0 (`LICENSE`), so everything in it must
+be compatible with that.
+
 - Nothing restricted by its license goes into what we ship or run for users:
   the apps, the packages, GhostDAW and the plugins. That means copyleft
   (GPL, AGPL, LGPL, MPL, EPL, SSPL and the like), source-available (BUSL,
