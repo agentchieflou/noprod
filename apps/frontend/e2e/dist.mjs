@@ -186,11 +186,12 @@ try {
   // Dictation under the policy, with a stubbed key: the box starts as one
   // line, a key makes it a box, and the answer becomes a track. The stub
   // answers in the page, so no network is needed.
-  const typeInto = (placeholder, text) => page.evaluate((placeholder, text) => {
+  // (one argument: Playwright's evaluate takes no more)
+  const typeInto = (placeholder, text) => page.evaluate(({ placeholder, text }) => {
     const input = [...document.querySelectorAll('input')].find((i) => (i.placeholder || '').includes(placeholder));
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, text);
     input.dispatchEvent(new Event('input', { bubbles: true }));
-  }, placeholder, text);
+  }, { placeholder, text });
   const press = (label) => page.evaluate((label) => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === label)?.click(), label);
   await page.evaluate(() => {
     window.__violations = [];
