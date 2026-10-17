@@ -39,6 +39,7 @@ const DspMap = lazy(() => import('./components/DspMap'));
 const KeyboardPanel = lazy(() => import('./components/KeyboardPanel'));
 const DeviceChain = lazy(() => import('./components/DeviceChain'));
 const PluginFolders = lazy(() => import('./components/PluginFolders'));
+const DictationPanel = lazy(() => import('./components/DictationPanel'));
 const ClipView = lazy(() => import('./components/ClipView'));
 const SessionView = lazy(() => import('./components/SessionView'));
 const PluginEditorWindow = lazy(() => import('./components/PluginEditorWindow'));
@@ -1133,41 +1134,9 @@ function App() {
           )}
 
           {activeTab === 'dictation' && (
-            <div className="vst-paths-view">
-              <h5>AI Dictation</h5>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
-                Describe a beat or melody in the box at the top and click Dictate. The Orchestrator sends it to
-                Gemini, which generates Strudel code and passes it to the Sequencer to evaluate. Each part of the
-                result becomes a MIDI track playing a library sound, with a clip looping its bar.
-              </p>
-
-              {dictationStatus === 'sending' && (
-                <div className="detail-empty-message">Generating...</div>
-              )}
-
-              {dictationStatus === 'done' && dictationCode && (
-                <pre style={{ fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>
-                  {dictationCode}
-                </pre>
-              )}
-
-              {dictationResult && (
-                <div className="dictation-result">
-                  {dictationResult.tracks.length
-                    ? `New tracks: ${dictationResult.tracks.join(', ')}${dictationResult.bpm ? ` · tempo ${dictationResult.bpm} BPM` : ''}`
-                    : 'Nothing in the pattern to play.'}
-                  {dictationResult.unmapped.length > 0 && <div className="dictation-unmapped">No library sound for: {dictationResult.unmapped.join(', ')}</div>}
-                </div>
-              )}
-
-              {dictationStatus === 'error' && dictationError && (
-                <div style={{ fontSize: '12px', color: 'var(--accent-red)' }}>{dictationError}</div>
-              )}
-
-              {dictationStatus === 'idle' && (
-                <div className="detail-empty-message">No dictation request sent yet.</div>
-              )}
-            </div>
+            <Suspense fallback={null}>
+              <DictationPanel status={dictationStatus} code={dictationCode} result={dictationResult} error={dictationError} />
+            </Suspense>
           )}
         </div>
       </div>
