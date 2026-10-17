@@ -32,7 +32,9 @@ module.exports = async (page, ctx) => {
   await ctx.sleep(300);
   check('Opening the second clip selects no note', (await selectedCount()) === 0, `${await selectedCount()} selected`);
 
-  // 3. Delete in the second clip removes nothing
+  // 3. Delete in the second clip removes nothing (focus is in a field, so the
+  // key doesn't delete the clip either)
+  await page.focus('.clip-name-input');
   await page.keyboard.press('Delete');
   await ctx.sleep(200);
   const secondNotes = await notesOf(second);
