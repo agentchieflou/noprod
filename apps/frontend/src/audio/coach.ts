@@ -3,7 +3,7 @@
 // on-screen keys. It lights up the keys to play next and says why. The
 // mode, key and lesson are remembered between visits.
 
-import { Coach, LESSONS, findLesson, spellInKey, type CoachMode, type CoachReadout, type Highlight, type Key } from '@noprod/theory';
+import { Coach, LESSONS, findLesson, lessonFromNotes, spellInKey, type CoachMode, type CoachReadout, type Highlight, type Key, type Lesson } from '@noprod/theory';
 import { onMidiEvent } from './inputs';
 import { subscribeKeyboard, getKeyboardState } from './computerKeyboard';
 
@@ -30,6 +30,8 @@ function load(): Saved {
     if (MODES.includes(raw.mode)) saved.mode = raw.mode;
     const k = raw.key;
     if (k && Number.isInteger(k.tonic) && k.tonic >= 0 && k.tonic < 12 && (k.mode === 'major' || k.mode === 'minor')) saved.key = { tonic: k.tonic, mode: k.mode };
+    // A lesson made from a clip (CLIP_LESSON) isn't in LESSONS, so it isn't
+    // found here: after a reload the picker shows no lesson
     if (typeof raw.lesson === 'string' && findLesson(raw.lesson)) saved.lesson = raw.lesson;
   } catch { /* no storage, or not ours */ }
   return saved;
@@ -72,8 +74,20 @@ const refresh = () => {
 export const setCoachOpen = (open: boolean) => { set({ open }); refresh(); };
 export const setCoachMode = (mode: CoachMode) => { coach.setMode(mode); set({ mode, focus: null }); save(); refresh(); };
 export const setCoachKey = (key: Key | 'auto') => { coach.setKey(key); set({ key }); save(); refresh(); };
+// The picker's value for the lesson made from a clip, which isn't in LESSONS
+export const CLIP_LESSON = 'clip';
+let clipLesson: Lesson | null = null;
+export const getClipLesson = () => clipLesson;
+
 export const setCoachLesson = (lesson: string | null) => { coach.setLesson(lesson); set({ lesson }); save(); refresh(); };
-export const restartLesson = () => { coach.setLesson(state.lesson); refresh(); };
+export const setCoachLessonFromNotes = (notes: { pitch: number; start: number; duration: number }[], name: string) => {
+  clipLesson = lessonFromNotes(notes, name);
+  coach.setLesson(clipLesson);
+  set({ lesson: CLIP_LESSON });
+  save();
+  refresh();
+};
+export const restartLesson = () => { coach.setLesson(state.lesson === CLIP_LESSON ? clipLesson : state.lesson); refresh(); };
 export const setCoachFocus = (focus: number | null) => set({ focus });
 
 export const LESSON_GROUPS = [

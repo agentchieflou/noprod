@@ -2,10 +2,13 @@ import { useSyncExternalStore } from 'react';
 import { X, ChevronLeft, ChevronRight, RotateCcw, GraduationCap, Check, Music } from 'lucide-react';
 import { ACCOMPANY_STYLES, ALL_KEYS, findLesson, findStyle, keyName, sameKey, type CoachMode } from '@noprod/theory';
 import {
-  subscribeCoach, getCoachState, setCoachOpen, setCoachMode, setCoachKey, setCoachLesson, restartLesson, setCoachFocus, pretty, LESSON_GROUPS
+  subscribeCoach, getCoachState, setCoachOpen, setCoachMode, setCoachKey, setCoachLesson, setCoachLessonFromNotes, restartLesson, getClipLesson, CLIP_LESSON, setCoachFocus, pretty, LESSON_GROUPS
 } from '../audio/coach';
+import { useDAWStore } from '../store/useDAWStore';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled, setKeyboardMode, setOctave } from '../audio/computerKeyboard';
 import { subscribeAccompany, getAccompanyState, setAccompany, setAccompanyStyle } from '../audio/accompany';
+
+interface MidiRegion { id: string; type: string; file: string; notes?: { pitch: number; start: number; duration: number }[] }
 
 const MODES: [CoachMode, string, string][] = [
   ['off', 'Off', 'No suggestions'],
@@ -30,7 +33,8 @@ export default function KeyboardCoach({ onPiano }: { onPiano: boolean }) {
   const band = useSyncExternalStore(subscribeAccompany, getAccompanyState);
   const { readout, mode, key } = coach;
   const lesson = readout.lesson;
-  const about = coach.lesson ? findLesson(coach.lesson)?.description : undefined;
+  const about = coach.lesson === CLIP_LESSON ? getClipLesson()?.description : coach.lesson ? findLesson(coach.lesson)?.description : undefined;
+  const clip = useDAWStore((s) => s.regions.find((r: MidiRegion) => r.id === s.selectedRegionId && r.type === 'midi' && r.notes?.length));
   const keyIndex = key === 'auto' ? 'auto' : String(ALL_KEYS.findIndex((k) => sameKey(k, key)));
   const strongest = Math.max(0, ...readout.suggestions.map((s) => s.weight));
 
@@ -64,8 +68,13 @@ export default function KeyboardCoach({ onPiano }: { onPiano: boolean }) {
       {mode === 'lesson' ? (
         <div className="kb-row">
           <select className="rack-map-select coach-select" value={coach.lesson ?? ''} title={about}
-            onChange={(e) => setCoachLesson(e.target.value || null)}>
+            onChange={(e) => {
+              if (e.target.value !== CLIP_LESSON) return setCoachLesson(e.target.value || null);
+              const region = useDAWStore.getState().regions.find((r: MidiRegion) => r.id === useDAWStore.getState().selectedRegionId);
+              if (region?.notes?.length) setCoachLessonFromNotes(region.notes, region.file);
+            }}>
             <option value="">Pick a lesson…</option>
+            <option value={CLIP_LESSON} disabled={!clip && coach.lesson !== CLIP_LESSON} title="Play the notes of the MIDI clip selected in the arrangement">From the selected clip</option>
             {LESSON_GROUPS.map((g) => (
               <optgroup key={g.label} label={g.label}>
                 {g.lessons.map((l) => <option key={l.id} value={l.id}>{pretty(l.name)}</option>)}

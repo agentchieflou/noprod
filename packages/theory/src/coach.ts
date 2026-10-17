@@ -6,7 +6,7 @@ import { chordFamily, recognizeChord, romanNumeral, type Chord, type ChordQualit
 import { complements } from './complement.ts';
 import { nextChords } from './harmony.ts';
 import { findKey, KeyTracker } from './keys.ts';
-import { findLesson, LessonRunner } from './lessons.ts';
+import { findLesson, LessonRunner, type Lesson } from './lessons.ts';
 import { nextNotes } from './melody.ts';
 import { fitRange, pc, pitchClasses } from './notes.ts';
 import { keyName, spellInKey, type Key } from './scales.ts';
@@ -92,8 +92,9 @@ export class Coach {
     this.range = [range[0], range[1]];
   }
 
-  setLesson(id: string | null) {
-    const lesson = id ? findLesson(id) : null;
+  // A lesson's id, or a lesson itself (one made from a clip, say)
+  setLesson(lesson: string | Lesson | null) {
+    if (typeof lesson === 'string') lesson = findLesson(lesson);
     this.runner = lesson ? new LessonRunner(lesson) : null;
     this.wrong.clear();
   }
