@@ -49,9 +49,14 @@ std::vector<fs::path> PluginScanner::candidates (const std::vector<fs::path>& fo
     {
         if (! directoryExists (folder))
             continue;
-        // LPI plugins are plain shared libraries (or .lpi). Binaries inside
-        // a .vst3 bundle belong to the VST3 scan.
-        for (auto& file : listFiles (folder, { sharedLibraryExtension, ".lpi" }, 2000))
+        // LPI plugins are plain shared libraries (or .lpi). On macOS a
+        // module built by CMake is .so, not .dylib, so both count there.
+        // Binaries inside a .vst3 bundle belong to the VST3 scan.
+        std::vector<std::string> extensions { sharedLibraryExtension, ".lpi" };
+       #if GHOSTDAW_MAC
+        extensions.push_back (".so");
+       #endif
+        for (auto& file : listFiles (folder, extensions, 2000))
         {
             auto inBundle = false;
             for (auto part = file.parent_path(); ! part.empty() && part != part.root_path(); part = part.parent_path())
