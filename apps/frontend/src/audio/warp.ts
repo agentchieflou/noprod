@@ -1,11 +1,13 @@
 // Warping: transient detection, tempo estimation, and each warped clip
 // stretched to the project tempo by our phase vocoder (@noprod/sound's
-// `stretch`) in a worker. Until a clip's render is ready, clipPlayback.ts
+// `stretch`) in a worker of its own (library.ts's stretchPool). Until a clip's render is ready, clipPlayback.ts
 // plays it with overlap-add grains (sized per warp mode): live at once, but
 // with audible artifacts on extreme ratios. Texture keeps its grains (their
 // jitter is the effect) and Re-Pitch resamples.
 
 import type { StretchMode, StretchOptions } from '@noprod/sound';
+import { stretchPool } from './library';
+import { LruBytes, budgets, bufferBytes } from './memory';
 
 export function detectTransients(buffer: AudioBuffer): number[] {
   const data = buffer.getChannelData(0);
@@ -51,11 +53,8 @@ export function estimateBpm(transients: number[], fallback = 120): number {
 // The warp modes the stretcher renders, as its modes
 const RENDERED: Record<string, StretchMode> = { complex: 'complex', beats: 'beats', tones: 'tones' };
 
-// Finished renders, least recently used first, within a memory budget: about
-// 32 MB per GB of device memory
-const ready = new Map<string, { buffer: AudioBuffer; bytes: number }>();
-let budget = 32 * 2 ** 20 * ((navigator as any).deviceMemory || 4);
-let held = 0;
+// Finished renders, least recently used out first, within their memory budget
+const ready = new LruBytes<string, AudioBuffer>(budgets().stretched, bufferBytes);
 
 // Each source buffer's work: at most one render in flight, and the latest
 // settings asked for, started once the tempo has settled (a tempo that
@@ -78,19 +77,8 @@ export const onStretchReady = (fn: () => void) => {
 };
 
 // For the tests: renders started, bytes held, and the budget (settable)
-export const stretchStats = () => ({ started, bytes: held, budget, renders: ready.size });
-export function setStretchBudget(bytes: number) {
-  budget = bytes;
-  evict();
-}
-
-function evict() {
-  for (const [key, r] of ready) {
-    if (held <= budget) break;
-    ready.delete(key);
-    held -= r.bytes;
-  }
-}
+export const stretchStats = () => ({ started, bytes: ready.bytes, budget: ready.budget, renders: ready.size });
+export function setStretchBudget(bytes: number) { ready.budget = bytes; }
 
 function settings(clip: any, bpm: number): StretchOptions & { key: string } | null {
   const mode = RENDERED[clip.warpMode];
@@ -111,11 +99,7 @@ export function stretchedBuffer(clip: any, bpm: number): AudioBuffer | null {
   if (!job) jobs.set(source, (job = { id: sourceIds++, busy: null, want: null, timer: null, failed: new Set() }));
   const id = `${job.id} ${s.key}`;
   const hit = ready.get(id);
-  if (hit) {
-    ready.delete(id); // most recently used
-    ready.set(id, hit);
-    return hit.buffer;
-  }
+  if (hit) return hit;
   if (job.busy !== s.key && job.want?.key !== s.key && !job.failed.has(s.key)) {
     job.want = s;
     if (job.timer) clearTimeout(job.timer);
@@ -137,10 +121,7 @@ function start(source: AudioBuffer, job: Job) {
     if (!job.timer) start(source, job); // a request that came in meanwhile, settled
   };
   ask(source, options).then((buffer) => {
-    const bytes = buffer.length * buffer.numberOfChannels * 4;
-    ready.set(`${job.id} ${key}`, { buffer, bytes });
-    held += bytes;
-    evict();
+    ready.set(`${job.id} ${key}`, buffer);
     done();
     readyListeners.forEach((fn) => fn());
   }, () => { job.failed.add(key); done(); }); // a failed render stays on grains
@@ -159,40 +140,14 @@ export function initWarpRenders(store: { getState: () => any; subscribe: (fn: (s
   all(store.getState());
 }
 
-// One worker, one clip at a time; none if workers can't start (then grains)
-let worker: Worker | null | undefined;
-let nextId = 0;
-const waiting = new Map<number, { resolve: (b: AudioBuffer) => void; reject: (e: unknown) => void; sampleRate: number }>();
-
+// A whole clip at a time, as long as it takes (a long clip can take seconds)
 function ask(source: AudioBuffer, options: StretchOptions): Promise<AudioBuffer> {
-  if (worker === undefined) {
-    try {
-      worker = new Worker(new URL('./stretchWorker.ts', import.meta.url), { type: 'module' });
-      worker.onmessage = (e: MessageEvent<{ id: number; channels?: Float32Array<ArrayBuffer>[]; error?: string }>) => {
-        const job = waiting.get(e.data.id);
-        waiting.delete(e.data.id);
-        if (!job) return;
-        const channels = e.data.channels;
-        if (!channels) { job.reject(new Error(e.data.error)); return; }
-        const buffer = new AudioBuffer({ numberOfChannels: channels.length, length: Math.max(1, channels[0].length), sampleRate: job.sampleRate });
-        channels.forEach((c, i) => buffer.copyToChannel(c, i));
-        job.resolve(buffer);
-      };
-      // A crashed worker fails what it held; the next ask starts another
-      worker.onerror = () => {
-        waiting.forEach((job) => job.reject(new Error('stretch worker failed')));
-        waiting.clear();
-        worker = undefined;
-      };
-    } catch {
-      worker = null;
-    }
-  }
-  if (!worker) return Promise.reject(new Error('no workers'));
   const channels = Array.from({ length: source.numberOfChannels }, (_, c) => source.getChannelData(c).slice());
-  const id = nextId++;
-  return new Promise((resolve, reject) => {
-    waiting.set(id, { resolve, reject, sampleRate: source.sampleRate });
-    worker!.postMessage({ id, channels, options }, channels.map((c) => c.buffer));
-  });
+  return stretchPool().run<{ channels: Float32Array<ArrayBuffer>[] }>({ kind: 'stretch', channels, options },
+    { transfer: channels.map((c) => c.buffer), timeout: 300000 })
+    .then(({ channels: out }) => {
+      const buffer = new AudioBuffer({ numberOfChannels: out.length, length: Math.max(1, out[0].length), sampleRate: source.sampleRate });
+      out.forEach((c, i) => buffer.copyToChannel(c, i));
+      return buffer;
+    });
 }

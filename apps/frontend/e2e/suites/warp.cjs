@@ -163,8 +163,10 @@ module.exports = async (page, ctx) => {
     const st = window.__dawStore.getState();
     st.setSelectedRegionId(st.regions.at(-1).id);
     [...document.querySelectorAll('.detail-tab')].find((b) => b.textContent === 'Clip View').click();
-    await new Promise((r) => setTimeout(r, 300));
-    const select = [...document.querySelectorAll('.clip-view select')].find((s) => [...s.options].some((o) => o.value === 'repitch'));
+    // (the Clip View loads on first use)
+    const find = () => [...document.querySelectorAll('.clip-view select')].find((s) => [...s.options].some((o) => o.value === 'repitch'));
+    for (let i = 0; i < 100 && !find(); i++) await new Promise((r) => setTimeout(r, 50));
+    const select = find();
     return select ? { value: select.value, options: [...select.options].map((o) => o.value) } : null;
   });
   check('The Clip View\'s warp modes include Complex, and it is selected', options && options.options.includes('complex') && options.value === 'complex', JSON.stringify(options));

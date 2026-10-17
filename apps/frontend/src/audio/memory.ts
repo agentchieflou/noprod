@@ -4,8 +4,9 @@
 // evicts what was used longest ago.
 //
 // Per GB of device memory: rendered library notes 16 MB, decoded sample
-// previews 6 MB, audio that only undo history still holds 8 MB. A 4 GB
-// device: 64 + 24 + 32 MB; an 8 GB one twice that.
+// previews 6 MB, audio that only undo history still holds 8 MB, warped clips
+// stretched to the tempo 32 MB (a whole clip each). A 4 GB device:
+// 64 + 24 + 32 + 128 MB; an 8 GB one twice that.
 
 const MB = 1024 * 1024;
 
@@ -14,12 +15,13 @@ export const deviceMemoryGB = () => {
   return typeof gb === 'number' && gb > 0 ? Math.min(8, Math.max(0.5, gb)) : 4;
 };
 
-export interface Budgets { renders: number; decoded: number; history: number }
+export interface Budgets { renders: number; decoded: number; history: number; stretched: number }
 
 export const budgets = (gb = deviceMemoryGB()): Budgets => ({
   renders: Math.round(16 * MB * gb),
   decoded: Math.round(6 * MB * gb),
-  history: Math.round(8 * MB * gb)
+  history: Math.round(8 * MB * gb),
+  stretched: Math.round(32 * MB * gb)
 });
 
 export const bufferBytes = (b: AudioBuffer) => b.length * b.numberOfChannels * 4;
