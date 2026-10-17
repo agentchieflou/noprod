@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Music, Drum, Piano, Sliders, Zap, Plug, FolderOpen, FolderPlus, Folder, Plus, Search, X, RefreshCw, AudioWaveform, Pencil, Download, Trash2, Wand2 } from 'lucide-react';
 import { LIBRARY, KITS, CATEGORY_NAMES, type SoundRecipe } from '@noprod/sound';
+import { useShallow } from 'zustand/react/shallow';
 import { useDAWStore, createDefaultInstrument, createDrumKit } from '../store/useDAWStore';
 import { DEVICE_DEFS, createDevice } from '../audio/devices';
 import { MIDI_EFFECT_DEFS, createMidiEffect } from '../audio/midiEffects';
@@ -42,7 +43,11 @@ interface Item {
 // onto the selected track (or a new one); click previews a sound, kit or
 // sample; sounds and samples drag onto tracks/slots.
 export default function BrowserSidebar({ onShowPluginScan, onEditSound }: { onShowPluginScan: () => void; onEditSound: (recipe: SoundRecipe) => void }) {
-  const st = useDAWStore();
+  // What it shows, so it doesn't redraw with every change (playing, the playhead…)
+  const view = useDAWStore(useShallow((s: any) => ({
+    tracks: s.tracks, returns: s.returns, selectedTrackId: s.selectedTrackId, savedRacks: s.savedRacks, scannedPlugins: s.scannedPlugins
+  })));
+  const st = { ...useDAWStore.getState(), ...view };
   const places = useSyncExternalStore(subscribeLibrary, getPlaces);
   const mySounds = useSyncExternalStore(subscribeUserSounds, getUserSounds);
   const audioCore = useSyncExternalStore(subscribeAudioCore, getAudioCore);
