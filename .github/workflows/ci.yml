@@ -52,6 +52,12 @@ jobs:
           npx tsc -b
           npx oxlint src
           npx vite build
+      # Sourcemaps stay off the host; they are kept here for debugging a build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sourcemaps
+          path: apps/frontend/dist/assets/*.map
+          if-no-files-found: error
 
   licenses:
     name: Licenses
@@ -90,5 +96,26 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-screenshots
+          path: apps/frontend/e2e/.shots/
+          if-no-files-found: ignore
+
+  dist:
+    name: Built app (smoke test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run e2e:dist
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-screenshots
           path: apps/frontend/e2e/.shots/
           if-no-files-found: ignore

@@ -1,0 +1,11 @@
+{
+  "name": "noprod",
+  "short_name": "noprod",
+  "description": "A DAW in the browser: sounds built from scratch, and a keyboard coach that teaches as you play.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
