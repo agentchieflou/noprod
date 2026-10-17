@@ -11,17 +11,13 @@ import { exportUserSounds, importUserSounds } from '../audio/userSounds';
 import { audioContext } from '../audio/engine';
 import { notify, guarded, errorMessage } from '../notify';
 import { setPosition } from '../audio/transport';
+import { getFileHandle, setFileHandle, forgetFileHandle } from './fileHandle';
 
 const EXT = '.noprod';
 // Autosave once edits pause for a moment, and at least this often while they don't
 const AUTOSAVE_QUIET_MS = 1500;
 const AUTOSAVE_MAX_MS = 10000;
 const PICKER_TYPES = [{ description: 'NoProd project', accept: { 'application/x-noprod': [EXT] } }];
-
-// The file handle of the open project, so Save writes back in place
-// (File System Access API; other browsers download a copy instead).
-let fileHandle: any = null;
-const forgetFileHandle = () => { fileHandle = null; };
 
 const baseName = (n: string) => n.replace(/\.noprod$/i, '');
 // A project name as a file name (no path separators or reserved characters)
@@ -64,15 +60,16 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
     const picker = (window as any).showSaveFilePicker;
     if (picker) {
       try {
-        fileHandle = await picker.call(window, { suggestedName: `${state.projectName}${EXT}`, types: PICKER_TYPES });
+        setFileHandle(await picker.call(window, { suggestedName: `${state.projectName}${EXT}`, types: PICKER_TYPES }));
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
         throw err;
       }
-      const w = await fileHandle.createWritable();
+      const handle = getFileHandle();
+      const w = await handle.createWritable();
       await w.write(blob);
       await w.close();
-      state.markSaved(baseName(fileHandle.name));
+      state.markSaved(baseName(handle.name));
     } else {
       // No File System Access (Firefox, Safari): every Save is a download
       const name = fileName(state.projectName, EXT);
@@ -87,10 +84,11 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
   };
 
   const save = async () => {
-    if (!fileHandle) return saveAs();
+    const handle = getFileHandle();
+    if (!handle) return saveAs();
     const state = useDAWStore.getState();
     const blob = await serializeProject(state);
-    const w = await fileHandle.createWritable();
+    const w = await handle.createWritable();
     await w.write(blob);
     await w.close();
     state.markSaved();
@@ -114,7 +112,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
       const [handle] = await picker.call(window, { types: PICKER_TYPES });
       const file = await handle.getFile();
       await loadBlob(file, baseName(file.name));
-      fileHandle = handle;
+      setFileHandle(handle);
       flash(`Opened ${file.name}`);
     } catch (err: any) {
       if (err?.name !== 'AbortError') notify(`Could not open project: ${errorMessage(err)}`, 'error');
@@ -123,7 +121,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
 
   const newProject = () => {
     if (!confirmDiscard()) return;
-    fileHandle = null;
+    forgetFileHandle();
     clearAutosave();
     startProject();
     useDAWStore.getState().newProject();
@@ -243,7 +241,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
       {open && (
         <div className="file-menu-list" style={{ left: menuLeft }}>
           <button onClick={run(newProject)}>New Project</button>
-          <button onClick={run(openProject)}>Open… <kbd>Ctrl+O</kbd></button>
+          <button onClick={() => run(openProject)()}>Open… <kbd>Ctrl+O</kbd></button>
           <button onClick={run(save)} title={canSaveInPlace ? undefined : 'This browser saves by downloading a new copy each time'}>
             {canSaveInPlace ? 'Save' : 'Save (download)'} <kbd>Ctrl+S</kbd>
           </button>
@@ -264,7 +262,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
           const file = e.target.files?.[0];
           e.target.value = '';
           if (!file) return;
-          try { await loadBlob(file, baseName(file.name)); fileHandle = null; flash(`Opened ${file.name}`); }
+          try { await loadBlob(file, baseName(file.name)); forgetFileHandle(); flash(`Opened ${file.name}`); }
           catch (err) { notify(`Could not open project: ${errorMessage(err)}`, 'error'); }
         }}
       />
