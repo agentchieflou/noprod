@@ -32,6 +32,8 @@ import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
 import ArrangementRuler from './components/ArrangementRuler';
 import TempoControls from './components/TempoControls';
+import Playhead from './components/Playhead';
+import { setPlayhead } from './components/playhead';
 import FileMenu from './components/FileMenu';
 import AutomationLane from './components/AutomationLane';
 import { automationParams } from './audio/automation';
@@ -239,17 +241,16 @@ function App() {
 
   // Playhead display: the transport owns position and scheduling; this just
   // follows it (rAF while playing) and runs punch-in/out at the punch points.
-  const [localPlaybackPosition, setLocalPlaybackPosition] = useState(0);
   const [countingIn, setCountingIn] = useState(false);
 
-  useEffect(() => onTransportChange(() => setLocalPlaybackPosition(Math.max(0, getPosition()))), []);
+  useEffect(() => onTransportChange(() => setPlayhead(Math.max(0, getPosition()))), []);
 
   useEffect(() => {
     if (!isPlaying) return;
     let raf: number;
     const updatePlayhead = () => {
       const currentPos = getPosition();
-      setLocalPlaybackPosition(Math.max(0, currentPos));
+      setPlayhead(Math.max(0, currentPos));
       setCountingIn(isCountingIn());
       const st = useDAWStore.getState();
       if (st.isPunchEnabled && !isCountingIn()) {
@@ -773,7 +774,7 @@ function App() {
           <button className="btn-metronome" onClick={() => jumpLocator(1)} disabled={locators.length === 0} title="Next locator">▶</button>
         </div>
 
-        <TempoControls position={localPlaybackPosition} />
+        <TempoControls />
         {countingIn && <span className="count-in-badge">COUNT-IN</span>}
 
         {/* Keyboard Coach: opens the keyboard panel, computer keyboard on or off */}
@@ -883,7 +884,7 @@ function App() {
                 {isLoopEnabled && (
                   <div className="loop-shade" style={{ left: loopStart * PIXELS_PER_SECOND, width: (loopEnd - loopStart) * PIXELS_PER_SECOND }} />
                 )}
-                <div className="playhead" style={{ left: `${localPlaybackPosition * PIXELS_PER_SECOND}px` }} />
+                <Playhead />
                 
                 {visibleTracks.map((track: any) => (
                   <Fragment key={track.id}>

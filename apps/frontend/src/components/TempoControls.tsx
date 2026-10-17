@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
 import { barAt } from '../audio/timeline';
+import { subscribePlayhead, getPlayhead } from './playhead';
 import { startFollowing, stopFollowing, subscribeFollower, getFollowerState } from '../audio/tempoFollower';
 import { getAudioInputDevices, refreshAudioDevices } from '../audio/inputs';
 
@@ -52,7 +53,8 @@ const VALID_DENOMINATORS = [1, 2, 4, 8, 16];
 
 // Transport-bar tempo section: editable BPM, tap tempo, the time signature at
 // the playhead's bar (editing it inserts a change there), and count-in length.
-export default function TempoControls({ position }: { position: number }) {
+export default function TempoControls() {
+  const position = useSyncExternalStore(subscribePlayhead, getPlayhead);
   const { bpm, setBpm, timeSignatures, setTimeSignature, countInBars, setCountInBars } = useDAWStore();
   const taps = useRef<number[]>([]);
   const [tapFlash, setTapFlash] = useState(false);
