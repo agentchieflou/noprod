@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
 import { resolveTarget, type MidiMapping } from '../audio/midiTargets';
 import { resetPickup } from '../audio/midiLearn';
+import { useDialogFocus } from './a11y';
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const sourceText = (m: MidiMapping) => {
@@ -14,6 +15,7 @@ const sourceText = (m: MidiMapping) => {
 export default function MidiLearnControls() {
   const { midiLearn, setMidiLearn, midiMappings, updateMidiMapping, removeMidiMapping } = useDAWStore();
   const [listOpen, setListOpen] = useState(false);
+  const dialog = useDialogFocus<HTMLDivElement>(() => setListOpen(false), listOpen);
 
   // Esc leaves learn mode
   useEffect(() => {
@@ -44,7 +46,7 @@ export default function MidiLearnControls() {
         </button>
       )}
       {listOpen && (
-        <div className="midi-map-dialog" role="dialog" aria-label="MIDI mappings">
+        <div ref={dialog} className="midi-map-dialog" role="dialog" aria-label="MIDI mappings" tabIndex={-1}>
           <div className="midi-map-head">
             <b>MIDI mappings</b>
             <button className="btn-icon" onClick={() => setListOpen(false)} title="Close">×</button>

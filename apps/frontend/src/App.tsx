@@ -41,7 +41,7 @@ import { notify, guarded } from './notify';
 import { Panel } from './components/ErrorBoundary';
 import AudioStatus from './components/AudioStatus';
 import Notices from './components/Notices';
-import { onEnter } from './components/a11y';
+import { isControl, onEnter } from './components/a11y';
 import { liveModelStats } from './audio/liveModels';
 import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
 // Not lazy with the DSP Map: it notes each track's sound as it's selected, for the map's A/B
@@ -370,7 +370,8 @@ function App() {
       // (a plugin editor with keyboard focus counts as typing)
       const target = e.target as HTMLElement;
       const isInput = target.tagName === 'INPUT' || !!target.closest?.('[data-keyboard-capture]');
-      if (e.code === 'Space' && !isInput) {
+      // Space on a focused button, select or slider belongs to that control
+      if (e.code === 'Space' && !isInput && !isControl(target)) {
         e.preventDefault();
         togglePlayback();
       }

@@ -1,5 +1,6 @@
 import { useState, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
+import { useDialogFocus } from './a11y';
 import { getServices, subscribeServices, setService, isWebSocketUrl, setServicesDialogOpen, type ServiceName } from '../native/services';
 import { getOrchestratorStatus, subscribeOrchestrator, type ConnectionStatus } from '../native/orchestrator';
 import { getAudioCore, subscribeAudioCore } from '../native/audioCore';
@@ -45,8 +46,10 @@ export default function ServicesDialog() {
   const audioCore = useSyncExternalStore(subscribeAudioCore, getAudioCore);
   const ghostdaw: ConnectionStatus = !services.ghostdaw.enabled ? 'off' : audioCore.connected ? 'connected' : 'trying';
 
+  const dialog = useDialogFocus<HTMLDivElement>(() => setServicesDialogOpen(false));
+
   return (
-    <div className="midi-map-dialog services-dialog" role="dialog" aria-label="Services">
+    <div ref={dialog} className="midi-map-dialog services-dialog" role="dialog" aria-label="Services" tabIndex={-1}>
       <div className="midi-map-head">
         <b>Services</b>
         <button className="btn-icon" title="Close" onClick={() => setServicesDialogOpen(false)}><X size={12} /></button>
