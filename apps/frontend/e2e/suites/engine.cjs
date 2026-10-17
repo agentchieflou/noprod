@@ -1,0 +1,359 @@
+// #159 step 2: the engine worklet and the streaming scheduler. Notes posted,
+// voices started and onsets heard are counted against each other on the
+// spike's project (32 library tracks playing eighth notes at 120 BPM, then
+// 96), realtime and offline; late and dropped events are counted and
+// reported; edits during playback are diffs; an hour-long project keeps a
+// bounded queue; and an offline render is the same twice.
+module.exports = async (page, ctx) => {
+  const results = [];
+  const check = (name, ok, detail = '') => { const line = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`; results.push(line); console.log(line); };
+  await page.mouse.click(5, 5);
+
+  // Modules first, one import per call (several in one can hang)
+  await page.evaluate(async () => { window.__sound = await import(window.__fs + '/packages/sound/src/index.ts'); return 1; });
+  await page.evaluate(async () => { window.__lib = await import('/src/audio/library.ts'); return 1; });
+  await page.evaluate(async () => { window.__tr = await import('/src/audio/transport.ts'); return 1; });
+  await page.evaluate(async () => { window.__sched = await import('/src/audio/scheduler.ts'); return 1; });
+  await page.evaluate(async () => { window.__voices = await import('/src/audio/engineVoices.ts'); return 1; });
+  await page.evaluate(async () => { await window.__tr.engineReady(); return 1; });
+
+  // Helpers in the page: project builders, a stats reader, and an onset
+  // probe on the master (a worklet counting rises out of silence)
+  await page.evaluate(async () => {
+    const SOUNDS = ['piano-electric', 'marimba', 'bass-finger', 'pad-warm'];
+    const SCALE = [0, 2, 4, 7, 9, 12, 9, 7];
+    const store = () => window.__dawStore.getState();
+    // Eighth notes at 120 BPM (4 a second) for `seconds`, each track's scale shifted
+    const eighths = (t, seconds, duration) => {
+      const notes = [];
+      for (let i = 0; i < seconds * 4; i++) notes.push({ id: `n${i}`, pitch: 60 + SCALE[(i + t) % 8], start: i * 0.25, duration, velocity: 0.8 });
+      return notes;
+    };
+    window.__clear = () => {
+      const st = store();
+      for (const r of st.regions) store().removeRegion(r.id);
+      for (const t of st.tracks) if (t.id.startsWith('e2e-') || t.name.startsWith('E2E')) store().removeTrack(t.id);
+    };
+    // The spike's project: `tracks` library instruments, 4 sounds in turn
+    window.__library = (tracks, seconds) => {
+      window.__clear();
+      store().setBpm(120);
+      const ids = [];
+      for (let t = 0; t < tracks; t++) {
+        store().addMidiTrackWithInstrument(window.__lib.createLibraryInstrument(window.__sound.findSound(SOUNDS[t % SOUNDS.length])), `E2E ${t}`);
+        const id = store().tracks.at(-1).id;
+        ids.push(id);
+        store().addMidiRegion(id, 0, seconds, eighths(t, seconds, 0.12));
+      }
+      store().setSelectedTrackId(null);
+      return ids;
+    };
+    // The same grid on the built-in synth, with silence between notes: onsets are exact
+    window.__synths = (tracks, seconds) => {
+      window.__clear();
+      store().setBpm(120);
+      const ids = [];
+      for (let t = 0; t < tracks; t++) {
+        store().addMidiTrackWithInstrument({ name: 'Synth', type: 'instrument', parameters: { Waveform: 'sine', Attack: 0.001, Decay: 0.05, Sustain: 0.8, Release: 0.005, Gain: 0.5 } }, `E2E ${t}`);
+        const id = store().tracks.at(-1).id;
+        ids.push(id);
+        store().addMidiRegion(id, 0, seconds, eighths(t, seconds, 0.1));
+      }
+      store().setSelectedTrackId(null);
+      return ids;
+    };
+    window.__stats = () => window.__tr.engineStats();
+    // What the engine and the scheduler did since `from`
+    const since = window.__since = (from, to) => {
+      const d = {};
+      for (const k in to.engine) if (typeof to.engine[k] === 'number') d[k] = to.engine[k] - from.engine[k];
+      d.posted = to.scheduler.posted - from.scheduler.posted;   // notes that reached the engine
+      d.takenBack = to.scheduler.retracted - from.scheduler.retracted; // by the scheduler's diffs
+      d.spans = to.scheduler.spans;
+      d.reported = to.dropped;
+      return d;
+    };
+    // Plays from 0 for `seconds`, watching the master's peak, and stops.
+    // Counts are from the start of this playback: every track's output is
+    // claimed first, as play() does, since growing them remakes the engine.
+    window.__play = async (seconds) => {
+      const an = window.__transport.masterAnalyser, buf = new Float32Array(an.fftSize);
+      const ctxA = window.__transport.audioContext;
+      // the page draws the project first (its long tasks would stall the loop below)
+      for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(() => setTimeout(r)));
+      window.__transport.setPosition(0);
+      window.__tr.getScheduler().claim();
+      await window.__probe.reset();
+      const zero = await window.__stats();
+      const c0 = ctxA.currentTime;
+      const t0 = performance.now();
+      store().togglePlayback();
+      const startMs = performance.now() - t0;
+      let peak = 0;
+      const end = performance.now() + seconds * 1000;
+      while (performance.now() < end) {
+        an.getFloatTimeDomainData(buf);
+        for (const x of buf) peak = Math.max(peak, Math.abs(x));
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      const before = since(zero, await window.__stats());
+      const elapsed = ctxA.currentTime - c0; // what actually played, if the loop overran
+      store().togglePlayback();
+      await new Promise((r) => setTimeout(r, 150));
+      const after = since(zero, await window.__stats());
+      const times = await window.__probe.read();
+      return { peak, startMs, elapsed, before, after, onsets: times.length, times };
+    };
+    // Onsets per channel of a rendered buffer: a sample that isn't zero after 10 ms of zeros
+    window.__onsets = (buffer, channel, sampleRate) => {
+      const x = buffer.getChannelData(channel);
+      const gap = Math.round(sampleRate * 0.01);
+      const out = [];
+      let zeros = gap;
+      for (let i = 0; i < x.length; i++) {
+        if (x[i] === 0) { zeros++; continue; }
+        if (zeros >= gap) out.push(i);
+        zeros = 0;
+      }
+      return out;
+    };
+    // The probe: counts rises out of 30 ms of near-silence at the master
+    const ctxA = window.__transport.audioContext;
+    const code = `class Probe extends AudioWorkletProcessor {
+      constructor() { super(); this.times = []; this.quiet = sampleRate; this.t0 = 0; this.port.onmessage = (e) => { if (e.data === 'reset') { this.times = []; this.quiet = sampleRate; this.t0 = currentFrame; } this.port.postMessage(this.times); }; }
+      process(inputs) {
+        const ch = inputs[0] && inputs[0][0];
+        if (!ch) return true;
+        let peak = 0;
+        for (let i = 0; i < ch.length; i++) { const a = Math.abs(ch[i]); if (a > peak) peak = a; }
+        if (peak > 0.002) { if (this.quiet >= sampleRate * 0.03) this.times.push(+((currentFrame - this.t0) / sampleRate).toFixed(3)); this.quiet = 0; }
+        else this.quiet += ch.length;
+        return true;
+      }
+    }
+    registerProcessor('e2e-probe', Probe);`;
+    await ctxA.audioWorklet.addModule(URL.createObjectURL(new Blob([code], { type: 'application/javascript' })));
+    const probe = new AudioWorkletNode(ctxA, 'e2e-probe', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+    const sink = ctxA.createGain(); sink.gain.value = 0;
+    window.__transport.masterAnalyser.connect(probe); probe.connect(sink); sink.connect(ctxA.destination);
+    const ask = (m) => new Promise((r) => { probe.port.onmessage = (e) => r(e.data); probe.port.postMessage(m); });
+    window.__probe = { reset: () => ask('reset'), read: () => ask('read') };
+    await ctxA.resume();
+    return 1;
+  });
+
+  const sampleRate = await page.evaluate(() => window.__transport.audioContext.sampleRate);
+
+  // 1. Offline, 32 library tracks for 8 s, a stereo pair per track: every
+  // note posted started, nothing late or dropped, and every track sounds.
+  // This also renders the project's 32 notes into the cache.
+  const off32 = await page.evaluate(async (sampleRate) => {
+    const ids = window.__library(32, 8);
+    let report = null;
+    const t0 = performance.now();
+    const stems = await window.__sched.renderStems({ state: window.__dawStore.getState(), trackIds: ids, from: 0, to: 8, sampleRate, report: (r) => { report = r; } });
+    const ms = performance.now() - t0;
+    const silent = [];
+    stems.forEach((stem, t) => {
+      const x = stem.getChannelData(0);
+      let peak = 0;
+      for (let i = 0; i < x.length; i += 7) peak = Math.max(peak, Math.abs(x[i]));
+      if (peak < 0.01) silent.push(t);
+    });
+    window.__off32 = stems;
+    return { ms: Math.round(ms), stems: stems.length, silent, ...report.engine, counts: report.counts };
+  }, sampleRate);
+  const expected32 = 32 * 8 * 4;
+  check('Offline, 32 library tracks: every note posted started, none late or dropped',
+    off32.counts.posted === expected32 && off32.started === expected32 && off32.late === 0 && off32.dropped === 0 && off32.retracted === 0,
+    `${off32.counts.posted} posted, ${off32.started} started, ${off32.late} late, ${off32.dropped} dropped; ${off32.stems} stems in ${off32.ms} ms (${(8000 / off32.ms).toFixed(1)}× realtime)`);
+  check('…and every track sounds in its own stem', off32.silent.length === 0, off32.silent.length ? `silent: ${off32.silent.join(', ')}` : '32 stems');
+
+  // 2. The same render again is bit for bit the same (seeded, a window at a time)
+  const same = await page.evaluate(async (sampleRate) => {
+    const ids = window.__dawStore.getState().tracks.filter((t) => t.name.startsWith('E2E')).map((t) => t.id);
+    const b = await window.__sched.renderStems({ state: window.__dawStore.getState(), trackIds: ids, from: 0, to: 8, sampleRate });
+    const a = window.__off32;
+    let differ = 0, samples = 0;
+    a.forEach((stem, t) => {
+      for (let c = 0; c < 2; c++) {
+        const x = stem.getChannelData(c), y = b[t].getChannelData(c);
+        samples += x.length;
+        for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) differ++;
+      }
+    });
+    return { differ, samples };
+  }, sampleRate);
+  check('Rendered twice, the project is the same to the sample', same.differ === 0, `${same.differ} of ${same.samples} samples differ`);
+
+  // 3. Offline, 32 synth tracks: onsets found where the notes are, to the sample
+  const onsets = await page.evaluate(async (sampleRate) => {
+    const ids = window.__synths(32, 4);
+    let report = null;
+    const stems = await window.__sched.renderStems({ state: window.__dawStore.getState(), trackIds: ids, from: 0, to: 4, sampleRate, report: (r) => { report = r; } });
+    let found = 0, worst = 0, off = [];
+    for (let t = 0; t < ids.length; t++) {
+      const on = window.__onsets(stems[t], 0, sampleRate);
+      found += on.length;
+      on.forEach((frame, i) => { const d = Math.abs(frame - Math.round(i * 0.25 * sampleRate)); worst = Math.max(worst, d); if (d > 2) off.push(`${t}:${i}@${frame}`); });
+    }
+    return { found, worst, off: off.slice(0, 5), expected: ids.length * 16, started: report.engine.started, late: report.engine.late };
+  }, sampleRate);
+  check('Offline, 32 synth tracks: an onset per note, within 2 samples of its time',
+    onsets.found === onsets.expected && onsets.started === onsets.expected && onsets.off.length === 0,
+    `${onsets.found} of ${onsets.expected} onsets, ${onsets.started} started, worst ${onsets.worst} samples off${onsets.off.length ? `: ${onsets.off.join(' ')}` : ''}`);
+
+  // 4. Realtime, 32 synth tracks for 3 s: posted = started + retracted, no
+  // drops, and the probe hears the 4 onsets a second
+  const rt = await page.evaluate(async () => { window.__synths(32, 8); return window.__play(3); });
+  const closed = (s) => s.after.posted === s.after.started + s.after.retracted + s.after.dropped;
+  const sum = (s) => `${s.after.posted} posted = ${s.after.started} started + ${s.after.retracted} retracted + ${s.after.dropped} dropped; ${s.after.late} late; ${s.elapsed.toFixed(2)} s played`;
+  // notes a second the grid plays, over what played before the stop (less the 50 ms lead), give or take a beat
+  const atLeast = (s, perSecond) => s.before.started >= perSecond * (s.elapsed - 0.3);
+  const beats = (s) => Math.ceil((s.elapsed - 0.05) * 4);
+  const pace = (s) => `${s.after.blocksLate} blocks late, ${s.after.dropouts} dropouts, worst ${s.after.worst} ms, load ${(s.after.busy / (s.after.seconds * 1000) * 100).toFixed(0)}%`;
+  check('Realtime, 32 synth tracks: every note posted started or was taken back at the stop',
+    closed(rt) && rt.after.dropped === 0 && rt.after.late === 0 && atLeast(rt, 32 * 4),
+    `${sum(rt)}; peak ${rt.peak.toFixed(2)}; play took ${rt.startMs.toFixed(0)} ms`);
+  check('…and the master rises out of silence 4 times a second', Math.abs(rt.onsets - beats(rt)) <= 1 && rt.peak > 0.05, `${rt.onsets} onsets in ${rt.elapsed.toFixed(2)} s at ${rt.times.join(' ')}`);
+
+  // 5. Realtime, 32 library tracks (the cache is warm from the offline render)
+  const rtl = await page.evaluate(async () => { window.__library(32, 8); return window.__play(3); });
+  check('Realtime, 32 library tracks: nothing dropped, every note accounted for',
+    closed(rtl) && rtl.after.dropped === 0 && rtl.after.late === 0 && atLeast(rtl, 32 * 4) && rtl.peak > 0.05,
+    `${sum(rtl)}; ${pace(rtl)}; peak ${rtl.peak.toFixed(2)}`);
+
+  // 6. 96 tracks, realtime and offline
+  const rt96 = await page.evaluate(async () => { window.__library(96, 8); return window.__play(3); });
+  check('Realtime, 96 library tracks: nothing dropped, every note accounted for',
+    closed(rt96) && rt96.after.dropped === 0 && rt96.after.late === 0 && atLeast(rt96, 96 * 4) && rt96.peak > 0.05,
+    `${sum(rt96)}; ${pace(rt96)}`);
+  const off96 = await page.evaluate(async (sampleRate) => {
+    const ids = window.__dawStore.getState().tracks.filter((t) => t.name.startsWith('E2E')).map((t) => t.id);
+    let report = null;
+    const t0 = performance.now();
+    await window.__sched.renderArrangement({ state: window.__dawStore.getState(), trackIds: ids, from: 0, to: 8, sampleRate, report: (r) => { report = r; } });
+    return { ms: Math.round(performance.now() - t0), ...report.engine, counts: report.counts };
+  }, sampleRate);
+  check('Offline, 96 library tracks: every note posted started, none late or dropped',
+    off96.counts.posted === 96 * 32 && off96.started === 96 * 32 && off96.late === 0 && off96.dropped === 0,
+    `${off96.counts.posted} posted, ${off96.started} started, ${off96.late} late, ${off96.dropped} dropped; 8 s in ${off96.ms} ms (${(8000 / off96.ms).toFixed(1)}× realtime)`);
+
+  // 7. Looping: a one-second loop plays its notes again each pass, without
+  // a seam (spans open ahead and close at the boundary)
+  const loop = await page.evaluate(async () => {
+    window.__synths(2, 1);
+    const st = window.__dawStore.getState();
+    st.setLoopRegion(0, 1);
+    if (!st.isLoopEnabled) st.toggleLoop();
+    const r = await window.__play(3.1);
+    window.__dawStore.getState().toggleLoop();
+    return r;
+  });
+  check('A one-second loop plays its 4 notes again each pass', Math.abs(loop.onsets - beats(loop)) <= 1 && closed(loop) && loop.after.dropped === 0 && loop.after.late === 0 && Math.abs(loop.before.started - 2 * beats(loop)) <= 2,
+    `${loop.onsets} onsets in ${loop.elapsed.toFixed(2)} s at ${loop.times.join(' ')}; ${sum(loop)}; ${loop.before.spans} spans kept`);
+
+  // 8. Edits during playback are diffs: a clip added while playing posts
+  // just its notes in the posted window; removing it takes those back
+  const edits = await page.evaluate(async () => {
+    window.__synths(4, 8);
+    const store = () => window.__dawStore.getState();
+    window.__transport.setPosition(0);
+    // the added track's output too, so the engine isn't remade mid-play
+    for (let i = 0; i < 4; i++) window.__tr.getEngine().output(`e2e-spare-${i}`);
+    for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(() => setTimeout(r)));
+    const zero = await window.__stats();
+    store().togglePlayback();
+    await new Promise((r) => setTimeout(r, 500));
+    const a = await window.__stats();
+    store().addMidiTrackWithInstrument({ name: 'Synth', type: 'instrument', parameters: { Waveform: 'sine', Attack: 0.001, Decay: 0.05, Sustain: 0.8, Release: 0.005, Gain: 0.5 } }, 'E2E added');
+    const id = store().tracks.at(-1).id;
+    const pos = window.__transport.getPosition();
+    // 20 notes every 50 ms from 0.2 s ahead: the first 16 or so inside the second already posted
+    const notes = []; for (let i = 0; i < 20; i++) notes.push({ id: `a${i}`, pitch: 72, start: 0.2 + i * 0.05, duration: 0.02, velocity: 0.8 });
+    store().addMidiRegion(id, pos, 2, notes);
+    const regionId = store().regions.at(-1).id;
+    // what the scheduler holds for the new clip (its keys name the region)
+    const held = () => window.__tr.getScheduler().spans.reduce((n, s) => n + [...s.notes.keys()].filter((k) => k.includes(`:${regionId}:`)).length, 0);
+    await new Promise((r) => setTimeout(r, 100));
+    const b = await window.__stats();
+    const heldAfterAdd = held();
+    const others = (b.scheduler.posted - a.scheduler.posted) - heldAfterAdd; // the 4 tracks' notes posted meanwhile
+    store().removeRegion(regionId);
+    await new Promise((r) => setTimeout(r, 100));
+    const c = await window.__stats();
+    const heldAfterRemove = held();
+    store().togglePlayback();
+    await new Promise((r) => setTimeout(r, 150));
+    const e = window.__since(zero, await window.__stats());
+    return {
+      heldAfterAdd, others, heldAfterRemove,
+      takenBack: c.scheduler.retracted - b.scheduler.retracted,
+      engineTakenBack: c.engine.retracted - b.engine.retracted,
+      final: e, closed: e.posted === e.started + e.retracted + e.dropped
+    };
+  });
+  check('A clip added while playing posts just its notes in the posted window', edits.heldAfterAdd >= 16 && edits.heldAfterAdd <= 20 && edits.others >= 0 && edits.others <= 16 * 0.5,
+    `${edits.heldAfterAdd} of its 20 notes posted (the second ahead), ${edits.others} of the other tracks' meanwhile`);
+  check('…and removing it takes back the ones that had not started', edits.heldAfterRemove === edits.heldAfterAdd - edits.takenBack && edits.takenBack >= 1 && edits.takenBack <= edits.heldAfterAdd && edits.engineTakenBack <= edits.takenBack && edits.engineTakenBack >= edits.takenBack - 2 && edits.closed,
+    `${edits.takenBack} retracted by the scheduler, ${edits.engineTakenBack} never started in the engine, ${edits.heldAfterRemove} had played; ${sum({ after: edits.final, elapsed: edits.final.seconds })}`);
+
+  // 9. An hour-long project: what the engine holds stays a window's worth.
+  // A note every 4 s on each track: the page draws every note of a clip as
+  // an element and redraws them as the playhead moves, so a denser hour
+  // stalls the page (and, in this container, the audio thread with it).
+  const hour = await page.evaluate(async () => {
+    window.__clear();
+    const store = () => window.__dawStore.getState();
+    store().setBpm(120);
+    for (let t = 0; t < 8; t++) {
+      store().addMidiTrackWithInstrument({ name: 'Synth', type: 'instrument', parameters: { Waveform: 'sine', Attack: 0.001, Decay: 0.05, Sustain: 0.8, Release: 0.005, Gain: 0.3 } }, `E2E ${t}`);
+      const notes = []; for (let i = 0; i < 900; i++) notes.push({ id: `n${i}`, pitch: 60 + (i % 8), start: 4 * i, duration: 0.1, velocity: 0.8 });
+      store().addMidiRegion(store().tracks.at(-1).id, 0, 3600, notes);
+    }
+    window.__transport.setPosition(1800);
+    // the page draws the clips and scrolls to the playhead first (perf.cjs waits the same way)
+    for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(() => setTimeout(r)));
+    window.__tr.getScheduler().claim();
+    const zero = await window.__stats();
+    const t0 = performance.now();
+    store().togglePlayback();
+    const startMs = performance.now() - t0;
+    let worst = { pending: 0, sounding: 0 };
+    const end = performance.now() + 4500;
+    while (performance.now() < end) {
+      const s = await window.__stats();
+      worst.pending = Math.max(worst.pending, s.engine.pending);
+      worst.sounding = Math.max(worst.sounding, s.engine.sounding);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const s = await window.__stats();
+    store().togglePlayback();
+    await new Promise((r) => setTimeout(r, 150));
+    return { startMs: Math.round(startMs), ...worst, spans: s.scheduler.spans, started: s.engine.started - zero.engine.started, dropped: s.engine.dropped - zero.engine.dropped, late: s.engine.late - zero.engine.late };
+  });
+  check('An hour-long project queues about a second of notes, not the hour', hour.pending <= 8 && hour.sounding <= 8 && hour.spans <= 2 && hour.dropped === 0 && hour.late === 0 && hour.started >= 8,
+    `at most ${hour.pending} pending and ${hour.sounding} sounding of ${8 * 900} notes; ${hour.spans} span; ${hour.started} started from the middle, ${hour.late} late, ${hour.dropped} dropped; play took ${hour.startMs} ms`);
+
+  // 10. Late and dropped events are counted and reported: a note a little
+  // late plays now and counts as late; one past the budget is dropped and
+  // reaches the transport's count
+  const late = await page.evaluate(async () => {
+    const engine = window.__tr.getEngine();
+    const ctx = engine.ctx;
+    const strip = engine.output('e2e-late');
+    const before = await window.__stats();
+    const voice = { kind: 'synth', wave: 'sine', hz: 440, attack: 0.001, decay: 0.05, sustain: 0.8, release: 0.005, peak: 0.2 };
+    engine.notes([{ key: 'e2e:late', strip, at: ctx.currentTime - 0.01, voice, duration: 0.05 }]);
+    engine.notes([{ key: 'e2e:dropped', strip, at: ctx.currentTime - 0.2, voice, duration: 0.05 }]);
+    await new Promise((r) => setTimeout(r, 100));
+    const after = await window.__stats();
+    return { late: after.engine.late - before.engine.late, dropped: after.engine.dropped - before.engine.dropped, started: after.engine.started - before.engine.started, reported: after.dropped - before.dropped };
+  });
+  check('A note 10 ms late plays and counts as late; one 200 ms late is dropped and reported', late.late === 1 && late.started === 1 && late.dropped === 1 && late.reported === 1,
+    `${late.late} late, ${late.started} started, ${late.dropped} dropped, ${late.reported} reported to the transport`);
+
+  await ctx.shot('engine');
+  const errors = ctx.logs.filter((l) => /^\[(pageerror|error)\]/.test(l) && !l.includes('ws://localhost:8080'));
+  check('No page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+};
