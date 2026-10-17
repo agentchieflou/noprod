@@ -72,6 +72,13 @@ export const MELODIES: Melody[] = [
     id: 'row-your-boat', name: 'Row Row Row Your Boat', key: C_MAJOR,
     notes: `C4 C4 C4 D4 E4 E4 D4 E4 F4 G4
             C5 C5 C5 G4 G4 G4 E4 E4 E4 C4 C4 C4 G4 F4 E4 D4 C4`
+  },
+  {
+    id: 'jingle-bells', name: 'Jingle Bells', key: C_MAJOR,
+    notes: `E4 E4 E4 E4 E4 E4 E4 G4 C4 D4 E4
+            F4 F4 F4 F4 F4 E4 E4 E4 E4 E4 D4 D4 E4 D4 G4
+            E4 E4 E4 E4 E4 E4 E4 G4 C4 D4 E4
+            F4 F4 F4 F4 F4 E4 E4 E4 E4 G4 G4 F4 D4 C4`
   }
 ];
 
