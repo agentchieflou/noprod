@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useDAWStore, RETURN_LETTERS, MASTER_STRIP_ID } from '../store/useDAWStore';
 import { flattenDevices, MASTER_ID, masterLoudness } from '../audio/engine';
 import {
@@ -121,11 +121,11 @@ const Strip = ({ id, kind, item, index, tracks, returns, views, onOpenDevices }:
 
 // The master's loudness readout, in BS.1770-4: momentary and short-term
 // LUFS, integrated LUFS, and true peak
-const Loudness = ({ view }: { view: React.MutableRefObject<LoudnessView> }) => {
+const Loudness = ({ view }: { view: LoudnessView }) => {
   const cell = (key: keyof LoudnessView, label: string, unit: string) => (
     <div className="mx-lufs-cell" title={label}>
       <span className="mx-lufs-label">{label}</span>
-      <span className="mx-lufs-value" data-lufs={key} ref={(el) => { view.current[key] = el; }}>-∞</span>
+      <span className="mx-lufs-value" data-lufs={key} ref={(el) => { view[key] = el; }}>-∞</span>
       <span className="mx-lufs-unit">{unit}</span>
     </div>
   );
@@ -149,8 +149,9 @@ export default function Mixer({ onOpenDevices }: { onOpenDevices: () => void }) 
   const masterPlugins = useDAWStore((s) => s.masterPlugins);
   const masterVolume = useDAWStore((s) => s.masterVolume);
   const masterPan = useDAWStore((s) => s.masterPan);
-  const views = useRef<Views>(new Map()).current;
-  const loudness = useRef<LoudnessView>({ momentary: null, shortTerm: null, integrated: null, truePeak: null });
+  // Plain objects the strips hand their canvases to and the loop reads, kept out of React's data flow
+  const [views] = useState<Views>(() => new Map());
+  const [loudness] = useState<LoudnessView>(() => ({ momentary: null, shortTerm: null, integrated: null, truePeak: null }));
 
   useEffect(() => {
     let raf = 0;
@@ -159,12 +160,12 @@ export default function Mixer({ onOpenDevices }: { onOpenDevices: () => void }) 
       const dt = Math.min(0.5, (now - last) / 1000);
       last = now;
       views.forEach((v, id) => { if (v.canvas?.isConnected) drawMeter({ id, ...v } as MeterView, now / 1000, dt); else if (!v.canvas) views.delete(id); });
-      drawLoudness(loudness.current);
+      drawLoudness(loudness);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [views]);
+  }, [views, loudness]);
 
   const open = (stripId: string) => { useDAWStore.getState().setSelectedTrackId(stripId); onOpenDevices(); };
   const master = { id: MASTER_ID, name: 'Master', color: '#e5e7eb', plugins: masterPlugins, volume: masterVolume, pan: masterPan };
