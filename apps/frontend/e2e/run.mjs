@@ -13,7 +13,7 @@
 // Puppeteer's own download.
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,10 +27,14 @@ const frontend = resolve(here, '..');
 const root = resolve(here, '../../..');
 const require = createRequire(import.meta.url);
 
-const ORDER = ['library', 'designer', 'resynth', 'modeled', 'dspmap', 'live-models', 'coach', 'accompany', 'dictation', 'pianoroll', 'chord-lane'];
+// Every suite runs: these first, in this order, then the rest by name. A new
+// suite needn't be listed.
+const ORDER = ['library', 'designer', 'resynth', 'modeled', 'dspmap', 'live-models', 'coach', 'accompany', 'dictation', 'pianoroll'];
+const found = readdirSync(join(here, 'suites')).filter((f) => f.endsWith('.cjs')).map((f) => f.slice(0, -4)).sort();
+const all = [...ORDER.filter((s) => found.includes(s)), ...found.filter((s) => !ORDER.includes(s))];
 const asked = process.argv.slice(2);
 const skip = (process.env.E2E_SKIP ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-const suites = (asked.length ? asked : ORDER).filter((s) => !skip.includes(s));
+const suites = (asked.length ? asked : all).filter((s) => !skip.includes(s));
 for (const s of suites) if (!existsSync(join(here, 'suites', `${s}.cjs`))) throw new Error(`no suite ${s}`);
 
 const executablePath = process.env.CHROME_PATH || (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined);
