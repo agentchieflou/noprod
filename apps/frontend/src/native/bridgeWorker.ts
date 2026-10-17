@@ -163,5 +163,3 @@ ctx.onmessage = (e: MessageEvent) => {
     streams.delete(s.id);
   }
 };
-
-export {};
