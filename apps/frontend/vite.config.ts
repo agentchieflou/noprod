@@ -27,6 +27,9 @@ export default defineConfig({
   build: {
     // Worklets load as files, so a CSP never needs to allow data: scripts
     assetsInlineLimit: 0,
+    // The README's support policy (the last two versions of each) sits well
+    // above this floor, which is where syntax stops being transformed
+    target: ['chrome111', 'edge111', 'firefox115', 'safari16.4'],
     // Separate files without a reference in the bundle: they aren't served
     // unless a host adds them (CI keeps them as an artifact)
     sourcemap: 'hidden',

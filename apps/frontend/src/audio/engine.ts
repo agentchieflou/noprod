@@ -398,3 +398,8 @@ export const onAudioStateChange = (fn: () => void) => {
   audioContext.addEventListener('statechange', fn);
   return () => audioContext.removeEventListener('statechange', fn);
 };
+
+// iOS Safari 'interrupts' the context (a call, the screen locking) and only
+// a user gesture starts it again
+['pointerdown', 'keydown', 'touchend'].forEach((type) =>
+  window.addEventListener(type, () => { if (audioContext.state !== 'running') audioContext.resume().catch(() => {}); }, { capture: true, passive: true }));

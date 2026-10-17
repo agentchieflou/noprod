@@ -124,10 +124,16 @@ export interface MidiDevice { id: string; name: string }
 let midiDevices: MidiDevice[] = [];
 export const getMidiDevices = () => midiDevices;
 let midiAccess: any = null;
+// 'idle' until asked; 'unsupported' has no WebMIDI; 'denied' was refused
+// (Firefox asks for a site-permission add-on first)
+export type MidiStatus = 'idle' | 'ready' | 'denied' | 'unsupported';
+let midiStatus: MidiStatus = 'idle';
+export const getMidiStatus = () => midiStatus;
 
 export async function initMidi() {
   const req = (navigator as any).requestMIDIAccess;
-  if (!req || midiAccess) return;
+  if (!req) { if (midiStatus !== 'unsupported') { midiStatus = 'unsupported'; notifyInputs(); } return; }
+  if (midiAccess) return;
   try {
     midiAccess = await req.call(navigator);
     const attach = () => {
@@ -152,9 +158,12 @@ export async function initMidi() {
       });
       notifyInputs();
     };
+    midiStatus = 'ready';
     attach();
     midiAccess.onstatechange = attach;
   } catch (err: any) {
+    midiStatus = 'denied';
+    notifyInputs();
     const denied = err?.name === 'SecurityError' || err?.name === 'NotAllowedError';
     notify(denied
       ? 'MIDI access was denied, so hardware MIDI keyboards won’t work. Allow MIDI for this site in your browser’s site settings and reload.'

@@ -5,6 +5,7 @@
 // a take: the store puts it on a new take lane and comps it into the track.
 
 import { audioContext, getCompensationSeconds } from './engine';
+import { playbackLatencySeconds } from './latency';
 import { getAudioInputNode, openAudioInput, onMidiEvent, midiEventTargets, type MidiEvent } from './inputs';
 import { notify } from '../notify';
 import { getSegments, onSegmentScheduled, getCountInEnd, type SegmentInfo } from './transport';
@@ -145,7 +146,7 @@ async function stopRecording() {
   // What was heard happened earlier than it reached the recorder, and
   // latency compensation made what was heard later still
   const compensation = getCompensationSeconds();
-  const latency = (audioContext.outputLatency || 0) + (audioContext.baseLatency || 0) + compensation;
+  const latency = playbackLatencySeconds(audioContext) + compensation;
   let total = 0;
 
   for (const [trackId, cap] of r.captures) {
