@@ -17,3 +17,9 @@ export {
 export type { Limits, QueryFn, Transform, Patternable } from './pattern.ts';
 export { mini, parseMini, toPattern, tokenize, MINI_LIMITS } from './mini.ts';
 export type { MiniNode, MiniStep, MiniValue } from './mini.ts';
+export { parseProgram, tokenizeProgram, positionOf, PROGRAM_LIMITS } from './program.ts';
+export type { Expr, Statement, Program, Position } from './program.ts';
+export { evaluate, evaluateCycle, METHODS, CONTROL_NAMES, DEFAULT_CPS } from './evaluate.ts';
+export type { Evaluation, CycleEvent } from './evaluate.ts';
+export { noteToMidi, parseScale, scaleDegree, SCALE_NAMES, soundControls, addControls } from './controls.ts';
+export type { Controls, Scale } from './controls.ts';
