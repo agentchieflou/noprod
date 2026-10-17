@@ -1,3 +1,4 @@
+import { useMidiLearn } from './useMidiLearn';
 import { useDAWStore, createDefaultInstrument, createDrumKit } from '../store/useDAWStore';
 import { midiNoteName, DRUM_NAMES } from '../audio/synth';
 import { libraryOf } from '../audio/library';
@@ -13,6 +14,7 @@ const INSTRUMENTS = [
 // Library sounds and kits (from the Browser) show here too.
 export default function InstrumentCard({ track, onAudition, onEditSound }: { track: any; onAudition: (pitch: number) => void; onEditSound?: () => void }) {
   const { updateInstrumentParameter, setTrackInstrument } = useDAWStore();
+  const learn = useMidiLearn();
   const inst = track.instrument;
   const p = inst.parameters;
   const library = libraryOf(p);
@@ -30,7 +32,7 @@ export default function InstrumentCard({ track, onAudition, onEditSound }: { tra
     : Object.entries(DRUM_NAMES).map(([note, name]) => [Number(note), name]);
 
   const slider = (name: string, min: number, max: number, step: number, fmt = (v: number) => v.toFixed(2)) => (
-    <div key={name} className="param-slider-row">
+    <div key={name} {...learn({ kind: 'instrument', trackId: track.id, param: name }, 'param-slider-row')}>
       <span className="param-name">{name}</span>
       <input
         type="range" min={min} max={max} step={step}
