@@ -14,6 +14,7 @@ coach teaches as you play.
 | `apps/audio_core` | GhostDAW: C++/JUCE host for LPI and VST3 plugins on 8082 (see its README) |
 | `packages/sound` | `@noprod/sound`: sound recipes and their renderer, the library, physical models (`model.ts`), DSP chains (`chain.ts`), resynthesis. See its README |
 | `packages/theory` | `@noprod/theory`: keys, chords, voice leading, the Keyboard Coach. See its README |
+| `packages/pattern` | `@noprod/pattern`: the pattern engine behind AI dictation: cycles as exact fractions, events, the mini-notation and its functions (#133). See its README |
 | `packages/shared` | WebSocket message types |
 
 The plugins themselves (LPI ABI, the cuif UI framework, Reverb, EQ-8…) live
@@ -28,7 +29,7 @@ Frontend landmarks: `App.tsx` (layout, bottom-panel tabs), `audio/engine.ts`
 ## Commands
 
 ```sh
-npm test                                   # packages/sound and packages/theory
+npm test                                   # packages/sound, packages/theory and packages/pattern
 cd packages/sound && ../../node_modules/.bin/tsc -p .     # typecheck a package
 cd apps/frontend && npx tsc -b && npx oxlint src && npx vite build
 node scripts/check-licenses.mjs            # the dependency rule below, enforced in CI
