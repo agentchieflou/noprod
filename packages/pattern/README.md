@@ -91,11 +91,11 @@ limits and the query budget below.
 
 What every host of AI dictation shares, with no network code of its own:
 `dictationSystemPrompt({ drums, synths })` is the system prompt that teaches
-the model the language above (the orchestrator passes the names the sound
+the model the language above (dictation passes the names the sound
 library plays); `generateDictation(text, ask)` asks the model through the
 `ask` function the caller brings, checks the answer with `checkDictation`
 (parse and play one cycle, within `DICTATION_LIMITS`), and asks once more
-with the error when it doesn't parse. The orchestrator uses them today; a
+with the error when it doesn't parse. The browser's dictation uses them; a
 browser calling the model with the user's own key uses the same ones.
 
 ## Time and events

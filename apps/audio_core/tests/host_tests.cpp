@@ -1,7 +1,7 @@
 // Tests for the host (#134, step 2): the insert chain and its lock-free
 // publishing, the hap engine, the mixer's track and master buses, the
 // audio device on miniaudio's null backend, and the watchdog. Ported from
-// the JUCE host's tests; the plugin loaders' tests follow with the loaders.
+// the JUCE host's tests; the plugin loaders' tests are in plugin_tests.cpp.
 
 #include "Check.h"
 #include "host/AudioDevice.h"

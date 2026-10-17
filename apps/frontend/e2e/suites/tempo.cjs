@@ -47,7 +47,7 @@ module.exports = async (page, ctx) => {
   check('The flash clears', !(await page.$eval('.tap-btn', (el) => el.classList.contains('active'))));
   check('The field follows the tap tempo', (await bpmField()) === tapped.toFixed(2), await bpmField());
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

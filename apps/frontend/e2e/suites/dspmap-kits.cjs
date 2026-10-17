@@ -91,7 +91,7 @@ module.exports = async (page, ctx) => {
   }, tcol);
   check('A kit column plays its pad\'s sound', peak > 0.02, `peak ${peak.toFixed(3)}`);
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

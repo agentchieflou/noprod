@@ -1,5 +1,5 @@
-// AI dictation, played with library sounds (#68). The orchestrator returns
-// the code Gemini wrote; our own pattern engine (@noprod/pattern, #133)
+// AI dictation, played with library sounds (#68). The provider returns the
+// code it wrote (dictation/); our own pattern engine (@noprod/pattern, #133)
 // parses it here, no eval, and plays one cycle. Each of its parts (the
 // drums, each melodic sound) becomes a MIDI track playing a library kit or
 // sound, with a clip that loops that bar.

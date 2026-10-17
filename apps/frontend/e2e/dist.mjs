@@ -228,9 +228,9 @@ try {
   check('A request to another host is blocked by the policy', blocked.outcome === 'blocked' && blocked.violations.some((v) => v.startsWith('connect-src')), JSON.stringify(blocked));
   check('Nothing the app does breaks the policy', !blocked.violations.some((v) => !v.includes('example.com')), JSON.stringify(blocked.violations));
 
-  const unexpected = failedRequests.filter((r) => !r.includes('localhost:8080'));
+  const unexpected = failedRequests.filter((r) => !/localhost:808[235]/.test(r)); // GhostDAW's ports
   check('Every asset loads under the base path', unexpected.length === 0, unexpected.slice(0, 3).join(' | '));
-  const realErrors = errors.filter((e) => !e.includes('ws://localhost:8080') && !/ERR_CONNECTION_REFUSED|WebSocket/.test(e)
+  const realErrors = errors.filter((e) => !/ws:\/\/localhost:808[235]/.test(e) && !/ERR_CONNECTION_REFUSED|WebSocket/.test(e)
     && !e.includes('example.com')); // the probe above, blocked on purpose
   check('No page errors', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));
 } catch (e) {

@@ -116,7 +116,7 @@ module.exports = async (page, ctx) => {
   check('Pitch bend up full moves the pitch 200 cents (± 10)', Math.abs(moved - 200) <= 10, `${straight.toFixed(1)} Hz → ${bent.toFixed(1)} Hz: ${moved.toFixed(1)} cents`);
   await ctx.sleep(800);
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

@@ -5,7 +5,7 @@ import ParamControl from './ParamControl';
 import { getParamSpecs, resolvedParameters, type ParamValue } from '../audio/devices';
 import { audioContext } from '../audio/engine';
 import { getServices, subscribeServices } from '../native/services';
-import { approveNativePath } from '../native/consent';
+import { approveNativePlugin } from '../native/consent';
 import { getNativeDeviceState, isNativeDevice, openNativeDeviceEditor, subscribeNativeDevices, type NativeDeviceState } from '../native/trackBridge';
 
 interface DeviceCardProps {
@@ -123,7 +123,7 @@ function NativeStatus({ device, state }: { device: any; state: NativeDeviceState
   return (
     <div className={`device-note native-device-status ${tone}`} title={device.pluginPath}>
       {text}
-      {ghostdawOn && !state && <button className="browser-link" onClick={() => approveNativePath(device.pluginPath)}> Allow</button>}
+      {ghostdawOn && !state && <button className="browser-link" onClick={() => approveNativePlugin(device)}> Allow</button>}
     </div>
   );
 }

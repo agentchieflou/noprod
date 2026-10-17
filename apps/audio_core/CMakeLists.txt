@@ -9,14 +9,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(LPI_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lpi/include" CACHE PATH "Directory containing lpi/lpi.h")
 
 option(GHOSTDAW_BUILD_TESTS "Build the tests and their test plugins" OFF)
-option(GHOSTDAW_BUILD_TOOLS "Build development tools (the editor streaming latency spike)" OFF)
 
-# GhostDAW is being rebuilt without JUCE (#134). The JUCE host below keeps
-# building until the switch; -DGHOSTDAW_JUCE_HOST=OFF builds only the new
-# targets, with no submodule needed.
-option(GHOSTDAW_JUCE_HOST "Build the JUCE host (being replaced)" ON)
+# GhostDAW is built on its own code and permissively licensed sources alone
+# (CLAUDE.md, "Dependencies: we own what we ship"): no framework.
 
-# ------------------------------------------------------------ the new host
 # Our own platform layer: sockets and the WebSocket server, the message
 # loop, files, dynamic libraries, logging, JSON, pairing.
 add_library(ghostdaw_platform STATIC
@@ -91,43 +87,6 @@ add_executable(ghostdaw src/ghostdaw_main.cpp)
 target_link_libraries(ghostdaw PRIVATE ghostdaw_host)
 target_include_directories(ghostdaw PRIVATE "${LPI_INCLUDE_DIR}")
 ghostdaw_warnings(ghostdaw)
-
-# ----------------------------------------------------------- the JUCE host
-if(GHOSTDAW_JUCE_HOST)
-    add_subdirectory(JUCE)
-
-    juce_add_console_app(GhostDAW
-        PRODUCT_NAME "GhostDAW"
-        VERSION "1.0.0")
-    juce_generate_juce_header(GhostDAW)
-    target_sources(GhostDAW PRIVATE src/main.cpp)
-    target_include_directories(GhostDAW PRIVATE "${LPI_INCLUDE_DIR}")
-    target_compile_definitions(GhostDAW
-        PUBLIC
-            JUCE_WEB_BROWSER=0
-            JUCE_USE_CURL=0
-            JUCE_PLUGINHOST_VST3=1
-            JUCE_PLUGINHOST_AU=1 # If on mac
-    )
-    target_link_libraries(GhostDAW
-        PRIVATE
-            juce::juce_core
-            juce::juce_audio_basics
-            juce::juce_audio_devices
-            juce::juce_audio_formats
-            juce::juce_audio_processors
-            juce::juce_events
-    )
-
-    if(GHOSTDAW_BUILD_TOOLS)
-        juce_add_console_app(EditorStreamSpike PRODUCT_NAME "EditorStreamSpike")
-        juce_generate_juce_header(EditorStreamSpike)
-        target_sources(EditorStreamSpike PRIVATE tools/EditorStreamSpike.cpp)
-        target_include_directories(EditorStreamSpike PRIVATE src)
-        target_compile_definitions(EditorStreamSpike PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
-        target_link_libraries(EditorStreamSpike PRIVATE juce::juce_core juce::juce_events juce::juce_graphics juce::juce_gui_basics)
-    endif()
-endif()
 
 if(GHOSTDAW_BUILD_TESTS)
     add_subdirectory(tests)

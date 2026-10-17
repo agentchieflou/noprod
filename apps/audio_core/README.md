@@ -1,53 +1,54 @@
 # Audio Core (GhostDAW)
 
-Headless JUCE app that renders the Sequencer's haps, **one track per Strudel
-orbit**, through per-track and master insert chains of hosted plugins: VST3
-(all platforms), AudioUnit (macOS) and LPI, the Loudio Plugin Interface from
-[v-loudio-t](https://github.com/agentchieflou/v-loudio-t). A pattern picks its
-track with `.orbit(n)` (orbit 1 is Strudel's default). GhostDAW listens on
-`ws://localhost:8082` for the Orchestrator, which relays the frontend's plugin
-commands and sends the replies back.
+A native host, in C++ on its own platform layer (no framework), that
+renders haps **one track per orbit** through per-track and master insert
+chains of hosted plugins: VST3 (all platforms), AudioUnit (macOS) and LPI,
+the Loudio Plugin Interface from
+[v-loudio-t](https://github.com/agentchieflou/v-loudio-t). A pattern picks
+its track with `.orbit(n)` (orbit 1 is the default). GhostDAW listens on
+`ws://localhost:8082` for the web app, which pairs with it once (see
+"Secure by design" below) and sends it plugin commands; a program of the
+user's own connects the same way, with the token from GhostDAW's data
+folder, to send haps.
 
 It also hosts plugins for the **browser's own tracks**: a track device with a
-plugin path streams the track's audio to `ws://localhost:8083` in 256-frame
-blocks, GhostDAW runs it through that device's plugin and sends it straight
+plug-in streams the track's audio to GhostDAW's stream server (the port its
+state announces, 8083 by default) in 256-frame blocks, GhostDAW runs it through that device's plugin and sends it straight
 back, and the browser plays it a fixed ~40 ms later (delaying the other
 tracks, the metronome and recordings to match). Each block carries the
 transport at its first frame (tempo, position in quarter notes, playing,
 looping), so tempo-synced plugins follow the song: LPI plugins through
 `lpi.transport.v1`, VST3s through their play head. Inserts on the Audio
 Core's own buses get no transport yet; tempo-synced plugins there run free.
-See `src/TrackStreams.h` and `apps/frontend/src/native/trackBridge.ts`.
+See `src/host/TrackStreams.h` and `apps/frontend/src/native/trackBridge.ts`.
 
 **Plugin editors** are shown in the browser: an LPI plugin with the
 `lpi.gui.offscreen.v1` extension renders its editor off-screen in GhostDAW,
-which streams the frames from `ws://localhost:8085` and takes mouse input
-back. See [Plugin editors](#plugin-editors) below.
+which streams the frames from its editor server (8085 by default) and takes
+mouse input back. See [Plugin editors](#plugin-editors) below.
 
-Plugin commands load code from disk, so the WebSocket servers (GhostDAW,
-Orchestrator, Sequencer) refuse browser connections from other sites: only
+Plugin commands load code from disk, so the WebSocket servers (GhostDAW and
+the Orchestrator) refuse browser connections from other sites: only
 clients without an `Origin` header and pages served from `localhost`,
 `127.0.0.1` or `[::1]` get in. Add more origins with
 `NOPROD_ALLOWED_ORIGINS=https://example.com,...`.
 
-## The rebuild without JUCE (#134)
+## Layout
 
-GhostDAW is being rebuilt on its own platform layer, with no JUCE (AGPL or
-paid) in what we ship: see CLAUDE.md, "Dependencies: we own what we ship".
-The new host lives beside the old one until the switch:
+GhostDAW is built on its own platform layer, with no JUCE (paid) in what we
+ship (#134; see CLAUDE.md, "Dependencies: we own what we ship"):
 
 | Path | What |
 | --- | --- |
 | `src/platform/` | Sockets (loopback only) and the WebSocket server, the message loop and timers, files, dynamic libraries, logging, JSON, pairing, the single-instance lock and the crash handler |
-| `src/host/` | The host: `InsertChain` (RCU, as before), `Mixer`, `HapAudioEngine`, `AudioDevice`, the `Watchdog`, `LpiPlugin` (the LPI loader and insert), `Vst3Plugin` (VST 3 modules and inserts), `AuPlugin` (Audio Units, macOS), `PluginRegistry` (the scanned list, the skipped binaries, the settings), `PluginScanner` (a child process per binary), `PluginHost` (the commands, by id), `TrackStreams`, `editor/` (off-screen editors streamed to the browser) and `Control` (pairing and the control messages) |
+| `src/host/` | The host: `InsertChain` (RCU, as before), `Mixer`, `HapAudioEngine`, `AudioDevice`, the `Watchdog`, `LpiPlugin` (the LPI loader and insert), `Vst3Plugin` (VST 3 modules and inserts), `PluginRegistry` (the scanned list, the skipped binaries, the settings), `PluginScanner` (a child process per binary), `PluginHost` (the commands, by id), `TrackStreams`, `editor/` (off-screen editors streamed to the browser) and `Control` (pairing and the control messages) |
 | `third_party/miniaudio/` | Device I/O: [miniaudio](https://github.com/mackron/miniaudio), public domain or MIT-0 (see its README there). Chosen over writing WASAPI, CoreAudio and ALSA backends ourselves: one well-tested file, no dependencies, a null backend for machines without a sound card and for CI |
 | `third_party/vst3/` | The VST 3 SDK's `pluginterfaces` (MIT), the interfaces alone: what a plug-in's binary exports and the COM-style objects host and plug-in exchange. The SDK's helper classes (its hosting library, `base/`, `public.sdk/`) are not used; the host-side objects are ours, in `Vst3Plugin.cpp` |
-| `src/ghostdaw_main.cpp` | The new entry point, `ghostdaw` |
+| `src/ghostdaw_main.cpp` | The entry point, `ghostdaw` |
 | `tests/` | Its tests, `ghostdaw_tests`: the WebSocket server over real sockets (handshake, framing, masking, fragmentation, limits, the token), JSON, the loop, pairing, the chains and mixer under concurrent swaps, the device on the null backend, the watchdog, and the plugin tests ported from the JUCE host (LPI, VST 3, commands, streams, editors, keyboard, transport, latency), plus the scanner surviving a plugin that crashes or hangs. The VST 3 test plug-in (`tests/plugins/vst3_test_gain.cpp`) is written against the interfaces too, and built as a bundle in two variants: a component that is its own controller, and a separate controller class |
-| `src/*.h`, `src/main.cpp` | The JUCE host, `GhostDAW`, until the switch |
 
 ```sh
-cmake -S apps/audio_core -B build/audio_core -G Ninja -DCMAKE_BUILD_TYPE=Release -DGHOSTDAW_BUILD_TESTS=ON -DGHOSTDAW_JUCE_HOST=OFF
+cmake -S apps/audio_core -B build/audio_core -G Ninja -DCMAKE_BUILD_TYPE=Release -DGHOSTDAW_BUILD_TESTS=ON
 cmake --build build/audio_core
 build/audio_core/tests/ghostdaw_tests
 build/audio_core/ghostdaw --help
@@ -69,9 +70,9 @@ exporting a module entry function and `GetPluginFactory`. `Vst3Module`
 loads the binary for this platform, runs the entry function
 (`ModuleEntry`, `bundleEntry` with the `CFBundle`, `InitDll`) and lists
 the factory's audio effect classes. A class's `pluginId` is the 32-digit
-hex of its class UID (the JUCE host used its own identifier string, so
-VST 3 devices in projects saved before the switch are matched again by
-name). `Vst3Insert` creates the component (and its separate controller,
+hex of its class UID (the old host used its own identifier string; a VST 3
+device saved before the switch carries a path, which the web app matches to
+an id through the scanned list). `Vst3Insert` creates the component (and its separate controller,
 when it names one, connected through `IConnectionPoint` with the
 component's state copied over), takes stereo on the main buses and
 activates the rest as the plug-in declares them, and processes 32-bit
@@ -85,26 +86,6 @@ back (`outputParameterChanges`) and what the plug-in edits itself
 (`performEdit`, `restartComponent`) go the other way, to the controller
 and the browser, on the control thread. The component's state
 (`getState`/`setState`) is what a preset holds.
-
-### Audio Units (macOS)
-
-`AuInsert` hosts the effect units (`aufx`, `aumf`) the system's component
-registry lists, through AudioToolbox's C API: an instance is set to
-stereo 32-bit float on its input and output, pulls its input from our
-render callback, renders into the chain's buffers, and gets the transport
-through the host callbacks (`beatAndTempo`, `musicalTimeLocation`,
-`transportState`). A unit's `pluginId` is `au:<type>:<subtype>:
-<manufacturer>`, its three four-character codes. Parameters are the
-unit's, normalized over their ranges, with the unit's strings where it
-has them (`ParameterStringFromValue`, indexed value strings) and its unit
-names otherwise; a change reaches the unit at once. State is the unit's
-`ClassInfo` as a binary property list. The scan worker lists the units
-(`ghostdaw --scan-au`; the listing runs no plug-in code, so there is no
-dead man's pedal for it), fresh at every scan. Units that only
-instantiate asynchronously (out-of-process version 3 extensions) are left
-out for now. The tests register their own unit in-process
-(`tests/plugins/au_test_gain.cpp`, written against the component API) and
-also run Apple's AUDelay.
 
 ### Reliable
 
@@ -133,16 +114,19 @@ also run Apple's AUDelay.
 - **Pairing.** GhostDAW keeps a 256-bit random token in `pairing-token`
   (owner-only), created on first launch. Every connection on 8082, 8083 and
   8085 presents it as `?token=<hex>` in its URL; a wrong or missing token
-  gets `403`. The web app gets the token by pairing: at each launch
+  gets `403` on the stream and editor servers, and on the control server
+  an unpaired connection that may only `PAIR`. The web app gets the token
+  by pairing: at each launch
   GhostDAW prints a pairing code (8 symbols, about 40 bits) to the console
   and the log; the web app's Audio Core panel asks for it, sends
   `PAIR { code }` on a tokenless control connection (the one thing such a
   connection may do), and gets `PAIRED { token }`, which it keeps in
   `localStorage`. Five wrong codes lock pairing until GhostDAW restarts.
   `ghostdaw --new-token`, or `ROTATE_PAIRING_TOKEN` from a paired client,
-  rotates the token; every other browser must pair again. The Orchestrator,
-  which runs as the same user, reads the token file. The token covers what
-  `Origin` cannot: other local pages and non-browser clients.
+  rotates the token; every other browser must pair again. A program of the
+  user's own (one that runs as the same user) reads the token file instead
+  of pairing. The token covers what `Origin` cannot: other local pages and
+  non-browser clients.
 - **Per-connection limits.** A connection cap per server (16 control, 64
   stream, 8 editor connections) and a shorter one on connections still in
   their handshake (8), so idle sockets can't fill the cap: each holds a
@@ -172,52 +156,51 @@ also run Apple's AUDelay.
 ## Build
 
 ```sh
-git submodule update --init apps/audio_core/JUCE
-cmake -S apps/audio_core -B build/audio_core -DCMAKE_BUILD_TYPE=Release
+cmake -S apps/audio_core -B build/audio_core -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/audio_core
+build/audio_core/ghostdaw
 ```
 
-On Linux, JUCE needs the ALSA, X11 and FreeType headers
-(`libasound2-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libfreetype-dev libfontconfig1-dev`).
+Nothing to install beyond a C++17 compiler, CMake and Ninja: the platform
+layer is the standard library and each OS's own APIs, device I/O is the
+vendored miniaudio, and the VST 3 interfaces are vendored too (`third_party/`).
 
-Options:
-- `--plugin-cache <file>` keeps the scanned plugin list somewhere other than
-  the user app-data folder (`NoProd/GhostDAW/known-plugins.xml`).
-- `--no-scan` skips the startup scan of the default VST3 folders.
+`ghostdaw --help` lists the options: `--port`, `--stream-port` and
+`--editor-port`; `--data-dir DIR` (the token, settings, plugin list, bus
+state and log; the user's app-data folder by default); `--new-token`;
+`--null-audio` (no sound card); `--no-scan`; `--add-scan-folder DIR` (a
+folder to scan, kept in `settings.json`); `--verbose`.
 
 ## Tests
 
 ```sh
-cmake -S apps/audio_core -B build/audio_core -DGHOSTDAW_BUILD_TESTS=ON
+cmake -S apps/audio_core -B build/audio_core -G Ninja -DGHOSTDAW_BUILD_TESTS=ON
 cmake --build build/audio_core
-build/audio_core/tests/GhostDAWTests_artefacts/Release/GhostDAWTests
+build/audio_core/tests/ghostdaw_tests
 ```
 
 The tests build their own plugins: an LPI gain in good, wrong-ABI and
 no-export variants, an LPI gain with an off-screen editor (plus variants
-with latency, and without `lpi.params.changes.v1`), and a JUCE VST3 gain. They cover:
-- loading, processing and parameter changes;
-- scanning and the command protocol;
-- thousands of chain swaps while an audio thread runs;
+with latency, without `lpi.params.changes.v1`, and taking the transport),
+two binaries that crash or hang when loaded, a VST 3 gain in two variants
+(a component that is its own controller, and a separate controller class)
+and, on macOS, an Audio Unit registered in the test process. They cover:
+- the WebSocket server over real sockets: handshake, origin policy, framing,
+  masking, fragmentation, limits, the token and pairing;
+- loading, processing and parameter changes, for every format;
+- the command protocol, by id only, and the bus state across a restart;
+- thousands of chain swaps while an audio thread runs, and the watchdog;
+- the scanner surviving a binary that crashes or hangs, in its child process;
 - editors: their frames, mouse input and closing, and lpi.h's GUI threading
   rule;
 - the latency and parameter-change extensions, and polling for plugins
   without the latter.
 
-## How it fits together
-
-| File | Role |
-| --- | --- |
-| `src/LpiPlugin.h` | Loads an LPI binary (`lpi_get_factory`, ABI major check) and wraps an instance as an insert |
-| `src/JucePluginInsert.h` | Wraps a JUCE-hosted VST3/AU instance as an insert |
-| `src/InsertChain.h` | The chain the audio thread runs. Changes are published as immutable snapshots with one atomic pointer swap; old snapshots are freed once the audio thread has moved on, so the audio thread never locks |
-| `src/HapAudioEngine.h` | Renders haps into per-track buffers; haps reach the audio thread through a lock-free FIFO |
-| `src/Mixer.h` | Device callback: each track through its inserts, summed, then the master inserts |
-| `src/PluginHost.h` | Scanning, the persisted plugin list, and the JSON commands |
-| `src/TrackStreams.h` | The stream server's protocol: one plugin per browser track device, audio processed in place on the connection's thread |
-| `src/editor/EditorStream.h` | Streams an editor's frames to the browser (render, deflate, send; backpressure from the browser's acks) |
-| `src/editor/LpiEditor.h` | An LPI plugin's off-screen editor as a stream source; runs every GUI call on the message thread |
-| `third_party/lpi` | Vendored `lpi.h` (see its README) |
+The browser suite `audio-core` (`npm run e2e -- audio-core`) runs GhostDAW on
+the null audio device and drives it from the web app: pairing, the scan, a
+plug-in on the master bus and its parameters, unpairing. CI builds GhostDAW
+before the browser tests; without a build the suite is skipped unless asked
+for by name.
 
 Commands (types in `packages/shared/index.d.ts`): `GET_AUDIO_CORE_STATE`,
 `SCAN_PLUGINS`, `LOAD_PLUGIN` (with a `bus`: `"master"` or a track 0-15),
@@ -241,12 +224,12 @@ VST3/AU editors need a native window.
      `EDITOR_OPENED { editorId, port, width, height }`.
    - The **open editor** button on an insert (Audio Core panel) or a native
      device card sends it.
-2. **Stream.** The browser connects to `ws://localhost:8085` and sends
-   `START { editorId }`.
+2. **Stream.** The browser connects to the editor server (the `port` in
+   `EDITOR_OPENED`, with the pairing token) and sends `START { editorId }`.
    - Frames come back as deflated RGBA at 20 fps, plus one right after each
      input. A frame identical to the last one sent is skipped, so an idle
      editor costs nothing. Frame format and backpressure:
-     `src/editor/EditorStream.h`.
+     `src/host/editor/EditorStream.h`.
    - Mouse input goes the other way, and so do keys for plugins with
      `lpi.gui.keyboard.v1` (`keyboard` in EDITOR_OPENED). A click on the
      editor gives it keyboard focus. While it has focus, every key goes to
@@ -282,9 +265,8 @@ GhostDAW uses the message thread, which already runs every other plugin call
 except `process()`. The stream's render thread hands each frame and each
 mouse event over to it and waits for the pixels.
 
-The B6a latency spike (`tools/EditorStreamSpike.cpp`, built with
-`-DGHOSTDAW_BUILD_TOOLS=ON`) measured this design. Its results and
-recommendations are in
+The B6a latency spike (it went with the old host, #134) measured this
+design. Its results and recommendations are in
 [docs/editor-streaming-latency.md](docs/editor-streaming-latency.md).
 
 Not yet: VST3/AU editors, and delay compensation inside the Audio Core's own

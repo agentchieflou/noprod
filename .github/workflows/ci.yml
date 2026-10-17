@@ -94,6 +94,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # GhostDAW and its test plug-in, for the audio-core suite (it runs on the null audio device)
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - run: cmake -S apps/audio_core -B build/audio_core -G Ninja -DCMAKE_BUILD_TYPE=Release -DGHOSTDAW_BUILD_TESTS=ON
+      - run: cmake --build build/audio_core --target ghostdaw lpi_test_gain_good
       - run: npm run e2e
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

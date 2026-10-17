@@ -269,7 +269,7 @@ module.exports = async (page, ctx) => {
   const alerts = ctx.logs.filter((l) => l.startsWith('[dialog]') && l.trim() !== '[dialog]' && !/Discard unsaved changes/.test(l));
   check('Nothing used an alert', alerts.length === 0, alerts.join(' | '));
   await ctx.shot('storage');
-  const pageErrors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  const pageErrors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', pageErrors.length === 0, pageErrors.join(' / '));
 
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);

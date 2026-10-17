@@ -2409,6 +2409,8 @@ body {
 .btn-icon.native-on { color: var(--accent-green); }
 .native-params { display: flex; flex-direction: column; gap: 2px; max-height: 120px; overflow-y: auto; }
 .native-error { font-size: 11px; color: var(--accent-red); }
+.native-pairing { flex-wrap: wrap; }
+.native-pairing-code { width: 8.5em; font-family: monospace; letter-spacing: 0.1em; text-transform: uppercase; }
 
 /* Native plug-in devices hosted by the Audio Core */
 .native-device-status { font-style: normal; color: var(--accent-green); }

@@ -6,7 +6,7 @@ module.exports = async (page, ctx) => {
   const KEY = 'AIzaSyTESTKEY-0123456789abcdef';
   const HOST = 'generativelanguage.googleapis.com';
   await page.mouse.click(5, 5);
-  // No orchestrator in this suite: GhostDAW's relay stays off, and the spies
+  // GhostDAW stays off in this suite, and the spies
   // below see every request and socket the page makes from here on
   await page.evaluate(() => window.__services.set('ghostdaw', { enabled: false }));
   await ctx.sleep(1000);
@@ -285,7 +285,7 @@ module.exports = async (page, ctx) => {
   check('After forgetting, nothing more is requested', (await requests()).length === sent);
 
   await ctx.shot('dictation');
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

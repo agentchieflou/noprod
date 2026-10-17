@@ -14,7 +14,6 @@ import { createLibraryInstrument, soundAsBuffer, libraryStats } from './audio/li
 import { renderArrangement } from './audio/scheduler';
 import { startLibraryWarmup } from './audio/libraryWarmup';
 import { findAnySound, loadUserSounds } from './audio/userSounds';
-import './native/orchestrator'; // follows the GhostDAW setting
 import DictationBox from './components/DictationBox';
 import { hasKey, subscribeKey } from './dictation/key';
 import type { SoundRecipe } from '@noprod/sound';
@@ -24,6 +23,7 @@ import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio
 import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from './audio/coachLoader';
 import { getPluginEditor, subscribePluginEditor } from './native/pluginEditor';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
+import './native/audioCore'; // GhostDAW's own, paired connection (follows Services)
 import { getServices, subscribeServices, getServicesDialogOpen, subscribeServicesDialog, setServicesDialogOpen } from './native/services';
 import { watchNativeConsent } from './native/consent';
 import NativeConsentDialog from './components/NativeConsentDialog';

@@ -84,5 +84,6 @@ If a dependency is restricted, we rebuild what it does in this repo rather than
 ship it. Work from documentation, specifications and observed behavior. Do not
 read or copy the restricted project's source.
 
-Still to rebuild: JUCE (GhostDAW). Strudel (AGPL) was: dictation runs on
-`packages/pattern`, our own engine.
+Nothing is left to rebuild. Strudel (AGPL) was: dictation runs on
+`packages/pattern`, our own engine. JUCE (paid) was: GhostDAW is our own
+C++ host (#134).

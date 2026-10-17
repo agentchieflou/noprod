@@ -35,19 +35,33 @@ export interface SetVstParameterEvent {
   value: number; // 0.0 to 1.0 normalized value
 }
 
-// ---- Native plugin hosting (Audio Core insert chains; apps/audio_core/src/PluginHost.h)
-// Frontend -> Orchestrator -> Audio Core. Every command except the two
-// parameter ones and the editor ones is answered with AUDIO_CORE_STATE (or
-// AUDIO_CORE_ERROR).
+// ---- Native plugin hosting (Audio Core insert chains; apps/audio_core/src/host/PluginHost.h)
+// Frontend -> Audio Core, on ws://localhost:8082/?token=<pairing token>.
+// Every command except the two parameter ones and the editor ones is
+// answered with AUDIO_CORE_STATE (or AUDIO_CORE_ERROR). A program of the
+// user's own connects the same way, with the token from GhostDAW's data
+// folder, to send haps.
 
-export type PluginFormat = 'VST3' | 'AudioUnit' | 'LPI';
+export type PluginFormat = 'VST3' | 'AU' | 'LPI';
+
+// Pairing (apps/audio_core/README.md, "Secure by design"): a connection
+// without a token may only send PAIR with the code GhostDAW printed at
+// launch; PAIRED brings the token every later connection presents. Five
+// wrong codes lock pairing until GhostDAW restarts.
+export interface PairCommand { type: 'PAIR'; code: string }
+export interface PairedEvent { type: 'PAIRED'; token: string; rotated?: boolean }
+export interface PairFailedEvent { type: 'PAIR_FAILED'; locked: boolean; attemptsLeft: number }
+// From a paired connection: a new token; every other client pairs again
+export interface RotatePairingTokenCommand { type: 'ROTATE_PAIRING_TOKEN' }
 
 // The master bus, or a track (0-15) -- one per Strudel orbit
 export type AudioCoreBus = 'master' | number;
 
 export interface GetAudioCoreStateCommand { type: 'GET_AUDIO_CORE_STATE' }
-export interface ScanPluginsCommand { type: 'SCAN_PLUGINS'; paths?: string[] }
-export interface LoadPluginCommand { type: 'LOAD_PLUGIN'; path: string; format?: PluginFormat; pluginId?: string; bus?: AudioCoreBus; index?: number }
+// Scans the platform's plug-in folders and GhostDAW's own scanFolders; folders a client sends are ignored
+export interface ScanPluginsCommand { type: 'SCAN_PLUGINS' }
+// Plug-ins load by their id from availablePlugins, never by path (a path is refused)
+export interface LoadPluginCommand { type: 'LOAD_PLUGIN'; pluginId: string; bus?: AudioCoreBus; index?: number }
 export interface RemovePluginCommand { type: 'REMOVE_PLUGIN'; slotId: string }
 export interface MovePluginCommand { type: 'MOVE_PLUGIN'; slotId: string; index: number }
 export interface SetPluginBypassCommand { type: 'SET_PLUGIN_BYPASS'; slotId: string; bypassed: boolean }
@@ -90,14 +104,18 @@ export interface EditorClosedEvent { type: 'EDITOR_CLOSED'; editorId?: string; s
 
 export interface AudioCoreStateEvent {
   type: 'AUDIO_CORE_STATE';
+  protocolVersion: number; // 2
   sampleRate: number;
   blockSize: number;
   device?: { name: string; running: boolean };
   outputPeak?: number; // post-master peak since the previous state report
   trackCount: number;
+  streamPort: number; // where browser tracks stream their audio (the stream server, below)
   buses: Array<{ bus: AudioCoreBus; inserts: NativeInsertSlot[] }>; // master first, then tracks with inserts
   availablePlugins: Array<{ name: string; vendor: string; format: PluginFormat; path: string; pluginId: string }>;
+  skippedPlugins: Array<{ path: string; reason: string }>; // binaries that crashed or hung while scanning
   scanFolders: string[];
+  scanning: boolean;
   streams?: Array<{ streamId: string; inserts: NativeInsertSlot[] }>; // browser-track plug-ins
 }
 
@@ -113,10 +131,7 @@ export interface PluginParameterChangedEvent {
 
 export interface AudioCoreErrorEvent { type: 'AUDIO_CORE_ERROR'; message: string; request: string }
 
-// Sent by the Orchestrator when its Audio Core connection opens or drops
-export interface AudioCoreStatusEvent { type: 'AUDIO_CORE_STATUS'; connected: boolean }
-
-// ---- Browser-track streams (ws://localhost:8083, apps/audio_core/src/TrackStreams.h)
+// ---- Browser-track streams (the stream port the state announces, apps/audio_core/src/host/TrackStreams.h)
 // One connection per track device hosting a plug-in. Binary messages are
 // audio: uint32 block, uint32 frames, uint32 channels, uint32 flags; when
 // flags bit 0 is set, a transport block (float64 tempo, float64 position in
@@ -144,6 +159,6 @@ export type AudioCoreCommand =
   | OpenEditorCommand | CloseEditorCommand;
 
 export type AudioCoreEvent = AudioCoreStateEvent | PluginParameterChangedEvent | EditorOpenedEvent | EditorClosedEvent
-  | AudioCoreErrorEvent | AudioCoreStatusEvent;
+  | AudioCoreErrorEvent | PairedEvent | PairFailedEvent;
 
 export type IpcMessage = HapEvent | AudioCoreCommand | AudioCoreEvent;

@@ -1,18 +1,13 @@
-// #139: local services are opt-in; native plug-ins in a project ask first
-const { spawn } = require('child_process');
-const { join } = require('path');
-
+// #139: local services are opt-in; native plug-ins in a project ask first.
+// (GhostDAW itself is not running here: its connection is tried, not made;
+// the audio-core suite pairs with a real one.)
 module.exports = async (page, ctx) => {
   const results = [];
   const check = (name, ok, detail = '') => { const line = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`; results.push(line); console.log(line); };
   await page.mouse.click(5, 5);
 
-  let orchestrator = null;
-  const startOrchestrator = async () => {
-    orchestrator = spawn(process.execPath, [join(__dirname, '..', 'fake-orchestrator.mjs')], { stdio: 'ignore' });
-    await ctx.sleep(1500);
-  };
-  const stopOrchestrator = async () => { orchestrator?.kill(); orchestrator = null; await ctx.sleep(500); };
+  // An address nothing listens on, so GhostDAW is away whatever else runs
+  const GHOSTDAW = 'ws://localhost:8089';
   const waitFor = async (fn, arg, ms = 20000) => {
     for (let t = 0; t < ms; t += 250) { if (await page.evaluate(fn, arg)) return true; await ctx.sleep(250); }
     return false;
@@ -25,8 +20,6 @@ module.exports = async (page, ctx) => {
   }));
 
   try {
-    await startOrchestrator();
-
     // Production builds start with nothing on
     const prod = await page.evaluate(() => window.__services.defaults(false));
     check('Production defaults: every service off', !prod.ghostdaw.enabled && Object.keys(prod).join() === 'ghostdaw');
@@ -55,14 +48,13 @@ module.exports = async (page, ctx) => {
     check('The Services dialog lists GhostDAW, off',
       await page.evaluate(() => [...document.querySelectorAll('.service-row')].map((r) => `${r.dataset.service}:${r.querySelector('[data-status]').dataset.status}`).join()) === 'ghostdaw:off');
 
-    // Turning GhostDAW on connects to the relay, and reconnects after it restarts
+    // Turning GhostDAW on connects to its address, and keeps trying while it is away
+    await page.evaluate((url) => window.__services.set('ghostdaw', { url }), GHOSTDAW);
     await page.evaluate(() => document.querySelector('[data-service=ghostdaw] input[type=checkbox]').click());
-    check('Turning GhostDAW on opens the relay connection', await waitFor(() => window.__sockets.includes('ws://localhost:8080')));
-    await stopOrchestrator();
-    await ctx.sleep(2500);
-    await startOrchestrator();
-    const again = await waitFor(() => window.__sockets.filter((s) => s === 'ws://localhost:8080').length > 1, null, 30000);
-    check('It reconnects when the relay returns', again);
+    check('Turning GhostDAW on opens a connection to its address', await waitFor((url) => window.__sockets.includes(url), GHOSTDAW));
+    check('It shows "trying" while GhostDAW is away', await waitFor(() => document.querySelector('[data-service=ghostdaw] [data-status]')?.dataset.status === 'trying', null, 5000));
+    const again = await waitFor((url) => window.__sockets.filter((s) => s === url).length > 1, GHOSTDAW, 30000);
+    check('It tries again after a failed connection', again);
     await page.evaluate(() => window.__services.set('ghostdaw', { enabled: false }));
     await ctx.sleep(500);
     const after = await page.evaluate(() => window.__sockets.length);
@@ -83,7 +75,8 @@ module.exports = async (page, ctx) => {
       return { error, status, enabled: window.__services.get().ghostdaw.enabled };
     });
     check('A WebSocket that throws on construction is a failed attempt, not an error', thrown.error === null && thrown.status === 'trying' && thrown.enabled, JSON.stringify(thrown));
-    check('It connects once the socket can be opened', await waitFor(() => window.__sockets.filter((s) => s === 'ws://localhost:8080').length > 2, null, 30000));
+    const before = await page.evaluate((url) => window.__sockets.filter((s) => s === url).length, GHOSTDAW);
+    check('It tries again once a socket can be opened', await waitFor(({ url, before }) => window.__sockets.filter((s) => s === url).length > before, { url: GHOSTDAW, before }, 30000));
 
     // GhostDAW on shows the native UI; a project's native device asks first
     await page.evaluate(() => window.__services.set('ghostdaw', { enabled: true }));
@@ -131,7 +124,7 @@ module.exports = async (page, ctx) => {
     });
     check('The editor port is checked: a number in range, from a connected GhostDAW', editors.rejected.every(Boolean) && editors.url === 'ws://localhost:5000', JSON.stringify(editors));
   } finally {
-    await stopOrchestrator();
+    await page.evaluate(() => window.__services.set('ghostdaw', { enabled: false }));
   }
 
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:'));
