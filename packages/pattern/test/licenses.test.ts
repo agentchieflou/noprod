@@ -22,7 +22,7 @@ test('no AGPL package is in the lockfile', () => {
 });
 
 test('nothing in the repo imports Strudel', () => {
-  for (const file of ['apps/orchestrator/index.js', 'apps/orchestrator/package.json', 'apps/frontend/package.json', 'apps/frontend/e2e/run.mjs', 'apps/frontend/e2e/fake-orchestrator.mjs', 'package.json']) {
+  for (const file of ['apps/frontend/package.json', 'apps/frontend/e2e/run.mjs', 'package.json']) {
     const text = readFileSync(new URL(`../../../${file}`, import.meta.url), 'utf8');
     assert.ok(!/@strudel|superdough|unpkg\.com/.test(text), `${file} mentions Strudel`);
   }

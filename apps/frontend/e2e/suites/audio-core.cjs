@@ -117,7 +117,7 @@ module.exports = async (page, ctx) => {
   const folders = await probe(`${control}/?token=${token}`, null, { type: 'SCAN_PLUGINS', paths: ['/tmp'] });
   check('SCAN_PLUGINS ignores the folders a client names', folders.opened && folders.replies[0]?.type === 'AUDIO_CORE_STATE' && !folders.replies[0].scanFolders.includes('/tmp'), JSON.stringify(folders.replies[0]?.scanFolders));
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

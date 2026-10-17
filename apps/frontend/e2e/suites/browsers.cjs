@@ -144,7 +144,7 @@ module.exports = async (page, ctx) => {
   check('A plain-JSON v1 file still loads', file.v1Tracks === file.want, JSON.stringify(file));
 
   check('Nothing used an alert', dialogs.length === 0, dialogs.join(' | '));
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(results.join('\n'));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);

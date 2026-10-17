@@ -94,7 +94,7 @@ const SOUNDS: [RegExp, string][] = [
   [/lead|synth/, 'lead-saw']
 ];
 
-// The names AI dictation is told about (apps/orchestrator's prompt lists these)
+// The names AI dictation is told about (its prompt lists these)
 export const STRUDEL_SYNTHS = [
   'sawtooth', 'square', 'triangle', 'sine', 'supersaw', 'piano', 'epiano', 'organ', 'clav', 'harpsichord',
   'bass', 'sub', 'acid', 'reese', 'strings', 'violin', 'viola', 'cello', 'contrabass', 'pizzicato', 'brass', 'trumpet',

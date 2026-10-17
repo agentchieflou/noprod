@@ -7,8 +7,8 @@
 //   E2E_THROTTLE=4 npm run e2e        Chromium's CPU slowed 4x, like a busy CI runner
 //
 // A suite (suites/<name>.cjs) exports `async (page, ctx) => {}` and prints a
-// line per check, starting PASS or FAIL. The dictation suite also runs a
-// stand-in orchestrator (no network needed); the audio-core suite runs
+// line per check, starting PASS or FAIL. Dictation stubs the provider's
+// fetch, so no suite needs a network or a key. The audio-core suite runs
 // GhostDAW (GHOSTDAW_EXE, else build/audio_core/ghostdaw built with
 // -DGHOSTDAW_BUILD_TESTS=ON for its test plug-in; without a build the suite
 // is skipped unless asked for by name).
@@ -73,17 +73,6 @@ const throttle = Number(process.env.E2E_THROTTLE ?? 1);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// The dictation suite's service: the stand-in orchestrator
-async function startDictationServices() {
-  const orchestrator = spawn(process.execPath, [join(here, 'fake-orchestrator.mjs')], { stdio: ['ignore', 'pipe', 'pipe'] });
-  const ready = await new Promise((done) => {
-    const timer = setTimeout(() => done(false), 15000);
-    orchestrator.stdout.on('data', (d) => { if (/fake orchestrator on/.test(d.toString())) { clearTimeout(timer); done(true); } });
-    orchestrator.on('exit', () => { clearTimeout(timer); done(false); });
-  });
-  return { ready, stop: () => orchestrator.kill() };
-}
-
 // The audio-core suite's service: GhostDAW on the null audio device, in a
 // data folder of its own with the LPI test gain's folder registered. Its
 // pairing code is read from what it prints at launch.
@@ -114,7 +103,7 @@ async function startGhostdaw() {
 const results = [];
 for (const name of suites) {
   console.log(`\n── ${name}`);
-  const services = name === 'dictation' ? await startDictationServices() : name === 'audio-core' ? await startGhostdaw() : null;
+  const services = name === 'audio-core' ? await startGhostdaw() : null;
   const browser = await puppeteer.launch({
     executablePath,
     headless: true,
@@ -137,7 +126,6 @@ for (const name of suites) {
     log(...args);
   };
   try {
-    if (services && !services.ready) throw new Error('the stand-in orchestrator did not start');
     await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
     const suite = require(join(here, 'suites', `${name}.cjs`));
     const ctx = { sleep, browser, url, logs, fixtures, shotDir, shot: (n) => page.screenshot({ path: join(shotDir, `${n}.png`) }), ghostdaw: services?.pairingCode ? { pairingCode: services.pairingCode } : null };
@@ -155,7 +143,6 @@ for (const name of suites) {
   }
   results.push({ name, passed: lines.length - failed.length, failed });
   await browser.close();
-  services?.stop();
 }
 
 await server.close();

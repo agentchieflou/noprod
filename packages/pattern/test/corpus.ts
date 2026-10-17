@@ -1,4 +1,4 @@
-// Realistic dictation programs, in the style of the orchestrator's prompt:
+// Realistic dictation programs, in the style of dictation's prompt:
 // what Gemini writes for "a techno beat", "a sad piano melody", ... Each one
 // says what it should make: the tempo, the sounds, and how many notes each
 // plays in the first cycle. Also the seed of the program fuzz test.

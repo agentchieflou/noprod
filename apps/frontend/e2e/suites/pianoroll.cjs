@@ -43,7 +43,7 @@ module.exports = async (page, ctx) => {
   check('Delete leaves the first clip\'s notes alone', firstNotes.join() === 'n0,n1,n2', firstNotes.join(', '));
 
   await ctx.shot('pianoroll_second_clip');
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

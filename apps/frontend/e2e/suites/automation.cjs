@@ -142,7 +142,7 @@ module.exports = async (page, ctx) => {
   check('The clear button erases the lane\'s envelope', !cleared.automation.pan && cleared.automation.volume === undefined, JSON.stringify(Object.keys(cleared.automation || {})));
   await ctx.shot('automation');
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l)); // no orchestrator here
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l)); // no orchestrator here
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(results.join('\n'));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);

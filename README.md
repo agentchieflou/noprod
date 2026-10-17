@@ -17,17 +17,16 @@ You need Node 22.18 or newer.
 npm install
 
 npm run start:frontend      # the DAW, at http://localhost:5173
-npm run start:orchestrator  # WebSocket hub, on port 8080
 ```
 
-Run each command in its own terminal, then open http://localhost:5173.
+Open http://localhost:5173.
 
-- The frontend works on its own. The orchestrator gives dictation: it asks
-  Gemini for pattern code, checks it with our own pattern engine
-  (`packages/pattern`), and the DAW plays it in the browser.
-- The orchestrator needs a Gemini key for dictation. Copy
-  `apps/orchestrator/.env.example` to `apps/orchestrator/.env` and set
-  `GEMINI_API_KEY`.
+- The frontend works on its own.
+- Dictation is optional and needs no server. Paste your own Gemini API key in
+  the box at the top ("Add your API key to dictate"). The key stays in your
+  browser and goes only to Google's API; the usage is billed to your own
+  account. Gemini writes pattern code, our own pattern engine
+  (`packages/pattern`) checks it, and the DAW plays it.
 - GhostDAW (`ws://localhost:8082`) is optional. It hosts plugins. Build it
   from [apps/audio_core/README.md](apps/audio_core/README.md) (CMake, no
   submodules), then pair the web app with the code it prints.
@@ -57,7 +56,6 @@ Chromium, Firefox and WebKit in CI; the full suites run in Chromium.
 | Path | What it is |
 |---|---|
 | `apps/frontend` | The DAW: React, Vite and TypeScript |
-| `apps/orchestrator` | WebSocket hub on 8080: dictation (Gemini to pattern code, checked with `@noprod/pattern`) |
 | `apps/audio_core` | GhostDAW: a C++ host for VST3, AU and LPI plugins, on 8082, paired with the browser |
 | `packages/sound` | `@noprod/sound`: sound recipes, the renderer, the library and physical models |
 | `packages/theory` | `@noprod/theory`: keys, chords, voice leading and the Keyboard Coach |

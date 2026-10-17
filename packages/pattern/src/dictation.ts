@@ -1,8 +1,7 @@
 // AI dictation, the parts every host shares: the system prompt that teaches
 // the model our language, and the check-and-retry around its answer. The
-// orchestrator calls this today; a browser calling Gemini with the user's own
-// key (#157) will call the same thing. Nothing here talks to a network: the
-// caller brings the model as a function.
+// browser calls this with the user's own key (#157). Nothing here talks to a
+// network: the caller brings the model as a function.
 
 import { evaluateCycle } from './evaluate.ts';
 import { PatternError } from './errors.ts';

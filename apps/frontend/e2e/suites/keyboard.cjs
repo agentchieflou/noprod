@@ -163,7 +163,7 @@ module.exports = async (page, ctx) => {
   check('No notes while typing in a field, or with the keyboard off', typed.length === 0 && off.length === 0, `${typed.length} / ${off.length}`);
   await ctx.shot('keyboard');
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l)); // no orchestrator here
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l)); // no orchestrator here
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(results.join('\n'));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);

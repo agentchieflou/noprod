@@ -1,10 +1,9 @@
 import { useState, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
 import { getServices, subscribeServices, setService, isWebSocketUrl, setServicesDialogOpen, type ServiceName } from '../native/services';
-import { getOrchestratorStatus, subscribeOrchestrator, type ConnectionStatus } from '../native/orchestrator';
 import { getAudioCore, subscribeAudioCore } from '../native/audioCore';
 
-type RowStatus = ConnectionStatus | 'unpaired';
+type RowStatus = 'off' | 'trying' | 'connected' | 'unpaired';
 const STATUS_TEXT: Record<RowStatus, string> = { off: '○ off', trying: '◌ trying to connect…', connected: '● connected', unpaired: '○ not paired' };
 
 function ServiceRow({ name, title, blurb, addressLabel, status }: {
@@ -42,7 +41,6 @@ function ServiceRow({ name, title, blurb, addressLabel, status }: {
 // Local services are opt-in: nothing connects until it is turned on here
 export default function ServicesDialog() {
   const services = useSyncExternalStore(subscribeServices, getServices);
-  const orchestrator = useSyncExternalStore(subscribeOrchestrator, getOrchestratorStatus);
   const audioCore = useSyncExternalStore(subscribeAudioCore, getAudioCore);
   const ghostdaw: RowStatus = !services.ghostdaw.enabled ? 'off' : audioCore.connected ? 'connected' : audioCore.needsPairing ? 'unpaired' : 'trying';
 
@@ -56,10 +54,6 @@ export default function ServicesDialog() {
       <ServiceRow
         name="ghostdaw" title="GhostDAW" status={ghostdaw} addressLabel="GhostDAW address"
         blurb="A companion app that runs VST3, AU and LPI plug-ins for noprod. Pair this browser with it once, in the VST Folders Scan tab, with the code it prints at launch."
-      />
-      <ServiceRow
-        name="dictation" title="AI dictation" status={orchestrator === 'off' || !services.dictation.enabled ? 'off' : orchestrator} addressLabel="Orchestrator address"
-        blurb="Describe a beat or melody in words and get tracks. Needs the orchestrator and sequencer running."
       />
     </div>
   );

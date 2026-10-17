@@ -200,7 +200,7 @@ module.exports = async (page, ctx) => {
   const rafAgain = await rafPerSecond();
   check('The meter loop stops when the Mixer closes', rafOpen > rafClosed + 20 && rafAgain < rafOpen - 20, `closed ${rafClosed}, open ${rafOpen}, closed again ${rafAgain} frames/s`);
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808\d/.test(l));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };

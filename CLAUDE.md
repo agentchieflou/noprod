@@ -9,7 +9,6 @@ coach teaches as you play.
 | Path | What |
 |---|---|
 | `apps/frontend` | The DAW: React 19, Vite, TypeScript. Zustand store in `src/store/useDAWStore.js`; Web Audio engine in `src/audio/`; UI in `src/components/` |
-| `apps/orchestrator` | WebSocket hub on 8080: AI dictation (Gemini → pattern code, checked with `@noprod/pattern`) |
 | `apps/audio_core` | GhostDAW: C++ host for VST3, AU and LPI plugins on 8082, paired with the browser (see its README) |
 | `packages/sound` | `@noprod/sound`: sound recipes and their renderer, the library, physical models (`model.ts`), DSP chains (`chain.ts`), resynthesis. See its README |
 | `packages/theory` | `@noprod/theory`: keys, chords, voice leading, the Keyboard Coach. See its README |
@@ -25,7 +24,8 @@ Frontend landmarks: `App.tsx` (layout, bottom-panel tabs), `audio/engine.ts`
 (strips, master), `audio/library.ts` (library instruments, render workers),
 `audio/inputs.ts` (`onMidiEvent`: every note source), `audio/computerKeyboard.ts`,
 `audio/accompany.ts` (the coach's band), `audio/dictation.ts` (dictated code →
-tracks, through `@noprod/pattern`), `components/KeyboardPanel.tsx`,
+tracks, through `@noprod/pattern`), `dictation/` (the user's own key, the Gemini
+call with `fetch`, the box's state), `components/KeyboardPanel.tsx`,
 `SoundDesigner.tsx`, `DspMap.tsx`.
 
 ## Commands
@@ -81,8 +81,8 @@ envelopes, determinism (`packages/sound/src/analysis.ts`).
     start clean: each suite already gets a fresh browser. Several imports
     in one call early in a page's life can hang until Puppeteer reports
     "Promise was collected", which aborts the whole suite.
-  - End with a "No page errors" check that ignores `ws://localhost:808x`
-    (the Orchestrator and GhostDAW, which may be away).
+  - End with a "No page errors" check that ignores GhostDAW's connection
+    errors (`ws://localhost:808[235]`: it is usually not running).
   - Look at what you built: `ctx.shot('name')` writes
     `apps/frontend/e2e/.shots/name.png`.
 - A bug fix comes with a test that fails on the old code. Check this: put
