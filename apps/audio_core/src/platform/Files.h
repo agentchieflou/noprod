@@ -40,8 +40,9 @@ bool removeFile (const fs::path& path);
 // a huge folder can't stall forever. Sorted.
 std::vector<fs::path> listFiles (const fs::path& dir, const std::vector<std::string>& extensions, size_t limit = 10000);
 
-// Directories under `dir` (not recursive) whose name ends in `extension`,
-// e.g. ".vst3" bundles. Sorted.
+// Directories under `dir` (in subfolders too, but not inside another
+// bundle) whose name ends in `extension`, e.g. ".vst3" bundles. A symlink
+// to one counts; no other symlinked folder is followed. Sorted.
 std::vector<fs::path> listBundles (const fs::path& dir, const std::string& extension, size_t limit = 10000);
 
 
