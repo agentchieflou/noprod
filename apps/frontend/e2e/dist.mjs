@@ -119,6 +119,8 @@ try {
   await page.click('button[title="Play"]');
   await sleep(300);
   await page.click('button[title="Play"]');
+  // Firefox takes a moment to start the audio device
+  for (let i = 0; i < 40 && (await state()) !== 'running'; i++) await sleep(50);
   check('A click starts audio', (await state()) === 'running', String(await state()));
 
   // Add a library instrument from the Browser, turn on the computer keyboard
