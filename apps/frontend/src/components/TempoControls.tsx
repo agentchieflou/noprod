@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } fro
 import { useDAWStore } from '../store/useDAWStore';
 import { barAt } from '../audio/timeline';
 import { subscribePlayhead, getPlayhead } from './playhead';
+import { useMidiLearn } from './useMidiLearn';
 
 const TempoFollow = lazy(() => import('./TempoFollow'));
 
@@ -30,6 +31,7 @@ const VALID_DENOMINATORS = [1, 2, 4, 8, 16];
 export default function TempoControls() {
   const position = useSyncExternalStore(subscribePlayhead, getPlayhead);
   const { bpm, setBpm, timeSignatures, setTimeSignature, countInBars, setCountInBars } = useDAWStore();
+  const learn = useMidiLearn();
   const taps = useRef<number[]>([]);
   const [tapFlash, setTapFlash] = useState(false);
 
@@ -73,7 +75,7 @@ export default function TempoControls() {
   return (
     <div className="tempo-controls">
       <input
-        className="bpm-input"
+        {...learn({ kind: 'tempo' }, 'bpm-input')}
         value={bpmDraft}
         onChange={(e) => setBpmDraft(e.target.value)}
         onBlur={commitBpm}
