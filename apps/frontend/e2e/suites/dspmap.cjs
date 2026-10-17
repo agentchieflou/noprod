@@ -229,6 +229,8 @@ module.exports = async (page, ctx) => {
   await ctx.sleep(300);
   const pencilled = await page.evaluate(() => ({ tab: document.querySelector('.detail-tab.active')?.textContent, name: document.querySelector('.designer-name')?.value, selected: window.__dawStore.getState().selectedTrackId }));
   check('The pencil selects that track and opens the Sound Designer on its sound', pencilled.tab === 'Sound Designer' && pencilled.name === 'Violin' && pencilled.selected === violin, JSON.stringify(pencilled));
+  await page.evaluate(() => [...document.querySelectorAll('.detail-tab')].find((b) => b.textContent === 'DSP Map').click());
+  await ctx.sleep(300);
 
   await ctx.sleep(500);
   const el = await page.$('.bottom-detail-panel');
