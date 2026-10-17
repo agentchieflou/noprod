@@ -15,6 +15,8 @@ export type { WavBits, DecodedWav } from './wav.ts';
 export { zip, crc32 } from './zip.ts';
 export { resynthesize, spectralDistance } from './resynth.ts';
 export type { ResynthOptions } from './resynth.ts';
+export { stretch, Stretcher, STRETCH_MODES } from './stretch.ts';
+export type { StretchOptions, StretchMode } from './stretch.ts';
 export type { ZipEntry } from './zip.ts';
 export * as analysis from './analysis.ts';
 export {

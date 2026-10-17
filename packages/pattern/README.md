@@ -8,10 +8,9 @@ Why: every Strudel package is AGPL, and the old headless sequencer ran
 LLM-written code as JavaScript in a browser with its sandbox off (#133).
 
 ```ts
-import { fastcat, slowcat, pure } from '@noprod/pattern';
+import { mini } from '@noprod/pattern';
 
-// "bd <sd cp>" by hand (the mini-notation parser lands in the next step)
-const pat = fastcat('bd', slowcat('sd', 'cp'));
+const pat = mini('bd <sd cp>');
 pat.firstCycle().map(String);
 // ['0 → 1/2: "bd"', '1/2 → 1: "sd"']
 pat.queryArc(1, 2).map(String);
@@ -33,6 +32,43 @@ pat.queryArc(1, 2).map(String);
   where its whole does `hasOnset()`: that is where it is played. Signals
   (`saw`, `sine`, `rand`) have no whole: they are sampled at the middle of
   each query.
+
+## The mini-notation
+
+`mini(string)` parses the string language inside `note("…")` and `s("…")`
+with our own tokenizer and recursive-descent parser (`parseMini` gives the
+tree, `toPattern` interprets it with the combinators below). Wherever the
+engine wants a pattern, a string is read as mini-notation: `pat.struct("t ~
+t t")`, `pat.fast("<1 2>")`.
+
+| | |
+|---|---|
+| `a b c` | a sequence: the cycle shared equally |
+| `~` | a rest |
+| `[a b]` | a sub-sequence in one step |
+| `<a b>` | alternation: one step per cycle (`<a <b c>>` plays `a b a c`) |
+| `a*2`, `a/2` | faster, slower; the factor may be a pattern: `a*<2 3>`, `a*[2 3]` |
+| `a!3`, `a ! !` | the step repeated (the same step: `<a b>!2 c` is `a a c`, then `b b c`) |
+| `a@3`, `a _ _` | the step lengthened (in `<>`, lengthened in cycles) |
+| `a, b` | polyphony: both at once (`[c4,e4,g4]` is a chord) |
+| `a(3,8)`, `a(3,8,2)` | a Euclidean rhythm: 3 hits over 8 steps, turned 2 steps later; the arguments may be patterns |
+| `a:3` | a sample index, kept in the value (`"a:3"`) |
+| `a?`, `a?0.2` | dropped at random, half the time or with the probability given |
+| `a \| b` | one of them per cycle, at random |
+| `a . b c` | groups: `a` then `[b c]` |
+| `0 .. 3` | a range of whole numbers: `0 1 2 3` |
+| `{a b c, d e}%4` | polymeter: every layer steps at the same rate, 4 steps a cycle (the first layer's length by default) |
+
+Words are strings (`bd`, `c#3`, `gm_epiano1`, `RolandTR909`, `C:major`);
+numbers are numbers (`0`, `-1`, `0.5`); `t`, `f`, `1` and `0` make a rhythm
+for `struct` and `mask` (`f`, `false` and `0` are off). Randomness (`?`,
+`|`) is seeded by the operator's position in the string, so the same string
+always gives the same events, and each `?` is its own stream.
+
+A parse error is a `PatternError` with a message and a position
+(`"expected "]" but found the end at 1:5"`). Limits: a string of at most
+10 000 characters, brackets at most 32 deep, `!` and `..` at most 1024
+steps, Euclidean rhythms of at most 1024 steps.
 
 ## Combinators
 
@@ -59,8 +95,10 @@ Semantics worth knowing, matching the published language:
   the slot: `a b/2` plays `b` every other cycle.
 - `every(n, f)` applies `f` to cycles 0, n, 2n…; `lastOf` to n−1, 2n−1…
 - Euclidean rhythms are Bjorklund's: `(3,8)` is `x..x..x.`, `(5,8)` is
-  `x.xx.xx.`; the rotation moves the hits later by that many steps, and a
-  negative count of hits inverts hits and rests.
+  `x.xx.xx.`; the rotation moves the hits later by that many steps
+  (`(3,8,2)` is `x.x..x..`, steps 0, 2 and 5, as the published engine
+  plays it; Tidal's text describes the turn as leftward), and a negative
+  count of hits inverts hits and rests.
 - Randomness is a hash of the event's time and a seed, so the same pattern
   always gives the same events, and `degradeBy(p)` and `sometimesBy(p, f)`
   pick complementary shares (`f` is applied to the events `degradeBy`
@@ -77,10 +115,15 @@ sets them per query.
 ## Tests
 
 `npm test` here runs `test/*.test.ts` with Node's test runner: expected
-events written out by hand for every combinator, and properties checked over
-hundreds of generated patterns (a query over `[0, 2)` equals `[0, 1)` then
-`[1, 2)`; `fast(2)` equals the pattern with its time halved; the same input
-always gives the same events; every part lies inside its whole).
+events written out by hand for every combinator and every mini-notation
+operator; properties checked over hundreds of generated patterns (a query
+over `[0, 2)` equals `[0, 1)` then `[1, 2)`; `fast(2)` equals the pattern
+with its time halved; the same input always gives the same events; every
+part lies inside its whole); and a fuzz test of the parser: thousands of
+generated, mutated and random strings only ever give events or a
+`PatternError`, within the limits, always the same way. `test/observed.test.ts`
+pins a set of strings to the onsets the published engine was observed to
+give for them (Euclid rotation, nested alternation, `!`, `/`, polymeter).
 
 ## Clean-room
 
