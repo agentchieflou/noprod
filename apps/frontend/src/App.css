@@ -4,11 +4,15 @@
   --bg-track: #2a2a2a;
   --bg-device: #383838;
   --border-color: #404040;
-  --accent-blue: #3b82f6;
-  --accent-green: #10b981;
-  --accent-red: #ef4444;
+  /* Text and lines on the dark surfaces; the -fill ones sit behind light text */
+  --accent-blue: #76a8f9;
+  --accent-blue-fill: #0a5ce0;
+  --accent-green: #11c086;
+  --accent-red: #f58585;
+  --accent-red-fill: #c51111;
   --text-primary: #e5e7eb;
-  --text-secondary: #9ca3af;
+  --text-secondary: #a8aeb8;
+  --text-muted: #949494;
 }
 
 * {
@@ -117,8 +121,8 @@ body {
   font-size: 0.75rem;
 }
 .btn-metronome.active {
-  background-color: var(--accent-blue);
-  border-color: var(--accent-blue);
+  background-color: var(--accent-blue-fill);
+  border-color: var(--accent-blue-fill);
 }
 
 .control-bpm {
@@ -396,9 +400,9 @@ body {
   justify-content: center;
 }
 .btn-arm.armed {
-  background-color: var(--accent-red);
+  background-color: var(--accent-red-fill);
   color: white;
-  border-color: var(--accent-red);
+  border-color: var(--accent-red-fill);
 }
 .btn-mute.muted {
   background-color: #111;
@@ -1241,8 +1245,8 @@ body {
 }
 
 .btn-metronome.punch-active {
-  background-color: var(--accent-red);
-  border-color: var(--accent-red);
+  background-color: var(--accent-red-fill);
+  border-color: var(--accent-red-fill);
 }
 
 /* Spec-driven device parameters */
@@ -1689,7 +1693,8 @@ body {
   display: flex;
   justify-content: space-between;
 }
-.file-menu-list button:hover { background: var(--accent-blue); }
+.file-menu-list button:hover { background: var(--accent-blue-fill); }
+.file-menu-list button:hover kbd { color: var(--text-primary); }
 .file-menu-list kbd { font-size: 10px; color: var(--text-secondary); font-family: inherit; }
 .file-menu-list hr { border: none; border-top: 1px solid var(--border-color); margin: 4px 0; }
 
@@ -1934,7 +1939,7 @@ body {
   flex: 1;
 }
 
-.session-empty-stop { color: #555; }
+.session-empty-stop { color: var(--text-muted); }
 
 .btn-stop-track {
   background: #262626;
@@ -1995,8 +2000,9 @@ body {
   cursor: pointer;
 }
 .monitor-switch button.active { background: #eab308; color: #111; }
-.btn-add-track.io-toggle { background-color: #374151; padding-left: 6px; padding-right: 6px; }
+.btn-add-track.io-toggle { background-color: #374151; color: var(--text-primary); padding-left: 6px; padding-right: 6px; }
 .btn-add-track.io-toggle.active { background-color: #eab308; color: #111; }
+.btn-add-track.btn-add-return { background-color: #7a8190; }
 
 /* With I/O shown, track lanes and headers grow together */
 .arrangement-view.show-io .arranger-track,
@@ -2118,7 +2124,7 @@ body {
   line-height: 1.2;
 }
 .browser-tree .btn-category { width: 100%; font-size: 12px; padding: 5px 6px; }
-.browser-count { margin-left: auto; font-size: 9px; color: #666; }
+.browser-count { margin-left: auto; font-size: 9px; color: var(--text-muted); }
 .browser-tree .browser-item {
   padding: 3px 4px;
   font-size: 11px;
@@ -2139,7 +2145,7 @@ body {
   cursor: pointer;
 }
 .browser-folder:hover { color: var(--text-primary); }
-.browser-empty { font-size: 10px; color: #666; padding: 3px 24px; font-style: italic; }
+.browser-empty { font-size: 10px; color: var(--text-muted); padding: 3px 24px; font-style: italic; }
 .browser-link {
   background: none;
   border: none;
@@ -2151,7 +2157,7 @@ body {
   align-items: center;
   gap: 2px;
 }
-.browser-remove-place { padding-left: 32px; color: #666; font-size: 9px; }
+.browser-remove-place { padding-left: 32px; color: var(--text-muted); font-size: 9px; }
 .browser-message {
   position: absolute;
   left: 8px;
@@ -2203,7 +2209,7 @@ body {
 .kb-value { font-family: monospace; min-width: 26px; text-align: center; }
 .kb-velocity { max-width: 140px; }
 .kb-check { display: flex; align-items: center; gap: 3px; }
-.kb-help { font-size: 9px; color: #777; }
+.kb-help { font-size: 9px; color: var(--text-muted); }
 
 .kb-keys { flex: 1; min-width: 0; display: flex; }
 .kb-piano { position: relative; flex: 1; height: 100%; }
@@ -2237,7 +2243,8 @@ body {
 .kb-white.lit { background: #34d399; }
 .kb-black.lit { background: #059669; }
 .kb-key-label { font-size: 10px; font-weight: bold; font-family: monospace; white-space: nowrap; }
-.kb-note-label { font-size: 8px; color: #888; }
+.kb-note-label { font-size: 8px; color: var(--text-muted); }
+.kb-white .kb-note-label { color: #555; }
 
 .kb-pads { flex: 1; display: flex; flex-direction: column; gap: 6px; justify-content: center; }
 .kb-pad-row { display: flex; gap: 6px; }
@@ -2262,10 +2269,10 @@ body {
 
 /* Keyboard Coach: its column beside the keys, and its marks on them */
 .kb-panel {
-  --coach-next: #60a5fa;
-  --coach-complement: #c084fc;
-  --coach-target: #fbbf24;
-  --coach-wrong: #ef4444;
+  --coach-next: #167cf8;
+  --coach-complement: #a34cfa;
+  --coach-target: #a57703;
+  --coach-wrong: #ed3131;
 }
 .kb-panel.coached { height: 164px; }
 .kb-coach {
@@ -2312,8 +2319,8 @@ body {
 .coach-message { font-size: 12px; line-height: 1.3; color: var(--text-secondary); }
 .coach-message b { color: var(--text-primary); }
 .coach-arrow { color: var(--coach-next); }
-.coach-muted { font-size: 10px; color: #777; }
-.coach-about { font-size: 10px; line-height: 1.3; color: #777; }
+.coach-muted { font-size: 10px; color: var(--text-muted); }
+.coach-about { font-size: 10px; line-height: 1.3; color: var(--text-muted); }
 .coach-link { background: none; border: none; padding: 0; color: var(--coach-next); font-size: 10px; cursor: pointer; text-decoration: underline; }
 .coach-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; }
 .coach-chip {
@@ -2799,7 +2806,7 @@ body {
 }
 
 .dsp-ab .designer-button.active {
-  background: var(--accent-blue);
+  background: var(--accent-blue-fill);
   color: #fff;
 }
 
@@ -3137,8 +3144,8 @@ body {
 .mx-buttons { display: flex; gap: 2px; min-height: 18px; }
 .mx-btn { flex: 1; background: #2a2a2a; border: none; color: var(--text-secondary); font-size: 0.65rem; cursor: pointer; padding: 1px 0; }
 .mx-btn.on.mx-mute { background: #eab308; color: #000; }
-.mx-btn.on.mx-solo { background: #3b82f6; color: #fff; }
-.mx-btn.on.mx-arm { background: #ef4444; color: #fff; }
+.mx-btn.on.mx-solo { background: var(--accent-blue-fill); color: #fff; }
+.mx-btn.on.mx-arm { background: var(--accent-red-fill); color: #fff; }
 .mx-out { font-size: 0.65rem; width: 100%; }
 .mx-static { color: var(--text-secondary); padding: 2px 0; }
 .mx-fader-meter { flex: 1; min-height: 110px; display: flex; gap: 4px; }
@@ -3196,6 +3203,7 @@ body {
 
 /* Services dialog, native plug-in consent */
 .services-dialog { width: 460px; }
+.midi-map-dialog a { color: var(--accent-blue); }
 .service-row { padding: 8px 0; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px; }
 .service-head { display: flex; align-items: center; gap: 8px; }
 .service-head .native-status { margin-left: auto; }
