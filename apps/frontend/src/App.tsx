@@ -25,6 +25,7 @@ import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from '
 import { getPluginEditor, subscribePluginEditor } from './native/pluginEditor';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
 import { getServices, subscribeServices, getServicesDialogOpen, subscribeServicesDialog, setServicesDialogOpen } from './native/services';
+import { getExportDialogOpen, subscribeExportDialog } from './components/exportDialog';
 import { watchNativeConsent } from './native/consent';
 import NativeConsentDialog from './components/NativeConsentDialog';
 import ArrangementRuler from './components/ArrangementRuler';
@@ -74,6 +75,7 @@ if (import.meta.env.DEV) {
     get accompany() { return accompanyDebug(); } };
 }
 const ServicesDialog = lazy(() => import('./components/ServicesDialog'));
+const ExportDialog = lazy(() => import('./components/ExportDialog'));
 
 // A project that wants native plug-ins asks before GhostDAW loads them
 watchNativeConsent(useDAWStore);
@@ -197,6 +199,7 @@ function App() {
   // AI Dictation: the user's own key (dictation/key.ts), no server
   const services = useSyncExternalStore(subscribeServices, getServices);
   const servicesOpen = useSyncExternalStore(subscribeServicesDialog, getServicesDialogOpen);
+  const exportOpen = useSyncExternalStore(subscribeExportDialog, getExportDialogOpen);
   const dictationOn = useSyncExternalStore(subscribeKey, hasKey);
   const ghostdawOn = services.ghostdaw.enabled;
   // A tab for something that is off isn't there to stay on
@@ -596,6 +599,7 @@ function App() {
           Services
         </button>
         {servicesOpen && <Suspense fallback={null}><ServicesDialog /></Suspense>}
+        {exportOpen && <Suspense fallback={null}><ExportDialog /></Suspense>}
         <NativeConsentDialog />
 
         {/* View Switcher */}

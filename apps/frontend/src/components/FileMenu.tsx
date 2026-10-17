@@ -12,6 +12,7 @@ import { audioContext } from '../audio/engine';
 import { notify, guarded, errorMessage } from '../notify';
 import { setPosition } from '../audio/transport';
 import { getFileHandle, setFileHandle, forgetFileHandle } from './fileHandle';
+import { setExportDialogOpen } from './exportDialog';
 
 const EXT = '.noprod';
 // Autosave once edits pause for a moment, and at least this often while they don't
@@ -248,6 +249,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
           <button onClick={run(saveAs)}>{canSaveInPlace ? 'Save As…' : 'Save As… (download)'} <kbd>Ctrl+Shift+S</kbd></button>
           <hr />
           <button onClick={run(onImportAls)}>Import Ableton Set (.als)…</button>
+          <button className="file-menu-export" onClick={() => { setOpen(false); setExportDialogOpen(true); }}>Export Audio…</button>
           <hr />
           <button onClick={run(exportSounds)}>Export My Sounds…</button>
           <button onClick={() => { setOpen(false); soundsInputRef.current?.click(); }}>Import My Sounds…</button>
