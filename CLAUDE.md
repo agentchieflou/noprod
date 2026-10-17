@@ -72,6 +72,10 @@ envelopes, determinism (`packages/sound/src/analysis.ts`).
     audible.
   - In the page, import the repo's packages with
     `await import(window.__fs + '/packages/sound/src/index.ts')`.
+  - Import one module per `page.evaluate`, and don't reload the page to
+    start clean: each suite already gets a fresh browser. Several imports
+    in one call early in a page's life can hang until Puppeteer reports
+    "Promise was collected", which aborts the whole suite.
   - End with a "No page errors" check that ignores `ws://localhost:8080`.
   - Look at what you built: `ctx.shot('name')` writes
     `apps/frontend/e2e/.shots/name.png`.
@@ -91,6 +95,9 @@ envelopes, determinism (`packages/sound/src/analysis.ts`).
   evidence: test counts, suites run.
 
 ## Dependencies: we own what we ship
+
+noprod is open source under Apache-2.0 (`LICENSE`), so everything in it must
+be compatible with that.
 
 - Nothing restricted by its license goes into what we ship or run for users:
   the apps, the packages, GhostDAW and the plugins. That means copyleft

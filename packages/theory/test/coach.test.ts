@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Coach, LESSONS, findLesson, pc, spellInKey, voiceLead, type Highlight, type Key } from '../src/index.ts';
+import { Coach, LESSONS, findLesson, lessonFromNotes, pc, spellInKey, voiceLead, type Highlight, type Key } from '../src/index.ts';
 
 const C: Key = { tonic: 0, mode: 'major' };
 
@@ -181,4 +181,17 @@ test('off mode shows only the held notes', () => {
   assert.deepEqual(highlights, [{ pitch: 60, role: 'held', weight: 1, label: 'C' }]);
   assert.equal(readout.message, '');
   assert.equal(readout.lesson, null);
+});
+
+test('setLesson takes a Lesson object as well as an id', () => {
+  const lesson = lessonFromNotes([60, 64, 67].map(pitch => ({ pitch, start: 0, duration: 1 })), 'Clip');
+  const coach = new Coach({ mode: 'lesson', key: 'auto', range: [48, 84] });
+  coach.setLesson(lesson);
+  const { readout } = coach.suggest();
+  assert.equal(readout.lesson!.name, 'Clip');
+  assert.equal(readout.lesson!.label, 'C (I)');
+  coach.setLesson('pop-c');
+  assert.equal(coach.suggest().readout.lesson!.id, 'pop-c');
+  coach.setLesson(null);
+  assert.equal(coach.suggest().readout.lesson, null);
 });

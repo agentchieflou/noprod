@@ -1,13 +1,15 @@
 {
   "name": "@noprod/frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "e2e:dist": "node e2e/dist.mjs",
     "e2e": "node e2e/run.mjs",
     "test": "node --test test/*.test.ts"
   },

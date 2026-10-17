@@ -160,6 +160,6 @@ never takes a built-in sound's id.
 
 ## Saving outside Chromium
 
-Without the File System Access API (Firefox, Safari), Save is labelled "Save
-(download)". It downloads `<project name>.noprod` and says that each Save is a
-new download.
+Without the File System Access API (Firefox, Safari), Save and Save As are
+labelled "(download)". They download `<project name>.noprod` and say that each
+Save is a new download.

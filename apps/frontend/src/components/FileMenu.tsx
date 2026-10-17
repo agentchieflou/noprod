@@ -244,7 +244,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
           <button onClick={run(save)} title={canSaveInPlace ? undefined : 'This browser saves by downloading a new copy each time'}>
             {canSaveInPlace ? 'Save' : 'Save (download)'} <kbd>Ctrl+S</kbd>
           </button>
-          {canSaveInPlace && <button onClick={run(saveAs)}>Save As… <kbd>Ctrl+Shift+S</kbd></button>}
+          <button onClick={run(saveAs)}>{canSaveInPlace ? 'Save As…' : 'Save As… (download)'} <kbd>Ctrl+Shift+S</kbd></button>
           <hr />
           <button onClick={run(onImportAls)}>Import Ableton Set (.als)…</button>
           <hr />

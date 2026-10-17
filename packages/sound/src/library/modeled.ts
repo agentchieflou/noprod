@@ -63,6 +63,20 @@ const BRASS: SoundRecipe[] = [
     resonator: { kind: 'bore', end: 'flared', loss: 0.65 },
     radiators: [{ kind: 'bell', cutoff: 400, mix: 0.4 }, { kind: 'damping', a: 0.55 }],
     vibrato: vibrato(5, 5), env: { attack: 0.06, sustain: 1, release: 0.18 }
+  }]),
+  sound('tuba', 'Tuba', 'brass', ['tuba', 'brass', 'low', 'orchestral'], 36, 3, [{
+    type: 'model', exciter: { kind: 'lips', tension: 1 },
+    resonator: { kind: 'bore', end: 'flared', loss: 0.6 },
+    radiators: [{ kind: 'bell', cutoff: 300, mix: 0.35 }, { kind: 'damping', a: 0.5 }],
+    vibrato: vibrato(4, 4.8), env: { attack: 0.02, sustain: 1, release: 0.15 }
+  }]),
+  // a harmon mute: a nasal band, with the lows and highs taken out
+  sound('trumpet-muted', 'Muted Trumpet', 'brass', ['trumpet', 'brass', 'muted', 'harmon', 'solo'], 67, 3, [{
+    type: 'model', exciter: { kind: 'lips', tension: 1 },
+    resonator: { kind: 'bore', end: 'flared', loss: 0.4 },
+    radiators: [{ kind: 'bell', cutoff: 900, mix: 0.7 }],
+    filter: { type: 'bandpass', cutoff: 1800, q: 1.2 },
+    vibrato: vibrato(8, 5.5), env: { attack: 0.03, sustain: 1, release: 0.1 }
   }])
 ];
 
@@ -87,6 +101,18 @@ const WINDS: SoundRecipe[] = [
     resonator: { kind: 'bore', end: 'open', loss: 0.5 },
     radiators: [{ kind: 'tonehole', cutoff: 0.7, brightness: 0.6 }],
     vibrato: vibrato(4, 5), env: { attack: 0.03, sustain: 1, release: 0.08 }
+  }]),
+  sound('piccolo', 'Piccolo', 'winds', ['piccolo', 'woodwind', 'bright', 'solo'], 84, 3, [{
+    type: 'model', exciter: { kind: 'jet', ratio: 0.34, noise: 0.1 },
+    resonator: { kind: 'bore', end: 'open', loss: 0.4 },
+    radiators: [{ kind: 'tonehole', cutoff: 0.8, brightness: 0.6 }],
+    vibrato: vibrato(8, 5.5), env: { attack: 0.04, sustain: 1, release: 0.2 }
+  }]),
+  sound('bass-clarinet', 'Bass Clarinet', 'winds', ['bass clarinet', 'clarinet', 'reed', 'woodwind', 'low'], 48, 3, [{
+    type: 'model', exciter: { kind: 'reed', stiffness: 0.5, noise: 0.04 },
+    resonator: { kind: 'bore', end: 'open', loss: 0.5 },
+    radiators: [{ kind: 'tonehole', cutoff: 0.5, brightness: 0.5 }],
+    vibrato: vibrato(3, 4.8), env: { attack: 0.05, sustain: 1, release: 0.1 }
   }])
 ];
 
@@ -138,7 +164,42 @@ const PLUCKED: SoundRecipe[] = [
       resonator: { kind: 'string', decay: 3, brightness: 0.7, stiffness: 0.08 },
       radiators: [{ kind: 'body', preset: 'box', mix: 0.5 }], pan: 0.3, env: { sustain: 1, release: 0.5 }
     }
-  ])
+  ]),
+  // the dulcimer's courses, plucked with a pick
+  sound('mandolin', 'Mandolin', 'plucks', ['mandolin', 'string', 'plucked', 'folk', 'bright'], 67, 3, [
+    {
+      type: 'model', exciter: { kind: 'pluck', position: 0.12, hardness: 0.85 },
+      resonator: { kind: 'string', decay: 1.5, brightness: 0.7, stiffness: 0.02 },
+      radiators: [{ kind: 'body', preset: 'guitar', mix: 0.5 }], pan: -0.3, env: { sustain: 1, release: 0.2 }
+    },
+    {
+      type: 'model', exciter: { kind: 'pluck', position: 0.12, hardness: 0.85 }, ratio: 1.002,
+      resonator: { kind: 'string', decay: 1.5, brightness: 0.7, stiffness: 0.02 },
+      radiators: [{ kind: 'body', preset: 'guitar', mix: 0.5 }], pan: 0.3, env: { sustain: 1, release: 0.2 }
+    }
+  ]),
+  sound('ukulele', 'Ukulele', 'plucks', ['ukulele', 'uke', 'string', 'acoustic', 'small'], 67, 3, [{
+    type: 'model', exciter: { kind: 'pluck', position: 0.16, hardness: 0.35 },
+    resonator: { kind: 'string', decay: 1.5, brightness: 0.45 },
+    radiators: [{ kind: 'body', preset: 'box', mix: 0.6 }, { kind: 'helmholtz', hz: 220, q: 6, mix: 0.25 }],
+    env: { sustain: 1, release: 0.2 }
+  }]),
+  // the pizzicato violin's cousin, on a cello's body and range
+  sound('cello-pizzicato', 'Cello Pizzicato', 'plucks', ['cello', 'pizzicato', 'string', 'orchestral', 'short'], 48, 2, [{
+    type: 'model', exciter: { kind: 'pluck', position: 0.25, hardness: 0.25 },
+    resonator: { kind: 'string', decay: 0.9, brightness: 0.4 },
+    radiators: [{ kind: 'body', preset: 'cello', mix: 0.7 }],
+    filter: { type: 'highpass', cutoff: 70 },
+    env: { sustain: 1, release: 0.15 }
+  }]),
+  // a solid body has no wooden cavity to radiate: the damping takes the top
+  // off the string's sound as it rings, so the low end is what's left
+  sound('bass-electric-modeled', 'Electric Bass (Modeled)', 'bass', ['electric bass', 'bass', 'string', 'plucked', 'fingered'], 40, 4, [{
+    type: 'model', exciter: { kind: 'pluck', position: 0.25, hardness: 0.3 },
+    resonator: { kind: 'string', decay: 2.5, brightness: 0.45 },
+    radiators: [{ kind: 'damping', a: 0.9 }],
+    env: { sustain: 1, release: 0.2 }
+  }])
 ];
 
 // ------------------------------------------------- strings at a bridge (#108)
