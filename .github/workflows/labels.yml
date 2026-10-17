@@ -1,6 +1,7 @@
 name: Labels
 
-# The repo's labels, kept here: the work tiers (#90) and who built a PR
+# The repo's labels, kept here: the work tiers (#90), who built a PR, and
+# the production work
 on:
   push:
     branches: [main]
@@ -23,4 +24,7 @@ jobs:
           gh label create "tier:opus"       --force --color f59e0b --description "New DSP, real-time code, architecture or open design"
           gh label create "built-by:haiku"  --force --color e0f2fe --description "A PR built by Haiku 5.5"
           gh label create "built-by:sonnet" --force --color ede9fe --description "A PR built by Sonnet 5.5"
+          gh label create "tier:fable"      --force --color ec4899 --description "A subsystem built or rebuilt end to end: long-horizon, several PRs, its own design calls"
           gh label create "built-by:opus"   --force --color fef3c7 --description "A PR built by Opus 5.5"
+          gh label create "built-by:fable"  --force --color fce7f3 --description "A PR built by Fable 5.1"
+          gh label create "production"      --force --color 16a34a --description "Getting noprod ready for real users"
