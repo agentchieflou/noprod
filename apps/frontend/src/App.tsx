@@ -151,7 +151,7 @@ function App() {
     tracks, regions, isPlaying, isRecording, isMetronomeEnabled, viewMode,
     selectedTrackId, selectedRegionId, masterVolume, returns, masterPlugins, sessionClips, vstScanPaths, bpm,
     togglePlayback, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
-    addTrack, removeTrack, addRegion, updateTrackColor, toggleArmTrack,
+    addTrack, removeTrack, addRegion, removeRegion, updateTrackColor, toggleArmTrack,
     updateTrackVolume, updateTrackPan, updateTrackSend, toggleMuteTrack, toggleSoloTrack,
     setMasterVolume, addReturn, removeReturn, updateReturn, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
@@ -366,6 +366,13 @@ function App() {
         e.preventDefault();
         togglePlayback();
       }
+      // Delete / Backspace removes the selected arrangement clip (Ctrl+Z restores
+      // it). A note selected in the Clip View's piano roll takes the key first.
+      const isTyping = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable || !!target.closest?.('[data-keyboard-capture]');
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !isTyping && selectedRegionId && !selectedSessionClip) {
+        e.preventDefault();
+        removeRegion(selectedRegionId);
+      }
       // Undo/Redo: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y (skip while typing in text fields)
       if ((e.ctrlKey || e.metaKey) && !isInput) {
         const key = e.key.toLowerCase();
@@ -380,7 +387,7 @@ function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlayback, undo, redo]);
+  }, [togglePlayback, undo, redo, removeRegion, selectedRegionId, selectedSessionClip]);
 
   // Find selected track and region
   // The device chain view edits whichever strip is selected: a track or a return
@@ -1377,6 +1384,7 @@ function App() {
                   key={selectedRegion.id}
                   region={selectedRegion}
                   onChange={(patch: any) => updateClip(selectedRegion.id, patch)}
+                  onDelete={() => removeRegion(selectedRegion.id)}
                   trackColor={tracks.find((t: any) => t.id === selectedRegion.trackId)?.color || '#3b82f6'}
                   onAudition={(pitch: number) => auditionNote(tracks.find((t: any) => t.id === selectedRegion.trackId), pitch)}
                 />
