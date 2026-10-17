@@ -1,12 +1,23 @@
 name: Audio core
 
-# GhostDAW builds JUCE, so it only runs when the audio core changes
+# GhostDAW is being rebuilt without JUCE (#134). "Build and test" covers the
+# new host on every platform it ships on; "JUCE host" keeps the old one
+# green until the switch. Both run when the audio core, the shared protocol
+# types or the frontend's native bridge change.
 on:
   pull_request:
-    paths: ['apps/audio_core/**', '.github/workflows/audio-core.yml']
+    paths:
+      - 'apps/audio_core/**'
+      - 'packages/shared/**'
+      - 'apps/frontend/src/native/**'
+      - '.github/workflows/audio-core.yml'
   push:
     branches: [main]
-    paths: ['apps/audio_core/**', '.github/workflows/audio-core.yml']
+    paths:
+      - 'apps/audio_core/**'
+      - 'packages/shared/**'
+      - 'apps/frontend/src/native/**'
+      - '.github/workflows/audio-core.yml'
 
 concurrency:
   group: audio-core-${{ github.ref }}
@@ -14,7 +25,42 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: Build and test (Linux)
+    name: Build and test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: macOS
+            os: macos-latest
+          - name: Windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ninja
+        if: runner.os != 'Windows'
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ninja-build; else brew install ninja; fi
+      - name: Configure
+        if: runner.os != 'Windows'
+        run: cmake -S apps/audio_core -B build/audio_core -G Ninja -DCMAKE_BUILD_TYPE=Release -DGHOSTDAW_BUILD_TESTS=ON -DGHOSTDAW_JUCE_HOST=OFF
+      - name: Configure (MSVC)
+        if: runner.os == 'Windows'
+        run: cmake -S apps/audio_core -B build/audio_core -DGHOSTDAW_BUILD_TESTS=ON -DGHOSTDAW_JUCE_HOST=OFF
+      - name: Build
+        run: cmake --build build/audio_core --config Release
+      - name: Test
+        if: runner.os != 'Windows'
+        run: build/audio_core/tests/ghostdaw_tests
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: build\audio_core\tests\Release\ghostdaw_tests.exe
+
+  juce-host:
+    name: JUCE host (Linux, until the switch)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
