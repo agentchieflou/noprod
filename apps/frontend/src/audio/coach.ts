@@ -3,8 +3,13 @@
 // on-screen keys. It lights up the keys to play next and says why. The
 // mode, key and lesson are remembered between visits.
 
-import { Coach, LESSONS, findLesson, spellInKey, type CoachMode, type CoachReadout, type Highlight, type Key } from '@noprod/theory';
+import {
+  Coach, LESSONS, PROGRESSIONS, findLesson, parseNumeral, spellInKey, voiceLead,
+  type ChordQuality, type CoachMode, type CoachReadout, type Highlight, type Key
+} from '@noprod/theory';
 import { onMidiEvent } from './inputs';
+import { getPosition } from './transport';
+import { barAt, barsUntil, type TimeSig } from './timeline';
 import { subscribeKeyboard, getKeyboardState } from './computerKeyboard';
 
 export interface CoachState {
@@ -121,7 +126,75 @@ export const pretty = (text: string) => text
   .replace(/\bb(?=[IV])/g, '♭')
   .replace(/#(?=[IViv])/g, '♯');
 
-export function initCoach() {
+// ------------------------------------------------------- write to a clip
+
+export type ClipSource = { kind: 'played' } | { kind: 'progression'; name: string };
+export interface ClipChord { root: number; quality: ChordQuality }
+export interface ClipNote { id: string; pitch: number; start: number; duration: number; velocity: number }
+
+const CLIP_RANGE: [number, number] = [48, 72];   // C3–C5
+const CLIP_VELOCITY = 0.8;
+
+// The progressions that fit a key's mode
+export const progressionsFor = (key: Key) => PROGRESSIONS.filter((p) => p.mode === key.mode);
+
+// The chords a source stands for, in the coach's key
+export function sourceChords(source: ClipSource, key: Key): ClipChord[] {
+  if (source.kind === 'played') return coach.recentChords();
+  const progression = progressionsFor(key).find((p) => p.name === source.name);
+  return progression ? progression.numerals.map((n) => parseNumeral(n, key)) : [];
+}
+
+// One bar per chord from `start` (a bar line, seconds), each voiced close
+// to the one before; notes are held for the bar, with the root an octave
+// below the lowest note when `bass`. Times are relative to the clip.
+export function buildClipNotes(chords: ClipChord[], start: number, bpm: number, sigs: TimeSig[], bass = true) {
+  const bars = barsUntil(bpm, start + (chords.length + 1) * 16 * 60 / bpm, sigs);
+  const first = bars.findIndex((b) => Math.abs(b.time - start) < 1e-6);
+  const notes: ClipNote[] = [];
+  let voicing: number[] = [];
+  let duration = 0;
+  chords.forEach((chord, i) => {
+    const bar = bars[first + i];
+    voicing = voiceLead(voicing, chord.root, chord.quality, CLIP_RANGE);
+    // The root nearest an octave below the lowest note, never above that
+    const ceiling = voicing[0] - 12;
+    const pitches = bass ? [ceiling - (((ceiling - chord.root) % 12) + 12) % 12, ...voicing] : voicing;
+    pitches.forEach((pitch, j) => notes.push({
+      id: `chord-${i}-${j}`, pitch, start: bar.time - start, duration: bar.length, velocity: CLIP_VELOCITY
+    }));
+    duration = bar.time - start + bar.length;
+  });
+  return { notes, duration };
+}
+
+// Why the control can't write, or null when it can
+export function clipBlocker(source: ClipSource | null): string | null {
+  const state = store.getState();
+  const track = state.tracks?.find((t: any) => t.id === state.selectedTrackId);
+  if (!track || track.type !== 'midi') return 'Select a MIDI track to write to';
+  if (!source) return 'Pick a progression to write';
+  if (!sourceChords(source, coach.key()).length) return source.kind === 'played' ? 'Play some chords first' : 'Pick a progression to write';
+  return null;
+}
+
+// Writes the source's chords as a clip on the selected MIDI track, from
+// the bar under the playhead. One undo step.
+export function writeChordsToClip(source: ClipSource, bass = true): boolean {
+  if (clipBlocker(source)) return false;
+  const state = store.getState();
+  const chords = sourceChords(source, coach.key()).slice(source.kind === 'played' ? -8 : undefined);
+  const start = barAt(state.bpm, Math.max(0, getPosition()), state.timeSignatures).time;
+  const { notes, duration } = buildClipNotes(chords, start, state.bpm, state.timeSignatures, bass);
+  state.addMidiRegion(state.selectedTrackId, start, duration, notes);
+  return true;
+}
+
+interface Store { getState: () => any }
+let store: Store = { getState: () => ({}) };
+
+export function initCoach(s: Store) {
+  store = s;
   // Note-ons only count while the coach is showing; note-offs always, so
   // nothing is left held
   onMidiEvent((e) => {
