@@ -63,6 +63,20 @@ const BRASS: SoundRecipe[] = [
     resonator: { kind: 'bore', end: 'flared', loss: 0.65 },
     radiators: [{ kind: 'bell', cutoff: 400, mix: 0.4 }, { kind: 'damping', a: 0.55 }],
     vibrato: vibrato(5, 5), env: { attack: 0.06, sustain: 1, release: 0.18 }
+  }]),
+  sound('tuba', 'Tuba', 'brass', ['tuba', 'brass', 'low', 'orchestral'], 36, 3, [{
+    type: 'model', exciter: { kind: 'lips', tension: 1 },
+    resonator: { kind: 'bore', end: 'flared', loss: 0.6 },
+    radiators: [{ kind: 'bell', cutoff: 300, mix: 0.35 }, { kind: 'damping', a: 0.5 }],
+    vibrato: vibrato(4, 4.8), env: { attack: 0.08, sustain: 1, release: 0.15 }
+  }]),
+  // a harmon mute: a nasal band, with the lows and highs taken out
+  sound('trumpet-muted', 'Muted Trumpet', 'brass', ['trumpet', 'brass', 'muted', 'harmon', 'solo'], 67, 3, [{
+    type: 'model', exciter: { kind: 'lips', tension: 1 },
+    resonator: { kind: 'bore', end: 'flared', loss: 0.4 },
+    radiators: [{ kind: 'bell', cutoff: 900, mix: 0.7 }],
+    filter: { type: 'bandpass', cutoff: 1800, q: 1.2 },
+    vibrato: vibrato(8, 5.5), env: { attack: 0.03, sustain: 1, release: 0.1 }
   }])
 ];
 
@@ -87,6 +101,18 @@ const WINDS: SoundRecipe[] = [
     resonator: { kind: 'bore', end: 'open', loss: 0.5 },
     radiators: [{ kind: 'tonehole', cutoff: 0.7, brightness: 0.6 }],
     vibrato: vibrato(4, 5), env: { attack: 0.03, sustain: 1, release: 0.08 }
+  }]),
+  sound('piccolo', 'Piccolo', 'winds', ['piccolo', 'woodwind', 'bright', 'solo'], 84, 3, [{
+    type: 'model', exciter: { kind: 'jet', ratio: 0.34, noise: 0.1 },
+    resonator: { kind: 'bore', end: 'open', loss: 0.4 },
+    radiators: [{ kind: 'tonehole', cutoff: 0.8, brightness: 0.6 }],
+    vibrato: vibrato(8, 5.5), env: { attack: 0.04, sustain: 1, release: 0.2 }
+  }]),
+  sound('bass-clarinet', 'Bass Clarinet', 'winds', ['bass clarinet', 'clarinet', 'reed', 'woodwind', 'low'], 48, 3, [{
+    type: 'model', exciter: { kind: 'reed', stiffness: 0.5, noise: 0.04 },
+    resonator: { kind: 'bore', end: 'open', loss: 0.5 },
+    radiators: [{ kind: 'tonehole', cutoff: 0.5, brightness: 0.5 }],
+    vibrato: vibrato(3, 4.8), env: { attack: 0.05, sustain: 1, release: 0.1 }
   }])
 ];
 
