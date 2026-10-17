@@ -5,6 +5,7 @@
 #include "../platform/Platform.h"
 #include "../platform/Strings.h"
 #include "LpiPlugin.h"
+#include "Vst3Plugin.h"
 
 #include <algorithm>
 
@@ -42,29 +43,49 @@ bool PluginScanner::start (std::function<void (const std::string&)> onDone)
     return true;
 }
 
+static bool isVst3 (const fs::path& path)
+{
+    return endsWith (lowerCase (pathToUtf8 (path.filename())), ".vst3");
+}
+
 std::vector<fs::path> PluginScanner::candidates (const std::vector<fs::path>& folders)
 {
     std::vector<fs::path> files;
+    auto add = [&] (const fs::path& file)
+    {
+        if (std::find (files.begin(), files.end(), file) == files.end())
+            files.push_back (file);
+    };
+    // A binary inside a .vst3 bundle belongs to the bundle
+    auto inBundle = [] (const fs::path& file)
+    {
+        for (auto part = file.parent_path(); ! part.empty() && part != part.root_path(); part = part.parent_path())
+            if (isVst3 (part))
+                return true;
+        return false;
+    };
     for (auto& folder : folders)
     {
         if (! directoryExists (folder))
             continue;
+        // VST 3 plug-ins are bundles (and, on Windows, still single .vst3
+        // files at times): one candidate each, whatever is inside
+        for (auto& bundle : listBundles (folder, ".vst3", 2000))
+            add (bundle);
+       #if GHOSTDAW_WINDOWS
+        for (auto& file : listFiles (folder, { ".vst3" }, 2000))
+            if (! inBundle (file))
+                add (file);
+       #endif
         // LPI plugins are plain shared libraries (or .lpi). On macOS a
         // module built by CMake is .so, not .dylib, so both count there.
-        // Binaries inside a .vst3 bundle belong to the VST3 scan.
         std::vector<std::string> extensions { sharedLibraryExtension, ".lpi" };
        #if GHOSTDAW_MAC
         extensions.push_back (".so");
        #endif
         for (auto& file : listFiles (folder, extensions, 2000))
-        {
-            auto inBundle = false;
-            for (auto part = file.parent_path(); ! part.empty() && part != part.root_path(); part = part.parent_path())
-                if (endsWith (lowerCase (pathToUtf8 (part.filename())), ".vst3"))
-                    inBundle = true;
-            if (! inBundle && std::find (files.begin(), files.end(), file) == files.end())
-                files.push_back (file);
-        }
+            if (! inBundle (file))
+                add (file);
     }
     return files;
 }
@@ -72,6 +93,18 @@ std::vector<fs::path> PluginScanner::candidates (const std::vector<fs::path>& fo
 Json PluginScanner::describeFile (const fs::path& file)
 {
     std::string error;
+    if (isVst3 (file))
+    {
+        auto module = Vst3Module::open (file, error);
+        if (module == nullptr)
+            return Json::object ({ { "error", error } });
+        auto plugins = Json::array();
+        for (auto& effect : module->getAudioEffects())
+            plugins.push (Json::object ({ { "pluginId", effect.classId }, { "name", effect.name }, { "vendor", effect.vendor }, { "format", "VST3" } }));
+        if (plugins.size() == 0)
+            return Json::object ({ { "error", pathToUtf8 (file.filename()) + " has no audio effect class" } });
+        return Json::object ({ { "plugins", plugins } });
+    }
     if (auto library = LpiLibrary::open (file, error))
     {
         auto plugins = Json::array();
