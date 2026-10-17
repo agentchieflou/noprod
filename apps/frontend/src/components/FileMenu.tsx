@@ -20,6 +20,7 @@ const PICKER_TYPES = [{ description: 'NoProd project', accept: { 'application/x-
 // The file handle of the open project, so Save writes back in place
 // (File System Access API; other browsers download a copy instead).
 let fileHandle: any = null;
+const forgetFileHandle = () => { fileHandle = null; };
 
 const baseName = (n: string) => n.replace(/\.noprod$/i, '');
 // A project name as a file name (no path separators or reserved characters)
@@ -132,7 +133,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
     if (!confirmDiscard()) return;
     try {
       const { doc, pcm } = await readRecoveryCopy(copy);
-      fileHandle = null;
+      forgetFileHandle();
       clearAutosave();
       useDAWStore.getState().loadProject(reviveProject(doc, pcm, audioContext), copy.name);
       useDAWStore.setState({ savedSnapshot: null });
@@ -249,7 +250,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
           <button onClick={run(onImportAls)}>Import Ableton Set (.als)…</button>
           <hr />
           <button onClick={run(exportSounds)}>Export My Sounds…</button>
-          <button onClick={run(() => soundsInputRef.current?.click())}>Import My Sounds…</button>
+          <button onClick={() => { setOpen(false); soundsInputRef.current?.click(); }}>Import My Sounds…</button>
         </div>
       )}
       <input
