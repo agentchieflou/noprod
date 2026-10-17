@@ -99,6 +99,13 @@ const stripListeners = new Set<(id: string, input: AudioNode | null) => void>();
 export const onStripInputChange = (fn: (id: string, input: AudioNode | null) => void) => { stripListeners.add(fn); return () => { stripListeners.delete(fn); }; };
 // Which strip a node is the input of (what a note's destination names)
 export const stripIdOf = (node: AudioNode): string | null => inputStrips.get(node) ?? null;
+// An input that isn't a strip's but plays through the engine too (the Browser's previews)
+const extraInputs = new Map<string, AudioNode>();
+export function registerInput(id: string, node: AudioNode) {
+  extraInputs.set(id, node);
+  inputStrips.set(node, id);
+}
+export const inputOf = (id: string): AudioNode => extraInputs.get(id) ?? getStripInput(id);
 const lastDeviceState = new Map<string, any>(); // deviceId -> device object last applied
 
 const createStrip = (id: string): Strip => {
