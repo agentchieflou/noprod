@@ -305,6 +305,12 @@ test('the budget stops runaway queries with a clear error', () => {
   assert.throws(() => pure('h').fast(50).queryArc(0, 1, { maxEvents: 10 }), PatternError);
   // stacked layers count together
   assert.throws(() => stack(...Array.from({ length: 30 }, () => pure('a').fast(100))).queryArc(0, 1, { maxEvents: 1000 }), /too many/);
+  // time: two sides that stay within the event limit but meet 10k × 10k
+  // times inside appBoth, where no events are made for a long while
+  const dense = pure('a').fast(10000);
+  const started = performance.now();
+  assert.throws(() => dense.appBoth(dense, (x, y) => x + y).queryArc(0, 1, { maxEvents: 1e9, maxMillis: 100 }), /too long/);
+  assert.ok(performance.now() - started < 1000, `stopped after ${(performance.now() - started).toFixed(0)} ms`);
   // time: a pattern whose every query is slow
   const slow = new Pattern((span, b) => { const end = performance.now() + 5; while (performance.now() < end) { /* busy */ } return pure('a').query(span, b); });
   assert.throws(() => stack(...Array.from({ length: 20 }, () => slow)).queryArc(0, 1, { maxMillis: 20 }), /too long/);

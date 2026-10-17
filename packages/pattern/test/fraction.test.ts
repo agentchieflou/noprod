@@ -58,6 +58,42 @@ test('comparison, floor and cycle position', () => {
 test('too fine a fraction is an error, not a rounding', () => {
   const fine = f(1, 2 ** 27);
   assert.throws(() => fine.mul(fine), /precision/);
+  assert.throws(() => f(2 ** 53, 1), /precision/, 'unsafe inputs are refused before reducing');
+  assert.throws(() => f(1, 2 ** 53 + 2), /precision/);
+  // products past 2^53 used to be rounded, then reduced into the safe range:
+  // 1/(2^27+1) + 1/(2^27+3) came back as 1/67108865
+  const a = f(1, 2 ** 27 + 1), b = f(1, 2 ** 27 + 3);
+  assert.throws(() => a.add(b), /precision/);
+  assert.throws(() => a.sub(b), /precision/);
+  assert.throws(() => a.mul(b), /precision/);
+  assert.throws(() => f(2 ** 27 + 1, 1).div(f(1, 2 ** 27 + 3)), /precision/);
+});
+
+test('big products that reduce back to exact fractions are computed exactly', () => {
+  const x = f(2 ** 30 + 1, 2 ** 30 + 3);
+  assert.equal(String(x.mul(x.inverse())), '1');
+  assert.equal(String(x.div(x)), '1');
+  assert.equal(String(x.sub(x)), '0');
+  assert.equal(String(f(2 ** 30 + 1, 2 ** 30 + 3).add(f(2, 2 ** 30 + 3))), '1');
+  assert.equal(String(f(2 ** 40, 3).mul(f(3, 2 ** 40))), '1');
+  assert.equal(String(Fraction.fromBig(6n, -4n)), '-3/2');
+  assert.throws(() => Fraction.fromBig(1n, 0n), /division by zero/);
+  assert.throws(() => Fraction.fromBig(1n, 2n ** 60n), /precision/);
+});
+
+test('comparison stays exact when the cross products pass 2^53', () => {
+  // a is nearer to 1 than b: 1 - 2/(2^27+3) against 1 - 2/(2^27+1)
+  const a = f(2 ** 27 + 1, 2 ** 27 + 3), b = f(2 ** 27 - 1, 2 ** 27 + 1);
+  assert.equal(a.compare(b), 1);
+  assert.equal(b.compare(a), -1);
+  assert.equal(a.compare(f(2 ** 27 + 1, 2 ** 27 + 3)), 0);
+  assert.ok(a.gt(b) && b.lt(a) && !a.eq(b));
+  // against BigInt arithmetic, for a sweep of near-neighbors
+  for (let i = 1; i < 50; i++) {
+    const p = f(2 ** 27 + i, 2 ** 27 + 2 * i + 1), q = f(2 ** 27 + i + 1, 2 ** 27 + 2 * i + 3);
+    const exact = BigInt(p.n) * BigInt(q.d) - BigInt(q.n) * BigInt(p.d);
+    assert.equal(p.compare(q), exact > 0n ? 1 : exact < 0n ? -1 : 0, `${p} vs ${q}`);
+  }
 });
 
 test('spans split at cycle boundaries', () => {

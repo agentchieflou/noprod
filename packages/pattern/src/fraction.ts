@@ -10,21 +10,40 @@ const gcd = (a: number, b: number): number => {
   while (b) [a, b] = [b, a % b];
   return a;
 };
+const bigGcd = (a: bigint, b: bigint): bigint => {
+  if (a < 0n) a = -a;
+  if (b < 0n) b = -b;
+  while (b) [a, b] = [b, a % b];
+  return a;
+};
+const MAX = BigInt(Number.MAX_SAFE_INTEGER);
+const PRECISION = 'time precision exceeded (fractions too fine)';
+const safe = (...xs: number[]): boolean => xs.every(Number.isSafeInteger);
 
 export class Fraction {
   readonly n: number; // numerator, carries the sign
   readonly d: number; // denominator, always positive
 
+  // Both parts must already be exact: a product that passed 2^53 before
+  // getting here is rounded, and reducing it would only hide that
   constructor(n: number, d = 1) {
     if (!Number.isInteger(n) || !Number.isInteger(d)) throw new PatternError(`not a fraction: ${n}/${d}`);
     if (d === 0) throw new PatternError('division by zero');
+    if (!Number.isSafeInteger(n) || !Number.isSafeInteger(d)) throw new PatternError(PRECISION);
     if (d < 0) { n = -n; d = -d; }
     const g = gcd(n, d) || 1;
     this.n = n / g;
     this.d = d / g;
-    if (!Number.isSafeInteger(this.n) || !Number.isSafeInteger(this.d)) {
-      throw new PatternError('time precision exceeded (fractions too fine)');
-    }
+  }
+
+  // From exact big integers: reduced first, then an error if still too big
+  static fromBig(n: bigint, d: bigint): Fraction {
+    if (d === 0n) throw new PatternError('division by zero');
+    if (d < 0n) { n = -n; d = -d; }
+    const g = bigGcd(n, d) || 1n;
+    n /= g; d /= g;
+    if (n > MAX || -n > MAX || d > MAX) throw new PatternError(PRECISION);
+    return new Fraction(Number(n), Number(d));
   }
 
   // A number is read exactly as written (0.125 is 1/8, 1e-3 is 1/1000)
@@ -65,14 +84,38 @@ export class Fraction {
     return new Fraction(h1, k1);
   }
 
-  add(o: FractionLike): Fraction { const b = Fraction.from(o); return new Fraction(this.n * b.d + b.n * this.d, this.d * b.d); }
-  sub(o: FractionLike): Fraction { const b = Fraction.from(o); return new Fraction(this.n * b.d - b.n * this.d, this.d * b.d); }
-  mul(o: FractionLike): Fraction { const b = Fraction.from(o); return new Fraction(this.n * b.n, this.d * b.d); }
-  div(o: FractionLike): Fraction { const b = Fraction.from(o); return new Fraction(this.n * b.d, this.d * b.n); }
+  // Arithmetic in plain numbers while every product stays exact; past 2^53,
+  // in big integers, which reduce before deciding whether the result fits
+  add(o: FractionLike): Fraction {
+    const b = Fraction.from(o);
+    const p = this.n * b.d, q = b.n * this.d, d = this.d * b.d;
+    if (safe(p, q, p + q, d)) return new Fraction(p + q, d);
+    return Fraction.fromBig(BigInt(this.n) * BigInt(b.d) + BigInt(b.n) * BigInt(this.d), BigInt(this.d) * BigInt(b.d));
+  }
+  sub(o: FractionLike): Fraction { return this.add(Fraction.from(o).neg()); }
+  mul(o: FractionLike): Fraction {
+    const b = Fraction.from(o);
+    const n = this.n * b.n, d = this.d * b.d;
+    if (safe(n, d)) return new Fraction(n, d);
+    return Fraction.fromBig(BigInt(this.n) * BigInt(b.n), BigInt(this.d) * BigInt(b.d));
+  }
+  div(o: FractionLike): Fraction {
+    const b = Fraction.from(o);
+    if (b.n === 0) throw new PatternError('division by zero');
+    const n = this.n * b.d, d = this.d * b.n;
+    if (safe(n, d)) return new Fraction(n, d);
+    return Fraction.fromBig(BigInt(this.n) * BigInt(b.d), BigInt(this.d) * BigInt(b.n));
+  }
   neg(): Fraction { return new Fraction(-this.n, this.d); }
   inverse(): Fraction { return new Fraction(this.d, this.n); }
 
-  compare(o: FractionLike): number { const b = Fraction.from(o); return Math.sign(this.n * b.d - b.n * this.d); }
+  compare(o: FractionLike): number {
+    const b = Fraction.from(o);
+    const l = this.n * b.d, r = b.n * this.d;
+    if (safe(l, r)) return Math.sign(l - r); // exact integers: the sign of their difference is exact
+    const big = BigInt(this.n) * BigInt(b.d) - BigInt(b.n) * BigInt(this.d);
+    return big > 0n ? 1 : big < 0n ? -1 : 0;
+  }
   eq(o: FractionLike): boolean { return this.compare(o) === 0; }
   lt(o: FractionLike): boolean { return this.compare(o) < 0; }
   lte(o: FractionLike): boolean { return this.compare(o) <= 0; }

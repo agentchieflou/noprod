@@ -27,10 +27,17 @@ export class Budget {
     this.maxMillis = limits.maxMillis ?? DEFAULT_LIMITS.maxMillis;
     this.deadline = performance.now() + this.maxMillis;
   }
+  private ticks = 0;
   spend(events: number): void {
     this.events += events;
     if (this.events > this.maxEvents) throw new PatternError(`the pattern makes too many events (more than ${this.maxEvents} in one query)`);
     if (performance.now() > this.deadline) throw new PatternError(`the query took too long (more than ${this.maxMillis} ms)`);
+  }
+  // Inside a loop that makes no events for a while (two sides of a join
+  // being compared), so the deadline still binds; the clock is read every
+  // 256th call
+  tick(): void {
+    if ((++this.ticks & 255) === 0 && performance.now() > this.deadline) throw new PatternError(`the query took too long (more than ${this.maxMillis} ms)`);
   }
 }
 
@@ -93,6 +100,7 @@ export class Pattern<T = unknown> {
       const out: Hap<V>[] = [];
       for (const left of this.query(span, b)) {
         for (const right of other.query(left.wholeOrPart(), b)) {
+          b.tick();
           const part = left.part.intersection(right.part);
           if (part) out.push(new Hap(left.whole, part, f(left.value, right.value)));
         }
@@ -109,6 +117,7 @@ export class Pattern<T = unknown> {
       const rights = other.query(span, b);
       for (const left of this.query(span, b)) {
         for (const right of rights) {
+          b.tick();
           const part = left.part.intersection(right.part);
           if (!part) continue;
           let whole: TimeSpan | undefined;
@@ -132,6 +141,7 @@ export class Pattern<T = unknown> {
       const out: Hap<U>[] = [];
       for (const outer of this.query(span, b)) {
         for (const inner of outer.value.query(outer.part, b)) {
+          b.tick();
           const part = inner.part.intersection(outer.part);
           if (part) out.push(new Hap(inner.whole, part, inner.value));
         }
@@ -147,7 +157,7 @@ export class Pattern<T = unknown> {
       const out: Hap<U>[] = [];
       for (const outer of this.query(span, b)) {
         const onset = outer.wholeOrPart().begin;
-        for (const inner of outer.value.query(new TimeSpan(onset, onset), b)) out.push(new Hap(outer.whole, outer.part, inner.value));
+        for (const inner of outer.value.query(new TimeSpan(onset, onset), b)) { b.tick(); out.push(new Hap(outer.whole, outer.part, inner.value)); }
       }
       b.spend(out.length);
       return out;
@@ -161,6 +171,7 @@ export class Pattern<T = unknown> {
       for (const outer of this.query(span, b)) {
         const inner = outer.value.focus(outer.wholeOrPart());
         for (const hap of inner.query(outer.part, b)) {
+          b.tick();
           const part = outer.part.intersection(hap.part);
           if (!part) continue;
           let whole: TimeSpan | undefined;
