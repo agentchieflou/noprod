@@ -1,34 +1,9 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
 import './index.css'
-import App from './App.tsx'
-import { initEngine } from './audio/engine'
-import { initTransport } from './audio/transport'
-import { initWarpRenders } from './audio/warp'
-import { initSession } from './audio/session'
-import { initLiveMidi } from './audio/inputs'
-import { initMidiLearn } from './audio/midiLearn'
-import { initRecorder } from './audio/recorder'
-import { initCapture } from './audio/capture'
-import { initComputerKeyboard } from './audio/computerKeyboard'
-import { initCoachLoader } from './audio/coachLoader'
-import { useDAWStore } from './store/useDAWStore'
+import { missingFeatures } from './platform/support'
+import { showUnsupported } from './platform/unsupported'
 
-// The audio engine registers its worklets before the first render so device
-// chains are fully built by the time the UI can touch them.
-initTransport(useDAWStore)
-initWarpRenders(useDAWStore)
-initSession(useDAWStore)
-initLiveMidi(useDAWStore)
-initMidiLearn(useDAWStore)
-initRecorder(useDAWStore)
-initCapture(useDAWStore)
-initComputerKeyboard(useDAWStore)
-initCoachLoader(useDAWStore)
-initEngine(useDAWStore).finally(() => {
-  createRoot(document.getElementById('root')!).render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  )
-})
+// The audio engine creates its AudioContext when it loads, so it loads only
+// once the browser is known to run it
+const missing = missingFeatures()
+if (missing.length) showUnsupported(missing)
+else import('./boot')

@@ -134,7 +134,7 @@ function apply(events: AccompanyEvent[]) {
       } else {
         cut(note, at);
       }
-      const entry = played.findLast((p) => p.id === e.id);
+      const entry = played.slice().reverse().find((p) => p.id === e.id);
       if (entry) entry.end = Math.min(entry.end, Math.max(at, entry.start));
     }
   }

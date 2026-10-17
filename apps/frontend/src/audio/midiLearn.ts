@@ -1,7 +1,7 @@
 // MIDI learn: binds controller messages to controls, and drives the mapped
 // controls from incoming CCs and notes (see midiTargets.ts for the targets).
 
-import { onMidiEvent, type MidiEvent } from './inputs';
+import { onMidiClaim, type MidiEvent } from './inputs';
 import { resolveTarget, mappedValue, type MidiMapping, type MidiSource } from './midiTargets';
 
 // Pickup: a mapping takes over only once the controller's value reaches the
@@ -18,20 +18,32 @@ const matches = (m: MidiMapping, s: MidiSource) =>
   m.source.type === s.type && m.source.number === s.number && m.source.channel === s.channel
   && (m.source.input === 'any' || m.source.input === s.input);
 
+// Notes this listener took. Their note-offs are taken too, so the instruments
+// never start a note they then have to stop.
+const takenNotes = new Set<string>();
+const noteKey = (e: MidiEvent) => `${e.source}:${e.channel}:${e.pitch}`;
+const takeNote = (e: MidiEvent) => {
+  if (e.type !== 'on') return false;
+  takenNotes.add(noteKey(e));
+  return true;
+};
+
 export function initMidiLearn(store: { getState: () => any }) {
-  onMidiEvent((e) => {
+  onMidiClaim((e) => {
+    if (e.type === 'off') return takenNotes.delete(noteKey(e));
     const source = sourceOf(e);
-    if (!source) return;
+    if (!source) return false;
     const st = store.getState();
 
     // Learn mode with a control chosen: the next CC or note binds to it
     if (st.midiLearn.active && st.midiLearn.pending) {
       st.addMidiMapping(st.midiLearn.pending, source);
-      return;
+      return takeNote(e);
     }
 
-    for (const m of st.midiMappings as MidiMapping[]) {
-      if (!matches(m, source)) continue;
+    const mapped = (st.midiMappings as MidiMapping[]).filter((m) => matches(m, source));
+    if (!mapped.length) return false;
+    for (const m of mapped) {
       const resolved = resolveTarget(store.getState(), m.target);
       if (!resolved) continue;
       // A note flips a toggle; otherwise its velocity is the value
@@ -53,6 +65,7 @@ export function initMidiLearn(store: { getState: () => any }) {
       }
       st.applyMidiValue(m.target, value);
     }
+    return takeNote(e);
   });
 }
 

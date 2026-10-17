@@ -59,13 +59,18 @@ export async function serializeProject(state: any): Promise<Blob> {
     { format: FORMAT, version: VERSION, savedAt: new Date().toISOString(), project, buffers },
     (_key, value) => (isAudioBuffer(value) ? { $audioBuffer: encode(value) } : value)
   );
+  // Without CompressionStream the file is plain JSON; loading takes either
+  if (typeof CompressionStream === 'undefined') return new Blob([json]);
   const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
   return new Response(stream).blob();
 }
 
 // gzip'd JSON blob -> project state with AudioBuffers rebuilt in `ctx`
 export async function deserializeProject(blob: Blob, ctx: BaseAudioContext): Promise<any> {
-  const text = await new Response(blob.stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  const magic = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+  const gzipped = magic[0] === 0x1f && magic[1] === 0x8b;
+  if (gzipped && typeof DecompressionStream === 'undefined') throw new Error("This browser can't open compressed project files; update it");
+  const text = await new Response(gzipped ? blob.stream().pipeThrough(new DecompressionStream('gzip')) : blob).text();
   const doc = JSON.parse(text);
   if (doc.format !== FORMAT) throw new Error('Not a NoProd project file');
   if (doc.version > VERSION) throw new Error(`Project was saved by a newer NoProd (format v${doc.version})`);
