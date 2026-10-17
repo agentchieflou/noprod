@@ -23,15 +23,21 @@ export const PROGRESSIONS: Progression[] = [
   { name: 'I–vi–IV–V', mode: 'major', numerals: ['I', 'vi', 'IV', 'V'] },
   { name: 'I–IV–V–I', mode: 'major', numerals: ['I', 'IV', 'V', 'I'] },
   { name: 'I–V–IV–I', mode: 'major', numerals: ['I', 'V', 'IV', 'I'] },
+  { name: 'I–IV–vi–V', mode: 'major', numerals: ['I', 'IV', 'vi', 'V'] },
+  { name: 'I–vi–ii–V', mode: 'major', numerals: ['I', 'vi', 'ii', 'V'] },
+  { name: 'I–bVII–IV–I', mode: 'major', numerals: ['I', 'bVII', 'IV', 'I'] },
   { name: 'ii–V–I', mode: 'major', numerals: ['ii7', 'V7', 'Imaj7'] },
   { name: '12-bar blues', mode: 'major', numerals: ['I7', 'I7', 'I7', 'I7', 'IV7', 'IV7', 'I7', 'I7', 'V7', 'IV7', 'I7', 'V7'] },
   { name: 'Pachelbel', mode: 'major', numerals: ['I', 'V', 'vi', 'iii', 'IV', 'I', 'IV', 'V'] },
+  { name: 'Royal Road', mode: 'major', numerals: ['IV', 'V', 'iii', 'vi'] },
   { name: 'i–VI–III–VII', mode: 'minor', numerals: ['i', 'VI', 'III', 'VII'] },
   { name: 'i–VII–VI–VII', mode: 'minor', numerals: ['i', 'VII', 'VI', 'VII'] },
   { name: 'i–iv–v–i', mode: 'minor', numerals: ['i', 'iv', 'v', 'i'] },
   { name: 'i–iv–VII–III', mode: 'minor', numerals: ['i', 'iv', 'VII', 'III'] },
   { name: 'Andalusian cadence', mode: 'minor', numerals: ['i', 'VII', 'VI', 'V'] },
-  { name: 'ii–V–i', mode: 'minor', numerals: ['iiø7', 'V7', 'i7'] }
+  { name: 'ii–V–i', mode: 'minor', numerals: ['iiø7', 'V7', 'i7'] },
+  { name: 'i–iv–i–V', mode: 'minor', numerals: ['i', 'iv', 'i', 'V'] },
+  { name: 'i–VI–iv–V', mode: 'minor', numerals: ['i', 'VI', 'iv', 'V'] }
 ];
 
 // Functional harmony: where each chord of the key tends to go, by triad
