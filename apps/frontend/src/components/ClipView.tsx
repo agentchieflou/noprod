@@ -177,7 +177,7 @@ export default function ClipView({ region, onChange, trackColor, onAudition, onD
   const num = (label: string, value: number, onChange: (v: number) => void, opts: { min?: number; max?: number; step?: number; unit?: string } = {}) => (
     <label className="clip-num">
       <span>{label}</span>
-      <input
+      <input aria-label={label}
         type="number" className="clip-input"
         min={opts.min} max={opts.max} step={opts.step ?? 1}
         value={Number.isFinite(value) ? round(value, opts.step ?? 1) : 0}
@@ -195,7 +195,7 @@ export default function ClipView({ region, onChange, trackColor, onAudition, onD
       <div className="clip-props">
         <div className="clip-prop-box">
           <span className="clip-control-label">Clip</span>
-          <input className="clip-name-input" value={region.file} onChange={(e) => set({ file: e.target.value })} />
+          <input aria-label="Clip name" className="clip-name-input" value={region.file} onChange={(e) => set({ file: e.target.value })} />
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
             <span className="clip-meta">{isMidi ? 'MIDI' : 'Audio'} · {length.toFixed(2)}s on timeline</span>
             {onDelete && (
@@ -207,7 +207,7 @@ export default function ClipView({ region, onChange, trackColor, onAudition, onD
         <div className="clip-prop-box">
           <span className="clip-control-label">Gain</span>
           <div className="clip-gain-row">
-            <input
+            <input aria-label="Gain"
               type="range" min="-36" max="24" step="0.1"
               value={region.gain || 0}
               onChange={(e) => set({ gain: parseFloat(e.target.value) })}
@@ -248,7 +248,7 @@ export default function ClipView({ region, onChange, trackColor, onAudition, onD
               title="Warp: follow the project tempo">{region.warpEnabled ? 'ON' : 'OFF'}</button>
             {region.warpEnabled && (
               <>
-                <select className="rack-map-select" value={region.warpMode || 'beats'} onChange={(e) => set({ warpMode: e.target.value })}>
+                <select aria-label="Warp mode" className="rack-map-select" value={region.warpMode || 'beats'} onChange={(e) => set({ warpMode: e.target.value })}>
                   <option value="complex">Complex</option>
                   <option value="beats">Beats</option>
                   <option value="tones">Tones</option>

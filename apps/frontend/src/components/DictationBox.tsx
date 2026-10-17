@@ -24,7 +24,7 @@ export default function DictationBox({ onOpenTab }: { onOpenTab: () => void }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', position: 'relative' }}>
       {hasKey() ? <>
         <input
-          type="text" placeholder="Describe a beat or melody..." value={input} maxLength={LIMITS.promptChars}
+          aria-label="Describe a beat or melody" type="text" placeholder="Describe a beat or melody..." value={input} maxLength={LIMITS.promptChars}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
           className="vst-path-input" style={{ width: '120px' }}
@@ -35,9 +35,9 @@ export default function DictationBox({ onOpenTab }: { onOpenTab: () => void }) {
               <Wand2 size={14} style={{ marginRight: '5px' }} />Dictate
             </button>}
         {sending && <span className="native-hint">Generating...</span>}
-        <button className="btn-metronome" onClick={() => setKeyDialogOpen(!open)} title="Your API key for dictation">Key</button>
+        <button className="btn-metronome" data-dictation-key onClick={() => setKeyDialogOpen(!open)} title="Your API key for dictation">Key</button>
       </> : (
-        <button className="btn-metronome" onClick={() => setKeyDialogOpen(!open)} title="Dictation needs your own Gemini API key; it stays in this browser">
+        <button className="btn-metronome" data-dictation-key onClick={() => setKeyDialogOpen(!open)} title="Dictation needs your own Gemini API key; it stays in this browser">
           <Wand2 size={14} style={{ marginRight: '5px' }} />Add your API key to dictate
         </button>
       )}

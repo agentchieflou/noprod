@@ -80,7 +80,7 @@ export default function EqEightPanel({ device, onChange }: { device: any; onChan
               title={p[`${band} On`] ? `Turn band ${band} off` : `Turn band ${band} on`}
               onClick={(e) => { e.stopPropagation(); onChange(`${band} On`, !p[`${band} On`]); }}
             />
-            {band}
+            <button className="row-main" aria-pressed={sel === band} aria-label={`Edit band ${band}`}>{band}</button>
           </div>
         ))}
       </div>

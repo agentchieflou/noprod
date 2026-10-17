@@ -98,8 +98,15 @@ export default function PluginEditorCanvas({ url, editorId, width, height, fps =
   const sendKey = (kind: 'down' | 'up' | 'char', key: number, modifiers: number) =>
     workerRef.current?.postMessage({ type: 'key', key: { kind, key, modifiers, t: wallMs() } });
   const onKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
-    e.preventDefault(); // Tab stays here, Space doesn't scroll
     e.stopPropagation();
+    // Tab goes to the editor, so Escape is the way out: focus moves to the editor's window
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      const host = e.currentTarget.closest<HTMLElement>('[role="dialog"]');
+      if (host) host.focus(); else e.currentTarget.blur();
+      return;
+    }
+    e.preventDefault(); // Space doesn't scroll
     const key = lpiKeyCode(e.nativeEvent);
     heldKeys.current.set(e.code, key);
     sendKey('down', key, lpiModifiers(e.nativeEvent));
@@ -139,6 +146,7 @@ export default function PluginEditorCanvas({ url, editorId, width, height, fps =
       height={height}
       {...(keyboard ? {
         tabIndex: 0,
+        'aria-label': 'Plug-in editor. Keys go to the plug-in; Escape leaves it',
         'data-keyboard-capture': true,
         onKeyDown,
         onKeyUp,

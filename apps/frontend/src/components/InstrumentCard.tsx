@@ -34,7 +34,7 @@ export default function InstrumentCard({ track, onAudition, onEditSound }: { tra
   const slider = (name: string, min: number, max: number, step: number, fmt = (v: number) => v.toFixed(2)) => (
     <div key={name} {...learn({ kind: 'instrument', trackId: track.id, param: name }, 'param-slider-row')}>
       <span className="param-name">{name}</span>
-      <input
+      <input aria-label={name}
         type="range" min={min} max={max} step={step}
         value={p[name]}
         onChange={(e) => updateInstrumentParameter(track.id, name, parseFloat(e.target.value))}
@@ -47,7 +47,7 @@ export default function InstrumentCard({ track, onAudition, onEditSound }: { tra
   return (
     <div className="device-card instrument-card">
       <div className="device-card-header">
-        <select
+        <select aria-label="Instrument"
           className="rack-map-select instrument-select"
           value={inst.name}
           onChange={(e) => {
@@ -80,7 +80,7 @@ export default function InstrumentCard({ track, onAudition, onEditSound }: { tra
           <>
             <div className="param-slider-row">
               <span className="param-name">Waveform</span>
-              <select className="rack-map-select" value={p.Waveform}
+              <select aria-label="Waveform" className="rack-map-select" value={p.Waveform}
                 onChange={(e) => updateInstrumentParameter(track.id, 'Waveform', e.target.value)}>
                 <option value="sawtooth">Sawtooth</option>
                 <option value="square">Square</option>

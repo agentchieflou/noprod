@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
 import { resolveTarget, type MidiMapping } from '../audio/midiTargets';
 import { resetPickup } from '../audio/midiLearn';
+import { useDialogFocus } from './a11y';
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const sourceText = (m: MidiMapping) => {
@@ -14,6 +15,7 @@ const sourceText = (m: MidiMapping) => {
 export default function MidiLearnControls() {
   const { midiLearn, setMidiLearn, midiMappings, updateMidiMapping, removeMidiMapping } = useDAWStore();
   const [listOpen, setListOpen] = useState(false);
+  const dialog = useDialogFocus<HTMLDivElement>(() => setListOpen(false), listOpen);
 
   // Esc leaves learn mode
   useEffect(() => {
@@ -39,12 +41,12 @@ export default function MidiLearnControls() {
         Mappings ({midiMappings.length})
       </button>
       {midiLearn.dropped > 0 && (
-        <span className="midi-dropped" title="Click to dismiss" onClick={() => setMidiLearn({ dropped: 0 })}>
+        <button className="row-main midi-dropped" title="Click to dismiss" onClick={() => setMidiLearn({ dropped: 0 })}>
           {midiLearn.dropped} MIDI mapping{midiLearn.dropped > 1 ? 's' : ''} dropped: missing track or device
-        </span>
+        </button>
       )}
       {listOpen && (
-        <div className="midi-map-dialog" role="dialog" aria-label="MIDI mappings">
+        <div ref={dialog} className="midi-map-dialog" role="dialog" aria-label="MIDI mappings" tabIndex={-1}>
           <div className="midi-map-head">
             <b>MIDI mappings</b>
             <button className="btn-icon" onClick={() => setListOpen(false)} title="Close">×</button>
@@ -54,11 +56,11 @@ export default function MidiLearnControls() {
             <div key={m.id} className="midi-map-row">
               <span className="midi-map-target">{resolveTarget(state, m.target)?.label ?? 'Missing control'}</span>
               <span className="midi-map-source">{sourceText(m)}</span>
-              <label>Min <input type="number" min={0} max={100} step={1} value={Math.round(m.min * 100)}
+              <label>Min <input aria-label="Minimum" type="number" min={0} max={100} step={1} value={Math.round(m.min * 100)}
                 onChange={(e) => edit(m, { min: Math.max(0, Math.min(100, Number(e.target.value))) / 100 })} /></label>
-              <label>Max <input type="number" min={0} max={100} step={1} value={Math.round(m.max * 100)}
+              <label>Max <input aria-label="Maximum" type="number" min={0} max={100} step={1} value={Math.round(m.max * 100)}
                 onChange={(e) => edit(m, { max: Math.max(0, Math.min(100, Number(e.target.value))) / 100 })} /></label>
-              <select className="rack-map-select" value={m.mode} onChange={(e) => edit(m, { mode: e.target.value as MidiMapping['mode'] })} title="Takeover: pickup waits for the controller to reach the control's value">
+              <select aria-label="Takeover mode" className="rack-map-select" value={m.mode} onChange={(e) => edit(m, { mode: e.target.value as MidiMapping['mode'] })} title="Takeover: pickup waits for the controller to reach the control's value">
                 <option value="jump">Jump</option>
                 <option value="pickup">Pickup</option>
               </select>
