@@ -117,7 +117,7 @@ export function check({ lock, readMeta, thirdPartyDirs, thirdPartyMd, gitmodules
 
   const licenseOf = (loc) => {
     const meta = readMeta(loc);
-    if (!meta) return NOT_INSTALLED;
+    if (!meta) return pkgs[loc].license ?? NOT_INSTALLED;
     let l = meta.license ?? pkgs[loc].license;
     if (l && typeof l === 'object') l = l.type;
     if (!l && Array.isArray(meta.licenses)) l = meta.licenses.map((x) => x.type ?? x).join(' OR ');

@@ -101,3 +101,11 @@ test('submodules: restricted ones are exceptions, permissive ones are listed', (
   const unlisted = run({ workspaces: app({}), licenses: {}, gitmodules });
   assert.deepEqual(unlisted.failures, ['submodule vendor/vst3sdk is neither listed in THIRD_PARTY.md nor an exception']);
 });
+
+test('a package that isn\'t installed falls back to the lockfile\'s license', () => {
+  const packages = { '': {}, 'apps/frontend': { dependencies: { a: '*', b: '*' } }, 'node_modules/a': { license: 'GPL-3.0-only' }, 'node_modules/b': {} };
+  const r = check({ lock: { packages }, readMeta: () => null, thirdPartyDirs: [], thirdPartyMd: '', gitmodules: '' });
+  assert.equal(r.failures.length, 2);
+  assert.match(r.failures[0], /^a@undefined is GPL-3\.0-only/);
+  assert.match(r.failures[1], /^b@undefined is NOT INSTALLED/);
+});
