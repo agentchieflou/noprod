@@ -18,6 +18,7 @@ import { findSound } from '@noprod/sound';
 import { audioContext, getStripInput } from './engine';
 import { triggerNote } from './synth';
 import { createLibraryInstrument, prewarmPending } from './library';
+import { addWarmupSource } from './libraryWarmup';
 import { onMidiEvent } from './inputs';
 import { getTransportSnapshot, onTransportChange } from './transport';
 import { barAt } from './timeline';
@@ -228,6 +229,7 @@ export function accompanyWarmup(): { params: any; notes: { pitch: number; veloci
 
 export function initAccompany(s: Store) {
   store = s;
+  addWarmupSource(accompanyWarmup, subscribeAccompany);
   onMidiEvent((e) => {
     if (e.type === 'on') {
       held.add(e.pitch);

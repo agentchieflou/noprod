@@ -86,6 +86,7 @@ module.exports = async (page, ctx) => {
     const region = st.regions.find((r) => r.trackId === trackId);
     const off = new OfflineAudioContext(2, 44100 * 3, 44100);
     scheduleClip(off, region, track.instrument.parameters, off.destination, 0, 0, 2, st.bpm, {});
+    await (await import('/src/audio/library.ts')).whenRendered(off); // notes render in workers
     const out = await off.startRendering();
     const d = out.getChannelData(0);
     let peak = 0; for (const x of d) peak = Math.max(peak, Math.abs(x));
@@ -99,13 +100,14 @@ module.exports = async (page, ctx) => {
   const choke = await page.evaluate(async () => {
     const { triggerNote } = await import('/src/audio/synth.ts');
     const { KITS, findSound } = await import(window.__fs + '/packages/sound/src/index.ts');
-    const { kitSounds } = await import('/src/audio/library.ts');
+    const { kitSounds, whenRendered } = await import('/src/audio/library.ts');
     const kit = KITS.find((k) => k.id === 'kit-808');
     const params = { Kit: 'library', Gain: 1, Tune: 0, Library: { kit, sounds: kitSounds(kit) } };
     const level = async (withClosed) => {
       const off = new OfflineAudioContext(2, 44100, 44100);
       triggerNote(off, off.destination, params, 46, 0, 0.1, 1);
       if (withClosed) triggerNote(off, off.destination, params, 42, 0.15, 0.1, 0.01); // nearly silent closed hat
+      await whenRendered(off);
       const d = (await off.startRendering()).getChannelData(0);
       let peak = 0; for (let i = Math.round(0.22 * 44100); i < Math.round(0.35 * 44100); i++) peak = Math.max(peak, Math.abs(d[i]));
       return peak;
@@ -128,6 +130,7 @@ module.exports = async (page, ctx) => {
     const off = new OfflineAudioContext(2, 44100, 44100);
     const v = startVoice(off, off.destination, params, 69, 0, 1);
     v.release(0.5);
+    await (await import('/src/audio/library.ts')).whenRendered(off);
     const d = (await off.startRendering()).getChannelData(0);
     return { hz: analysis.estimatePitch(d, 44100, 4410, 4096), held: analysis.levelAt(d, 44100, 0.3), after: analysis.levelAt(d, 44100, 0.8) };
   });
