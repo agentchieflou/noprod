@@ -16,12 +16,12 @@ npm ci
 ## Commands
 
 ```sh
-npm test                                   # packages/sound and packages/theory
+npm test                                   # packages/sound, packages/theory and packages/pattern
 cd packages/sound && ../../node_modules/.bin/tsc -p .     # typecheck a package
 cd apps/frontend && npx tsc -b && npx oxlint src && npx vite build
 npm run e2e                                # every browser suite (about 2 minutes)
 npm run e2e -- designer dspmap             # some of them
-E2E_SKIP=dictation npm run e2e             # without the one that needs unpkg
+E2E_SKIP=dictation npm run e2e             # all but these
 ```
 
 Packages run as TypeScript directly, so imports carry `.ts` extensions and
@@ -84,4 +84,5 @@ If a dependency is restricted, we rebuild what it does in this repo rather than
 ship it. Work from documentation, specifications and observed behavior. Do not
 read or copy the restricted project's source.
 
-Still to rebuild: Strudel (AGPL; the sequencer and AI dictation) and JUCE (GhostDAW).
+Still to rebuild: JUCE (GhostDAW). Strudel (AGPL) was: dictation runs on
+`packages/pattern`, our own engine.

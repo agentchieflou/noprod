@@ -1,14 +1,17 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import { dictationSystemPrompt, generateDictation } from '@noprod/pattern';
 
 // Load environment variables
 dotenv.config();
 
 // The Orchestrator acts as the brain.
 // It exposes a WebSocket server for the frontend to connect to (port 8080).
-// It also connects to the Sequencer (port 8081).
 // It connects to the Audio Core (port 8082 - Ghost DAW C++).
+// Dictation: Gemini writes pattern code, which is checked with our own
+// pattern engine (@noprod/pattern, #133) and returned to the frontend, which
+// plays it itself. Nothing is evaluated as JavaScript anywhere.
 
 // Browsers attach an Origin header to WebSocket handshakes, and any web page
 // can try ws://localhost. Only accept non-browser clients (no Origin) and
@@ -60,62 +63,17 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const DRUM_NAMES = ['bd', 'sd', 'rim', 'cp', 'hh', 'oh', 'lt', 'mt', 'ht', 'cr', 'rd', 'cb', 'sh', 'tb', 'perc'];
 const SYNTH_NAMES = ['sawtooth', 'square', 'triangle', 'sine', 'supersaw', 'piano', 'epiano', 'organ', 'clav', 'harpsichord', 'bass', 'sub', 'acid', 'reese', 'strings', 'violin', 'viola', 'cello', 'contrabass', 'pizzicato', 'brass', 'trumpet', 'trombone', 'horn', 'flute', 'recorder', 'clarinet', 'choir', 'pad', 'marimba', 'vibraphone', 'glockenspiel', 'kalimba', 'steeldrum', 'musicbox', 'bell', 'harp', 'koto', 'guitar', 'banjo', 'dulcimer', 'pluck', 'chip'];
 
-const SYSTEM_PROMPT = `
-You are the dictation engine for the NoProd DAW. Your job is to translate user natural language requests into Strudel patterns.
-You MUST output ONLY valid Strudel javascript code.
-Do not include markdown blocks, explanations, or any other text.
+// The prompt and the check-and-retry live in @noprod/pattern, so a browser
+// calling Gemini with the user's own key (#157) uses the same ones
+const SYSTEM_PROMPT = dictationSystemPrompt({ drums: DRUM_NAMES, synths: SYNTH_NAMES });
 
-One cycle is one bar. Set the tempo with setcpm(BPM/4), e.g. setcpm(120/4) for 120 BPM.
-Put several parts together with stack(...), one part per line.
-Drums: s("...") using only these names: ${DRUM_NAMES.join(', ')}.
-Choose a drum machine with .bank("RolandTR808") or .bank("RolandTR909").
-Melodies, chords and bass lines: note("c3 e3 g3") with .s(name), name being one of: ${SYNTH_NAMES.join(', ')}.
-Use .gain(0 to 1) for dynamics.
-
-If the user asks for a techno beat, you might output:
-setcpm(128/4)
-s("bd*4, ~ cp ~ cp, hh*8").bank("RolandTR909")
-
-If the user asks for a melody over a beat, you might output:
-setcpm(100/4)
-stack(
-  s("bd ~ sd ~, hh*8").bank("RolandTR808"),
-  note("c3 eb3 g3 bb3").s("epiano"),
-  note("c2 ~ ~ g1").s("bass")
-)
-`;
-
-// Connect to Sequencer
-let sequencerWs = null;
-function connectToSequencer() {
-  sequencerWs = new WebSocket('ws://localhost:8081');
-  
-  sequencerWs.on('open', () => {
-    console.log('Connected to Sequencer');
-  });
-
-  sequencerWs.on('message', (data) => {
-    // ws hands text frames over as Buffers; forward them as text (a Buffer
-    // would go out as a binary frame, which the Audio Core skips)
-    const message = data.toString();
-    console.log(`Received from Sequencer: ${message}`);
-    // Broadcast haps to frontend and audio core
-    if (audioCoreWs && audioCoreWs.readyState === WebSocket.OPEN) {
-        audioCoreWs.send(message);
-    }
-    broadcastToFrontends(message);
-  });
-
-  sequencerWs.on('close', () => {
-    console.log('Disconnected from Sequencer, retrying in 3s...');
-    setTimeout(connectToSequencer, 3000);
-  });
-  
-  sequencerWs.on('error', (err) => {
-    console.error('Sequencer WS error:', err.message);
-  });
-}
-connectToSequencer();
+// Asks Gemini; the turns are the conversation so far (the retry carries the
+// model's first answer and the parse error)
+const askGemini = async (turns) => (await ai.models.generateContent({
+  model: 'gemini-flash-latest',
+  contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
+  config: { systemInstruction: SYSTEM_PROMPT, temperature: 0.7 }
+})).text;
 
 // Connect to Audio Core
 let audioCoreWs = null;
@@ -173,35 +131,15 @@ wss.on('connection', (ws) => {
         console.log(`Received dictation: ${data.text}`);
         
         try {
-           const response = await ai.models.generateContent({
-              model: 'gemini-flash-latest',
-              contents: data.text,
-              config: {
-                systemInstruction: SYSTEM_PROMPT,
-                temperature: 0.7,
-              }
-           });
-           
-           let strudelCode = response.text.trim();
-           // Strip markdown code blocks if the model mistakenly included them
-           strudelCode = strudelCode.replace(/^\`\`\`javascript\n?/, '').replace(/^\`\`\`\n?/, '').replace(/\n?\`\`\`$/, '');
-           
-           console.log(`Generated Strudel code: ${strudelCode}`);
-
-           // Let the requesting frontend client see the generated code immediately,
-           // ahead of (or independent of) the Sequencer's evaluated haps.
-           ws.send(JSON.stringify({ type: 'GENERATED', code: strudelCode }));
-
-           // Pass generated Strudel code to Sequencer
-           if (sequencerWs && sequencerWs.readyState === WebSocket.OPEN) {
-             sequencerWs.send(JSON.stringify({
-               type: 'EVAL',
-               code: strudelCode
-             }));
-           } else {
-             ws.send(JSON.stringify({ type: 'ERROR', message: 'Sequencer offline' }));
+           const { code, error, attempts } = await generateDictation(data.text, askGemini);
+           if (error) {
+             console.log(`Generated code fails to parse after ${attempts} attempts: ${error}`);
+             ws.send(JSON.stringify({ type: 'ERROR', message: `The generated code doesn't parse: ${error}`, code }));
+             return;
            }
-           
+           console.log(`Generated code: ${code}`);
+           // The frontend plays the code with its own pattern engine
+           ws.send(JSON.stringify({ type: 'GENERATED', code }));
         } catch (genErr) {
             console.error('Error generating content from Gemini', genErr);
             ws.send(JSON.stringify({ type: 'ERROR', message: genErr.message }));

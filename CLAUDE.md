@@ -9,8 +9,7 @@ coach teaches as you play.
 | Path | What |
 |---|---|
 | `apps/frontend` | The DAW: React 19, Vite, TypeScript. Zustand store in `src/store/useDAWStore.js`; Web Audio engine in `src/audio/`; UI in `src/components/` |
-| `apps/orchestrator` | WebSocket hub on 8080: AI dictation (Gemini → Strudel code), relays to the sequencer and audio core |
-| `apps/sequencer` | Headless Strudel (Puppeteer) on 8081 |
+| `apps/orchestrator` | WebSocket hub on 8080: AI dictation (Gemini → pattern code, checked with `@noprod/pattern`), relays to the audio core |
 | `apps/audio_core` | GhostDAW: C++/JUCE host for LPI and VST3 plugins on 8082 (see its README) |
 | `packages/sound` | `@noprod/sound`: sound recipes and their renderer, the library, physical models (`model.ts`), DSP chains (`chain.ts`), resynthesis. See its README |
 | `packages/theory` | `@noprod/theory`: keys, chords, voice leading, the Keyboard Coach. See its README |
@@ -23,7 +22,8 @@ in the sibling repo `agentchieflou/v-loudio-t`.
 Frontend landmarks: `App.tsx` (layout, bottom-panel tabs), `audio/engine.ts`
 (strips, master), `audio/library.ts` (library instruments, render workers),
 `audio/inputs.ts` (`onMidiEvent`: every note source), `audio/computerKeyboard.ts`,
-`audio/accompany.ts` (the coach's band), `components/KeyboardPanel.tsx`,
+`audio/accompany.ts` (the coach's band), `audio/dictation.ts` (dictated code →
+tracks, through `@noprod/pattern`), `components/KeyboardPanel.tsx`,
 `SoundDesigner.tsx`, `DspMap.tsx`.
 
 ## Commands
@@ -36,7 +36,7 @@ node scripts/check-licenses.mjs            # the dependency rule below, enforced
 node --test scripts/*.test.mjs             # the license check's own tests
 npm run e2e                                # every browser suite (about 2 minutes)
 npm run e2e -- designer dspmap             # some of them
-E2E_SKIP=dictation npm run e2e             # without the one that needs unpkg
+E2E_SKIP=dictation npm run e2e             # all but these
 ```
 
 - Packages run as TypeScript directly (Node 22.18+ strips types): imports
@@ -114,8 +114,9 @@ be compatible with that.
 - Before adding a dependency, check its license and those of everything it
   pulls in, and name them in the PR. Dev tooling that never ships (the e2e
   runner, linters) may use any license that allows our use of it.
-- Still to rebuild: Strudel (AGPL; the sequencer and AI dictation) and
-  JUCE (GhostDAW).
+- Still to rebuild: JUCE (GhostDAW). Strudel (AGPL) was: AI dictation runs
+  on `packages/pattern`, our own engine, and the lockfile test in
+  `packages/pattern/test/licenses.test.ts` keeps the AGPL packages out.
 
 ## Work tiers
 

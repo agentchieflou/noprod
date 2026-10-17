@@ -6,8 +6,8 @@
 //   E2E_SKIP=dictation npm run e2e    all but these
 //
 // A suite (suites/<name>.cjs) exports `async (page, ctx) => {}` and prints a
-// line per check, starting PASS or FAIL. The dictation suite also runs the
-// Sequencer (Strudel, loaded from unpkg) and a stand-in orchestrator.
+// line per check, starting PASS or FAIL. The dictation suite also runs a
+// stand-in orchestrator (no network needed).
 //
 // Chromium: CHROME_PATH, else /opt/pw-browsers/chromium if present, else
 // Puppeteer's own download.
@@ -55,17 +55,15 @@ console.log(`frontend at ${url}`);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// The dictation suite's services: the Sequencer, then the stand-in orchestrator
+// The dictation suite's service: the stand-in orchestrator
 async function startDictationServices() {
-  const sequencer = spawn(process.execPath, [join(root, 'apps/sequencer/index.js')], { cwd: join(root, 'apps/sequencer'), stdio: ['ignore', 'pipe', 'pipe'] });
+  const orchestrator = spawn(process.execPath, [join(here, 'fake-orchestrator.mjs')], { stdio: ['ignore', 'pipe', 'pipe'] });
   const ready = await new Promise((done) => {
-    const timer = setTimeout(() => done(false), 60000);
-    sequencer.stdout.on('data', (d) => { if (/Engine Ready/i.test(d.toString())) { clearTimeout(timer); done(true); } });
-    sequencer.on('exit', () => { clearTimeout(timer); done(false); });
+    const timer = setTimeout(() => done(false), 15000);
+    orchestrator.stdout.on('data', (d) => { if (/fake orchestrator on/.test(d.toString())) { clearTimeout(timer); done(true); } });
+    orchestrator.on('exit', () => { clearTimeout(timer); done(false); });
   });
-  const orchestrator = spawn(process.execPath, [join(here, 'fake-orchestrator.mjs')], { stdio: 'ignore' });
-  await sleep(1500);
-  return { ready, stop: () => { sequencer.kill(); orchestrator.kill(); } };
+  return { ready, stop: () => orchestrator.kill() };
 }
 
 const results = [];
@@ -93,7 +91,7 @@ for (const name of suites) {
     log(...args);
   };
   try {
-    if (services && !services.ready) throw new Error('the Sequencer did not start (it loads Strudel from unpkg)');
+    if (services && !services.ready) throw new Error('the stand-in orchestrator did not start');
     await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
     const suite = require(join(here, 'suites', `${name}.cjs`));
     const ctx = { sleep, logs, fixtures, shotDir, shot: (n) => page.screenshot({ path: join(shotDir, `${n}.png`) }) };

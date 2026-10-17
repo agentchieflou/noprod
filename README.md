@@ -18,18 +18,16 @@ npm install
 
 npm run start:frontend      # the DAW, at http://localhost:5173
 npm run start:orchestrator  # WebSocket hub, on port 8080
-npm run start:sequencer     # headless Strudel, on port 8081
 ```
 
 Run each command in its own terminal, then open http://localhost:5173.
 
-- The frontend works on its own. The other two give dictation: the
-  orchestrator asks Gemini for Strudel code, and the sequencer turns it into
-  notes.
+- The frontend works on its own. The orchestrator gives dictation: it asks
+  Gemini for pattern code, checks it with our own pattern engine
+  (`packages/pattern`), and the DAW plays it in the browser.
 - The orchestrator needs a Gemini key for dictation. Copy
   `apps/orchestrator/.env.example` to `apps/orchestrator/.env` and set
   `GEMINI_API_KEY`.
-- The sequencer loads Strudel from unpkg.com, so it needs network access.
 - GhostDAW (`ws://localhost:8082`) is optional. It hosts plugins. Build it
   from [apps/audio_core/README.md](apps/audio_core/README.md), which covers
   its JUCE submodule and its platform packages.
@@ -39,11 +37,11 @@ Run each command in its own terminal, then open http://localhost:5173.
 | Path | What it is |
 |---|---|
 | `apps/frontend` | The DAW: React, Vite and TypeScript |
-| `apps/orchestrator` | WebSocket hub on 8080: dictation (Gemini to Strudel code), relays to the sequencer and GhostDAW |
-| `apps/sequencer` | Headless Strudel, run with Puppeteer, on 8081 |
+| `apps/orchestrator` | WebSocket hub on 8080: dictation (Gemini to pattern code, checked with `@noprod/pattern`), relays to GhostDAW |
 | `apps/audio_core` | GhostDAW: a C++/JUCE host for LPI and VST3 plugins, on 8082 |
 | `packages/sound` | `@noprod/sound`: sound recipes, the renderer, the library and physical models |
 | `packages/theory` | `@noprod/theory`: keys, chords, voice leading and the Keyboard Coach |
+| `packages/pattern` | `@noprod/pattern`: the pattern engine behind dictation (cycles, events, the mini-notation and its functions) |
 | `packages/shared` | WebSocket message types shared by the apps |
 
 ## Tests
@@ -88,6 +86,6 @@ CI runs these from `.github/workflows/`:
 
 ## License
 
-noprod is open source under the [Apache License 2.0](LICENSE). Two parts
-still use code under other licenses until they're rebuilt: the sequencer in
-`apps/sequencer` (Strudel, AGPL) and GhostDAW (JUCE). See #147.
+noprod is open source under the [Apache License 2.0](LICENSE). One part
+still uses code under another license until it's rebuilt: GhostDAW (JUCE).
+See #147.

@@ -188,7 +188,7 @@ function App() {
   const [dictationCode, setDictationCode] = useState<string | null>(null);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const [dictationResult, setDictationResult] = useState<DictationResult | null>(null);
-  const awaitingHaps = useRef(false); // only the window that dictated makes tracks from the result
+  const awaitingCode = useRef(false); // only the window that dictated makes tracks from the result
 
   useEffect(() => {
     const ws = new WebSocket(ORCHESTRATOR_WS_URL);
@@ -202,15 +202,22 @@ function App() {
       const msg = JSON.parse(event.data);
       if (handleOrchestratorMessage(msg)) return; // native plug-in host (Audio Core)
       if (msg.type === 'GENERATED') {
+        // The code Gemini wrote: our pattern engine plays a cycle of it here,
+        // and its parts become tracks playing library sounds
         setDictationCode(msg.code);
-        setDictationStatus('done');
-      } else if (msg.type === 'HAP_STREAM') {
-        // The evaluated pattern: its parts become tracks playing library sounds
-        if (!awaitingHaps.current) return;
-        awaitingHaps.current = false;
-        import('./audio/dictation').then((d) => setDictationResult(d.applyDictation(useDAWStore, msg)));
+        if (!awaitingCode.current) return;
+        awaitingCode.current = false;
+        import('./audio/dictation').then((d) => {
+          try {
+            setDictationResult(d.applyDictation(useDAWStore, msg.code));
+            setDictationStatus('done');
+          } catch (e) {
+            setDictationError(e instanceof Error ? e.message : String(e));
+            setDictationStatus('error');
+          }
+        });
       } else if (msg.type === 'ERROR') {
-        awaitingHaps.current = false;
+        awaitingCode.current = false;
         setDictationError(msg.message);
         setDictationStatus('error');
       }
@@ -227,7 +234,7 @@ function App() {
     setDictationError(null);
     setDictationCode(null);
     setDictationResult(null);
-    awaitingHaps.current = true;
+    awaitingCode.current = true;
     ws.send(JSON.stringify({ type: 'DICTATION', text: dictationInput.trim() }));
   };
 
@@ -641,7 +648,7 @@ function App() {
             className="btn-metronome"
             onClick={() => { handleSendDictation(); setActiveTab('dictation'); }}
             disabled={!orchestratorConnected || dictationStatus === 'sending'}
-            title={orchestratorConnected ? 'Generate a Strudel pattern from text via the Orchestrator' : 'Orchestrator offline'}
+            title={orchestratorConnected ? 'Generate a pattern from text via the Orchestrator' : 'Orchestrator offline'}
           >
             <Wand2 size={14} style={{ marginRight: '5px' }} />
             {dictationStatus === 'sending' ? 'Generating...' : 'Dictate'}
