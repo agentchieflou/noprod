@@ -848,6 +848,42 @@ body {
   min-height: 0;
 }
 
+.pr-chords {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  height: 18px;
+  background-color: #1d1d1d;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 10px;
+  line-height: 18px;
+}
+
+.pr-chords-key {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 44px;
+  height: 18px;
+  overflow: hidden;
+  white-space: nowrap;
+  background-color: #1d1d1d;
+  color: var(--text-secondary);
+}
+
+.pr-chord {
+  position: absolute;
+  top: 1px;
+  height: 16px;
+  line-height: 16px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+  border-radius: 3px;
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
 .pr-body {
   display: flex;
   position: relative;
