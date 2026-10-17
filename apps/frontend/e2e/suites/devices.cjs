@@ -3,7 +3,10 @@
 // and through the kernel in the page, and the two are compared: the EQs'
 // magnitude responses within 0.1 dB of the BiquadFilterNode chains, the
 // compressors within 1e-6 of the dynamics worklet to the sample, the panner
-// within 0.01 dB of StereoPannerNode.
+// within 0.01 dB of StereoPannerNode, the delay exact to the sample against
+// DelayNode. The reverb (an FDN, not the convolver) renders the same twice
+// and decorrelated, and the limiter never over its ceiling in true peak,
+// measured by the LoudnessMeter, where the native brickwall compressor is.
 module.exports = async (page, ctx) => {
   const results = [];
   const check = (name, ok, detail = '') => { const line = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`; results.push(line); console.log(line); };
@@ -11,6 +14,7 @@ module.exports = async (page, ctx) => {
 
   await page.evaluate(async () => { window.__dev = await import('/src/audio/devices.ts'); return 1; });
   await page.evaluate(async () => { window.__k = await import('/src/audio/dsp/devices/index.ts'); return 1; });
+  await page.evaluate(async () => { window.__sound = await import(window.__fs + '/packages/sound/src/index.ts'); return 1; });
 
   await page.evaluate(() => {
     const SR = 48000;
@@ -50,6 +54,11 @@ module.exports = async (page, ctx) => {
         const p = off.createStereoPanner();
         p.pan.value = params.Pan;
         src.connect(p); p.connect(off.destination);
+      } else if (kind === 'limiter') {
+        // the master's brickwall today (engine.ts's masterLimiter)
+        const c = off.createDynamicsCompressor();
+        c.threshold.value = params.Ceiling; c.knee.value = 0; c.ratio.value = 20; c.attack.value = 0.001; c.release.value = 0.1;
+        src.connect(c); c.connect(off.destination);
       } else {
         const dsp = window.__dev.createDeviceDSP(off, device(kind, params));
         src.connect(dsp.input); dsp.output.connect(off.destination);
@@ -61,6 +70,7 @@ module.exports = async (page, ctx) => {
     window.__renderKernel = (kind, params, l, r) => {
       const k = window.__k.makeKernel(kind, SR);
       for (const [n, v] of Object.entries(params)) k.set(n, v, 0);
+      window.__lastKernel = k;
       const outL = new Float32Array(l.length), outR = new Float32Array(r.length);
       const bl = new Float32Array(128), br = new Float32Array(128), ol = new Float32Array(128), or = new Float32Array(128);
       for (let at = 0; at < l.length; at += 128) {
@@ -164,6 +174,79 @@ module.exports = async (page, ctx) => {
     const worst = rs.reduce((m, x) => (x.gap > m.gap ? x : m));
     const worstDiff = rs.reduce((m, x) => Math.max(m, x.diff), 0);
     check('Panner: each channel\'s level matches StereoPannerNode within 0.01 dB from -1 to 1', worst.gap < 0.01, `worst ${worst.gap.toFixed(5)} dB at pan ${worst.pan}; max sample difference ${worstDiff.toExponential(2)}`);
+  }
+
+  // 5. Delay: exact to the sample against DelayNode, whole and fractional.
+  // With feedback, the native graph's DelayNode sits in a cycle, and the
+  // spec has the fed-back signal reach it a render quantum late: each
+  // repeat lands 128 frames after the last; the kernel's repeats land on
+  // the beat, which is the criterion.
+  {
+    for (const [name, params, tol] of [['a whole delay, 0.25 s', { Time: 0.25, Feedback: 0, 'Dry/Wet': 30 }, 2e-7], ['a fractional delay, 15999.02 frames', { Time: 0.33331298828125, Feedback: 0, 'Dry/Wet': 50 }, 2e-6], ['a fractional delay, 0.3333 s (not a float32: the node rounds it)', { Time: 0.3333, Feedback: 0, 'Dry/Wet': 50 }, 2e-3]]) {
+      const r = await page.evaluate(async (p) => {
+        const SR = window.__SR;
+        const l = window.__concat(window.__noise(0.2 * SR, 0.5, 7), new Float32Array(0.5 * SR)), r = window.__concat(window.__noise(0.2 * SR, 0.5, 8), new Float32Array(0.5 * SR));
+        return window.__compare('delay', p, l, r);
+      }, params);
+      check(`Delay, ${name}: the kernel's render matches DelayNode's (within ${tol})`, r.diff < tol, `max sample difference ${r.diff.toExponential(2)}, levels ${r.nativeDb[0].toFixed(3)} vs ${r.kernelDb[0].toFixed(3)} dB`);
+    }
+    const r = await page.evaluate(async () => {
+      const SR = window.__SR;
+      const x = new Float32Array(2 * SR); x[0] = 1;
+      const p = { Time: 0.25, Feedback: 50, 'Dry/Wet': 100 };
+      const peaks = (y) => { const out = []; for (let i = 1; i < y.length; i++) if (Math.abs(y[i]) > 1e-3) out.push([i, +y[i].toFixed(4)]); return out; };
+      return { native: peaks((await window.__renderNative('delay', p, x, x)).l), kernel: peaks(window.__renderKernel('delay', p, x, x).l) };
+    });
+    const want = [[12000, 1], [24000, 0.5], [36000, 0.25], [48000, 0.125], [60000, 0.0625], [72000, 0.0313], [84000, 0.0156]];
+    check('Delay with 50% feedback: an impulse repeats every 0.25 s exactly, halving each time', JSON.stringify(r.kernel) === JSON.stringify(want), `kernel ${JSON.stringify(r.kernel)}`);
+    const drift = r.native.length >= 3 && r.native[1][0] === 24128 && r.native[2][0] === 36256;
+    check('Delay: the native DelayNode in its feedback cycle lands each repeat a quantum later than the last (the kernel does not)', drift, `native repeats at ${r.native.map(([i]) => i).join(', ')}`);
+  }
+
+  // 6. Reverb: the same twice, decorrelated, and in the convolver's range of level
+  {
+    const r = await page.evaluate(async () => {
+      const SR = window.__SR;
+      const l = window.__concat(window.__noise(0.5 * SR, 0.5, 9), new Float32Array(2.5 * SR)), r = window.__concat(window.__noise(0.5 * SR, 0.5, 10), new Float32Array(2.5 * SR));
+      const params = { Decay: 2.5, 'Dry/Wet': 100 };
+      const a = window.__renderKernel('reverb', params, l, r), b = window.__renderKernel('reverb', params, l, r);
+      const same = window.__maxDiff(a.l, b.l) === 0 && window.__maxDiff(a.r, b.r) === 0;
+      // the tail's correlation between the channels
+      const from = 0.6 * SR, to = 2 * SR;
+      let sa = 0, sb = 0, sab = 0;
+      for (let i = from; i < to; i++) { sa += a.l[i] * a.l[i]; sb += a.r[i] * a.r[i]; sab += a.l[i] * a.r[i]; }
+      const correlation = sab / Math.sqrt(sa * sb);
+      const native = await window.__renderNative('reverb', params, l, r);
+      // the native convolver's impulse is Math.random noise: its tail level is what the kernel's is compared with
+      const tailDb = (x) => window.__db(window.__rms(x.subarray(0.6 * SR, 1.2 * SR)));
+      return { same, correlation, kernelTail: tailDb(a.l), nativeTail: tailDb(native.l), tailAt2s: window.__db(window.__rms(a.l.subarray(2.4 * SR, 2.9 * SR))) };
+    });
+    check('Reverb: two renders are identical', r.same);
+    check('Reverb: left and right decorrelate (coefficient below 0.3)', Math.abs(r.correlation) < 0.3, `coefficient ${r.correlation.toFixed(3)}`);
+    check('Reverb: the tail sits within 12 dB of the native convolver\'s', Math.abs(r.kernelTail - r.nativeTail) < 12, `tail 0.1..0.7 s after the input: kernel ${r.kernelTail.toFixed(1)} dB, native ${r.nativeTail.toFixed(1)} dB; the kernel's at 2 s: ${r.tailAt2s.toFixed(1)} dB`);
+  }
+
+  // 7. Limiter: never over the ceiling in true peak on the worst-case program; the native brickwall compressor is
+  {
+    const r = await page.evaluate(async () => {
+      const SR = window.__SR;
+      const clip = (x) => x.map((v) => Math.max(-1, Math.min(1, v)));
+      const program = () => window.__concat(new Float32Array(0.05 * SR), window.__sine(0.3 * SR, SR / 4, 1.2, Math.PI / 4), window.__sine(0.2 * SR, 440, 0.05), clip(window.__noise(0.3 * SR, 3, 11)), window.__sine(0.2 * SR, 440, 0.05), window.__sine(0.3 * SR, SR / 4, 1.2, Math.PI / 4), new Float32Array(0.3 * SR));
+      const l = program(), r = program().map((v, i) => (i % 3 === 0 ? -v : v));
+      const tp = (x) => { const m = new window.__sound.analysis.LoudnessMeter(SR); m.push(x.l, x.r); return m.truePeak; };
+      const out = {};
+      for (const ceiling of [-0.3, -1, -6]) {
+        const k = window.__renderKernel('limiter', { Ceiling: ceiling }, l, r);
+        out[ceiling] = { kernel: tp(k), latency: window.__lastKernel.latency };
+      }
+      out.native = tp(await window.__renderNative('limiter', { Ceiling: -1 }, l, r));
+      out.input = tp({ l, r });
+      return out;
+    });
+    const worst = [-0.3, -1, -6].reduce((m, c) => Math.max(m, r[c].kernel - c), -Infinity);
+    check('Limiter: never over the ceiling in true peak, at -0.3, -1 and -6 dB, on an inter-sample-peak sine burst and clipped drums', worst <= 0,
+      `true peaks ${[-0.3, -1, -6].map((c) => `${r[c].kernel.toFixed(3)} dBTP at a ${c} dB ceiling`).join(', ')}; the input is ${r.input.toFixed(2)} dBTP; lookahead ${r[-1].latency} frames`);
+    check('Limiter: the native brickwall compressor at -1 dB lets the true peak over (which is why the kernel is a lookahead limiter)', r.native > -1, `native ${r.native.toFixed(2)} dBTP`);
   }
 
   // Neither the relay (8080) nor GhostDAW (8082) runs here

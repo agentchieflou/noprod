@@ -8,12 +8,15 @@ import { EqEight } from './eq8.ts';
 import { Compressor } from './compressor.ts';
 import { Glue } from './glue.ts';
 import { Panner } from './panner.ts';
+import { Delay } from './delay.ts';
+import { Reverb } from './reverb.ts';
+import { Limiter } from './limiter.ts';
 
 export type { DeviceKernel, ParamValue } from './kernel.ts';
 export { Smoothed, Mix, dbToGain } from './kernel.ts';
-export { EqThree, EqEight, Compressor, Glue, Panner };
+export { EqThree, EqEight, Compressor, Glue, Panner, Delay, Reverb, Limiter };
 
-export const KERNEL_KINDS = ['eq3', 'eq8', 'compressor', 'glue', 'panner'] as const;
+export const KERNEL_KINDS = ['eq3', 'eq8', 'compressor', 'glue', 'panner', 'delay', 'reverb', 'limiter'] as const;
 export type KernelKind = (typeof KERNEL_KINDS)[number];
 
 export function makeKernel(kind: string, sampleRate: number): DeviceKernel | null {
@@ -23,6 +26,9 @@ export function makeKernel(kind: string, sampleRate: number): DeviceKernel | nul
     case 'compressor': return new Compressor(sampleRate);
     case 'glue': return new Glue(sampleRate);
     case 'panner': return new Panner(sampleRate);
+    case 'delay': return new Delay(sampleRate);
+    case 'reverb': return new Reverb(sampleRate);
+    case 'limiter': return new Limiter(sampleRate);
     default: return null;
   }
 }
