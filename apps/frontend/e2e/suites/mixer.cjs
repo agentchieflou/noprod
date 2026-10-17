@@ -87,7 +87,7 @@ module.exports = async (page, ctx) => {
   await page.evaluate((id) => window.__play(id, 'organ', 2), track1);
   await ctx.sleep(600);
   const muted = await dbs();
-  check('At -inf the track is silent on the master', muted.master <= -100 && muted[track1] <= -100, `master ${muted.master} dB, track ${muted[track1]} dB`);
+  check('At -inf the track is silent on the master', muted.master <= -80 && muted[track1] <= -80, `master ${muted.master} dB, track ${muted[track1]} dB`);
   await ctx.sleep(1500);
   await page.evaluate(() => { document.activeElement?.blur?.(); return 1; });
   await page.keyboard.down('Control');

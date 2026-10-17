@@ -156,7 +156,7 @@ export default function Mixer({ onOpenDevices }: { onOpenDevices: () => void }) 
     let raf = 0;
     let last = performance.now();
     const tick = (now: number) => {
-      const dt = Math.min(0.1, (now - last) / 1000);
+      const dt = Math.min(0.5, (now - last) / 1000);
       last = now;
       views.forEach((v, id) => { if (v.canvas?.isConnected) drawMeter({ id, ...v } as MeterView, now / 1000, dt); else if (!v.canvas) views.delete(id); });
       drawLoudness(loudness.current);
