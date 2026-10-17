@@ -8,10 +8,8 @@
   "scripts": {
     "build": "tsc"
   },
-  "dependencies": {
-    "typescript": "^5.3.3"
-  },
   "keywords": [],
   "author": "",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "private": true
 }
