@@ -27,7 +27,7 @@ const { highlights, readout } = coach.suggest();
 | `voicing.ts` | `voiceLead`: the next chord with the least hand movement |
 | `melody.ts` | A corpus of public-domain tunes and `nextNotes`: which note comes next |
 | `complement.ts` | `complements`: what to add to the notes held |
-| `lessons.ts` | Chord and melody lessons, and `LessonRunner` to follow one |
+| `lessons.ts` | Chord and melody lessons, `lessonFromNotes` to make one from a clip's notes, and `LessonRunner` to follow one |
 | `coach.ts` | `Coach`: tracks held notes, the melody, chords and key; returns highlights and a readout |
 | `accompany.ts` | `ACCOMPANY_STYLES` and `Accompanist`: a bass line and comping that follow the chords played |
 
@@ -61,6 +61,13 @@ const { highlights, readout } = coach.suggest();
   4th or more (a step back the other way), tendency tones (7 to 1, 4 to 3, 2
   to 1) and the chord's notes. Candidates are the key's notes within an
   octave.
+- **Lessons from a clip**: `lessonFromNotes(notes, name)` takes notes with
+  `pitch`, `start` and `duration` (seconds). If no two overlap by more than
+  30 ms, each is a melody step, named in the key. Otherwise the notes starting
+  within 30 ms of each other are a step: two or more are a chord (named like
+  the built-in lessons, `'Am (vi)'`), a lone note a melody step. The key is
+  `findKey` over the pitch classes, weighted by length. `Coach.setLesson`
+  takes a lesson's id or a `Lesson`, so the result can be played at once.
 - **Complements**: two notes get the notes completing the key's chords that
   hold them, weighted by how common those chords are; a triad gets its 7th,
   9th and 6th (outside the key, much less); one note gets the key's 3rds and
