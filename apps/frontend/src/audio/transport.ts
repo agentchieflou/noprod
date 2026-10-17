@@ -12,6 +12,7 @@
 import { audioContext, getStripInput, getAutomationTargets, setAutomationPlaying, getCompensationSeconds, onCompensationChange } from './engine';
 import { scheduleClip, clipTimelineLength } from './clipPlayback';
 import { beatsBetween, barAt, barSeconds } from './timeline';
+import { onStretchReady } from './warp';
 
 type Stoppable = { stop: (when?: number) => void };
 
@@ -75,6 +76,8 @@ const automationChanged = (st: any, prev: any) => {
 // plays (clips, tempo, loop, freeze) reschedule from the playhead.
 export function initTransport(store: { getState: () => any; subscribe: (fn: (s: any, prev: any) => void) => unknown }) {
   getState = store.getState;
+  // A warped clip's stretched render takes over from its grains
+  onStretchReady(() => { if (playing) reschedule(); });
   store.subscribe((st, prev) => {
     if (st.isPlaying !== prev.isPlaying) {
       if (!st.isPlaying) stop();

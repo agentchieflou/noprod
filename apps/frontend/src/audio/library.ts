@@ -154,8 +154,10 @@ function poolOf(size: number) {
 
 // Notes (playback, prewarm, live), a few workers that start on first use...
 const notePool = poolOf(Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 2) - 1)));
-// ...and one of the Sound Designer's own, so it never waits behind them
+// ...one of the Sound Designer's own, so it never waits behind them...
 export const designPool = poolOf(1);
+// ...and one for stretching warped clips (warp.ts), a whole clip at a time
+export const stretchPool = poolOf(1);
 
 // How note rendering is going, for the tests and the budget: notes that
 // weren't ready when asked for, those played late (within LATE_BUDGET) or

@@ -249,6 +249,7 @@ export default function ClipView({ region, onChange, trackColor, onAudition, onD
             {region.warpEnabled && (
               <>
                 <select className="rack-map-select" value={region.warpMode || 'beats'} onChange={(e) => set({ warpMode: e.target.value })}>
+                  <option value="complex">Complex</option>
                   <option value="beats">Beats</option>
                   <option value="tones">Tones</option>
                   <option value="texture">Texture</option>
