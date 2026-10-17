@@ -38,8 +38,10 @@ let saved: MapColumn[] | null = null;
 let savedNoteValue = 67; // G4: in range for all four
 let savedPads: Record<string, string> = {}; // the selected track's pad, by track
 
-export const savedColumns = (): MapColumn[] =>
-  saved ?? DEFAULTS.map((id) => findSound(id)).filter((r): r is SoundRecipe => !!r).map(scratchColumn);
+export const defaultColumns = (): MapColumn[] =>
+  DEFAULTS.map((id) => findSound(id)).filter((r): r is SoundRecipe => !!r).map(scratchColumn);
+
+export const savedColumns = (): MapColumn[] => saved ?? defaultColumns();
 
 export const saveColumns = (columns: MapColumn[]) => { saved = columns; };
 
