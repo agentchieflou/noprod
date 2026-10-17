@@ -8,6 +8,7 @@
 
 import dynamicsProcessorUrl from './worklets/dynamics-processor.js?url';
 import { MIDI_EFFECT_DEFS } from './midiEffects';
+import { createRandom } from '@noprod/sound';
 import recorderProcessorUrl from './worklets/recorder-processor.js?url';
 import onsetProcessorUrl from './worklets/onset-processor.js?url';
 import nativeInsertProcessorUrl from './worklets/native-insert-processor.js?url';
@@ -54,6 +55,9 @@ export interface DeviceDef {
   description: string;
   params: ParamSpec[];
   create(ctx: BaseAudioContext): DeviceDSP;
+  // How long it keeps sounding after its input stops, at these parameters
+  // (a render runs past the end by the longest); none for a device that doesn't
+  tail?(params: Record<string, ParamValue>): number;
 }
 
 export const dbToGain = (db: number, floorDb = -60) => (db <= floorDb ? 0 : Math.pow(10, db / 20));
@@ -432,12 +436,14 @@ const eqEightDef: DeviceDef = {
 // ---------------------------------------------------------------- Reverb
 
 // Exponentially decaying stereo noise: a cheap but convincing room tail.
+// Seeded noise, so the room is the same every time (two renders of a project are identical)
 const makeImpulse = (ctx: BaseAudioContext, decay: number) => {
   const len = Math.max(1, Math.floor(ctx.sampleRate * decay));
   const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  const random = createRandom(0x5eed);
   for (let c = 0; c < 2; c++) {
     const d = ir.getChannelData(c);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+    for (let i = 0; i < len; i++) d[i] = (random() * 2 - 1) * Math.pow(1 - i / len, 3);
   }
   return ir;
 };
@@ -467,7 +473,8 @@ const reverbDef: DeviceDef = {
       targets: (name) => (name === 'Dry/Wet' ? mix.targets() : []),
       dispose() { mix.input.disconnect(); conv.disconnect(); mix.output.disconnect(); }
     };
-  }
+  },
+  tail: (p) => num(p.Decay, 2.5)
 };
 
 // ---------------------------------------------------------------- Delay
@@ -505,6 +512,11 @@ const delayDef: DeviceDef = {
       },
       dispose() { mix.input.disconnect(); delay.disconnect(); fb.disconnect(); mix.output.disconnect(); }
     };
+  },
+  // the echoes down to -60 dB: the time per repeat, over the repeats the feedback allows
+  tail(p) {
+    const time = num(p.Time, 0.25), feedback = Math.min(0.95, num(p.Feedback, 40) / 100);
+    return feedback <= 0 ? time : time * Math.ceil(-3 / Math.log10(feedback));
   }
 };
 
@@ -537,6 +549,12 @@ export const getDeviceDef = (device: any): DeviceDef | null => {
 };
 
 // Parameter specs for any device card: audio effects and MIDI effects
+// How long a device keeps sounding after its input stops, at its parameters
+export const deviceTail = (device: any): number => {
+  const def = getDeviceDef(device);
+  return def?.tail ? def.tail(resolvedParameters(device)) : 0;
+};
+
 export const getParamSpecs = (device: any): ParamSpec[] | null =>
   device?.type === 'midi-fx' ? MIDI_EFFECT_DEFS[device.kind]?.params ?? null : getDeviceDef(device)?.params ?? null;
 
