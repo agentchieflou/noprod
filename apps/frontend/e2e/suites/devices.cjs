@@ -166,7 +166,8 @@ module.exports = async (page, ctx) => {
     check('Panner: each channel\'s level matches StereoPannerNode within 0.01 dB from -1 to 1', worst.gap < 0.01, `worst ${worst.gap.toFixed(5)} dB at pan ${worst.pan}; max sample difference ${worstDiff.toExponential(2)}`);
   }
 
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  // Neither the relay (8080) nor GhostDAW (8082) runs here
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[02]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };
