@@ -1,32 +1,50 @@
-# React + TypeScript + Vite
+# noprod frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The DAW: React 19, Vite and TypeScript, with a Web Audio engine. Sounds are
+built from scratch (arrangements of frequencies, or physical models), and the
+Keyboard Coach teaches as you play. See the [root README](../../README.md) and
+[CLAUDE.md](../../CLAUDE.md) for the rest of the repo.
 
-Currently, two official plugins are available:
+## Run
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+npm ci            # at the repo root
+npm run dev --workspace=apps/frontend
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Build
+
+```sh
+cd apps/frontend
+npx tsc -b && npx oxlint src && npx vite build
+```
+
+`dist/` is static and works under any path. Set `NOPROD_BASE` to the path it
+is served from (default `/`):
+
+```sh
+NOPROD_BASE=/noprod/ npx vite build
+```
+
+The build has no inlined scripts. It writes sourcemaps as separate `.map`
+files that the bundle doesn't reference; leave them off the server. The
+version and commit shown in the top bar come from `package.json` and git.
+
+## Test
+
+```sh
+npm run e2e                      # every suite, against the dev server
+npm run e2e -- designer dspmap   # some of them
+npm run e2e:dist                 # builds, serves dist under /noprod/, smoke-tests it
+E2E_DIST_DIR=dist npm run e2e:dist   # smoke-tests a NOPROD_BASE=/noprod/ build you made
+```
+
+Suites live in `e2e/suites/<name>.cjs`. `e2e:dist` runs `e2e/dist.mjs` against
+the built app with browser autoplay left on its default, so it covers the
+click that starts audio.
+
+## Deploy
+
+`.github/workflows/pages.yml` builds with `NOPROD_BASE=/noprod/`, runs the
+smoke test on that build and deploys it to GitHub Pages on every push to main.
+An admin enables Pages first (Settings → Pages → Source: GitHub Actions).
