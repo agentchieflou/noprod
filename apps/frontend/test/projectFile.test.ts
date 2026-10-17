@@ -17,7 +17,8 @@ const defaults = () => ({
     { id: 't1', name: '1 Audio', type: 'audio', volume: 0.8, pan: 0, sends: { 'return-a': 0.2 }, plugins: [] },
     { id: 't2', name: '2 MIDI', type: 'midi', volume: 0.8, pan: 0, sends: {}, plugins: [], instrument: { id: 'i1', name: 'NoProd Synth', type: 'instrument', parameters: { Gain: 0.7 } } }
   ],
-  regions: [] as any[], sessionClips: {} as any, scenes: [{ id: 's1', name: '', tempo: null }], launchQuantization: '1 bar', savedRacks: []
+  regions: [] as any[], sessionClips: {} as any, scenes: [{ id: 's1', name: '', tempo: null }], launchQuantization: '1 bar', savedRacks: [],
+  midiMappings: [] as any[]
 });
 
 const tone = (frames: number, hz: number, sr = 48000) => Float32Array.from({ length: frames }, (_, i) => Math.sin((2 * Math.PI * hz * i) / sr) * 0.5);
@@ -94,7 +95,7 @@ async function v1File(project: any, buffers: Record<string, { sampleRate: number
 
 test('v1 files load into v2, keys they predate filled in', async () => {
   const take = tone(4800, 220);
-  const { scenes: _s, launchQuantization: _q, ...project } = defaults();
+  const { scenes: _s, launchQuantization: _q, midiMappings: _m, ...project } = defaults();
   project.regions = [{ id: 'r1', trackId: 't1', file: 'Take', audioBuffer: { $audioBuffer: 'buf0' }, startTime: 1, duration: 0.1 }];
   const blob = await v1File(project, { buf0: { sampleRate: 48000, channels: [take, take] } });
   const { doc, pcm } = await readProjectFile(blob, defaults());
@@ -102,6 +103,7 @@ test('v1 files load into v2, keys they predate filled in', async () => {
   assert.deepEqual(doc.buffers, [{ id: 'buf0', sampleRate: 48000, length: 4800, channels: 2 }]);
   assert.deepEqual(doc.project.scenes, defaults().scenes);
   assert.equal(doc.project.launchQuantization, '1 bar');
+  assert.deepEqual(doc.project.midiMappings, []);
   assert.deepEqual(doc.project.regions, project.regions);
   assert.ok(sameSamples(pcm[0].channels[1], take));
 });
@@ -161,6 +163,13 @@ test('files with wrong types are refused, naming the field', async () => {
   await refuses(await file({ ...v2(), format: 'something-else' }), /Not a NoProd project/);
   await refuses(await file('{"format": "noprod-project", '), /not valid JSON/);
   await refuses(await file('[1, 2]'), /Not a NoProd project/);
+});
+
+test('MIDI mappings are checked and kept', async () => {
+  const mapping = { id: 'm1', target: { kind: 'track', trackId: 't1', param: 'volume' }, source: { input: 'any', channel: 1, type: 'cc', number: 7 }, min: 0, max: 1, mode: 'pickup', invert: false };
+  const { doc } = await readProjectFile(await file(v2({ ...defaults(), midiMappings: [mapping] })), defaults());
+  assert.deepEqual(doc.project.midiMappings, [mapping]);
+  await refuses(await file(v2({ ...defaults(), midiMappings: [{ ...mapping, source: { ...mapping.source, channel: 17 } }] })), /midiMappings\[0\]\.source\.channel/);
 });
 
 test('files with missing fields are refused, never half-loaded', async () => {

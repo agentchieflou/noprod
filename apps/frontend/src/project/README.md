@@ -111,8 +111,8 @@ store until the whole file has passed. In order, it:
    unchecked. A new key needs a migration that gives older files its default.
 4. Add a test that loads a file at the old version.
 
-v1 → v2 adds `scenes` and `launchQuantization`, which v1 files written before
-those existed don't have, from the store's defaults.
+v1 → v2 adds `scenes`, `launchQuantization` and `midiMappings`, which v1 files
+written before those existed don't have, from the store's defaults.
 
 ## Autosave and recovery
 

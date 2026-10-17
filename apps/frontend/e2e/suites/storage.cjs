@@ -203,13 +203,13 @@ module.exports = async (page, ctx) => {
   const tabC = await fresh.newPage();
   tabC.on('pageerror', (e) => ctx.logs.push(`[pageerror] ${e.message}`));
   const cdp = await tabC.target().createCDPSession();
-  await cdp.send('Storage.overrideQuotaForOrigin', { origin: new URL(url).origin, quotaSize: 200 * 1024 });
+  await cdp.send('Storage.overrideQuotaForOrigin', { origin: new URL(url).origin, quotaSize: 1024 * 1024 });
   await tabC.goto(url, { waitUntil: 'networkidle0' });
   await helpers(tabC);
   await ctx.sleep(500);
   await tabC.evaluate(() => {
     const st = window.__dawStore.getState();
-    const buf = window.__noise(5);
+    const buf = window.__noise(10);
     st.addRegion({ trackId: 'track-audio-1', file: 'Big', audioBuffer: buf, startTime: 0, duration: buf.duration });
   });
   await ctx.sleep(2500);

@@ -43,7 +43,8 @@ const V1_FIRST_KEYS = ['bpm', 'timeSignatures', 'countInBars', 'masterVolume', '
   'vstScanPaths', 'tracks', 'regions', 'sessionClips', 'savedRacks'];
 
 const MIGRATIONS: Record<number, (doc: any, defaults: Record<string, unknown>) => any> = {
-  // v2 requires every key; v1 files may predate scenes and launchQuantization
+  // v2 requires every key; v1 files may predate scenes, launchQuantization
+  // and midiMappings
   1: (doc, defaults) => {
     if (!isObject(doc.project)) return { ...doc, version: 2 };
     const added: Record<string, unknown> = {};
@@ -144,7 +145,14 @@ function projectChecks(bufferIds: Set<string>): Record<string, Check> {
     sessionClips: record(record(clip)),
     scenes: list(shape({ id: str, 'name?': str, 'tempo?': nullable(num) })),
     launchQuantization: str,
-    savedRacks: list(device)
+    savedRacks: list(device),
+    // Mappings to tracks or devices that are gone are dropped by loadProject
+    midiMappings: list(shape({
+      id: str,
+      target: shape({ kind: oneOf('track', 'send', 'master', 'device', 'instrument', 'tempo') }),
+      source: shape({ input: str, channel: range(1, 16, true), type: oneOf('cc', 'note'), number: range(0, 127, true) }),
+      min: range(0, 1), max: range(0, 1), mode: oneOf('pickup', 'jump'), invert: bool
+    }))
   };
 }
 
