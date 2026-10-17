@@ -28,14 +28,31 @@ const openDb = () => new Promise<IDBDatabase>((resolve, reject) => {
   req.onblocked = () => reject(new DOMException('An older NoProd tab is holding storage; close it and reload', 'InvalidStateError'));
 });
 
+// The connection, opened once. The browser may close it after a failed write
+// (Chrome does after a QuotaExceededError), so a failure drops it and the
+// next request opens a fresh one.
 let dbPromise: Promise<IDBDatabase> | null = null;
 const db = () => {
-  dbPromise ??= openDb().catch((err) => { dbPromise = null; throw err; });
+  dbPromise ??= openDb().then((d) => {
+    d.onclose = () => { dbPromise = null; };
+    d.onversionchange = () => { d.close(); dbPromise = null; };
+    return d;
+  }).catch((err) => { dbPromise = null; throw err; });
   return dbPromise;
 };
 
 // Runs `fn` in one transaction; resolves with its result once committed
 async function transact<T>(stores: string[], mode: IDBTransactionMode, fn: (tx: IDBTransaction, done: (v: T) => void) => void) {
+  try {
+    return await inTransaction(stores, mode, fn);
+  } catch (err) {
+    dbPromise?.then((d) => d.close(), () => {});
+    dbPromise = null;
+    throw err;
+  }
+}
+
+async function inTransaction<T>(stores: string[], mode: IDBTransactionMode, fn: (tx: IDBTransaction, done: (v: T) => void) => void) {
   const tx = (await db()).transaction(stores, mode);
   return new Promise<T>((resolve, reject) => {
     let result: T;

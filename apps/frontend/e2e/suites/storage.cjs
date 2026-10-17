@@ -226,7 +226,10 @@ module.exports = async (page, ctx) => {
     cleared = { banner: await tabC.evaluate(() => !!document.querySelector('.storage-banner')), slots: await slots(tabC), tries: i + 1 };
     if (!cleared.banner) break;
   }
-  if (cleared.banner) cleared.estimate = await tabC.evaluate(() => navigator.storage.estimate());
+  if (cleared.banner) {
+    cleared.notice = await tabC.evaluate(() => document.querySelector('.storage-banner').textContent);
+    cleared.estimate = await tabC.evaluate(() => navigator.storage.estimate());
+  }
   check('The notice clears when autosave fits again', !cleared.banner && cleared.slots.some((s) => s.bpm >= 140 && s.buffers === 0), JSON.stringify(cleared));
   await fresh.close();
 
