@@ -17,7 +17,8 @@ test('every synth name dictation knows plays a library sound', () => {
   for (const [name, id] of [['gm_violin', 'violin'], ['gm_viola', 'viola'], ['gm_cello', 'cello'], ['gm_contrabass', 'double-bass'],
     ['gm_trombone', 'trombone'], ['gm_french_horn', 'french-horn'], ['gm_recorder', 'recorder'], ['gm_banjo', 'banjo'],
     ['gm_acoustic_guitar_steel', 'guitar-steel'], ['gm_steel_drums', 'steel-drum'], ['gm_acoustic_bass', 'bass-finger'],
-    ['gm_pizzicato_strings', 'pizzicato'], ['gm_harpsichord', 'harpsichord'], ['gm_orchestral_harp', 'harp']]) {
+    ['gm_pizzicato_strings', 'pizzicato'], ['gm_harpsichord', 'harpsichord'], ['gm_orchestral_harp', 'harp'],
+    ['gm_tuba', 'tuba'], ['gm_piccolo', 'piccolo'], ['gm_muted_trumpet', 'trumpet-muted'], ['gm_trumpet', 'brass-trumpet']]) {
     assert.equal(strudelSound(name, true).sound, id, name);
   }
   assert.equal(strudelSound(undefined, true).sound, 'lead-triangle', "Strudel's default synth");
