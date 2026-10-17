@@ -689,7 +689,13 @@ struct Vst3Insert::Impl
         tresult PLUGIN_API beginEdit (ParamID) override { return kResultOk; }
         tresult PLUGIN_API performEdit (ParamID id, ParamValue value) override
         {
-            impl.toProcessor.push ({ id, value }); // the controller already has it
+            // The controller already has the value; the processor gets it
+            // with the next block. Edits come from whatever thread the
+            // plug-in's UI runs on, so they take a ring of their own (the
+            // control thread's changes keep theirs), with the producers
+            // serialised: the ring is single-producer.
+            std::lock_guard<std::mutex> lock (impl.editsLock);
+            impl.edits.push ({ id, value });
             return kResultOk;
         }
         tresult PLUGIN_API endEdit (ParamID) override { return kResultOk; }
@@ -738,7 +744,9 @@ struct Vst3Insert::Impl
     std::vector<std::vector<float*>> inputPointers, outputPointers;
     std::vector<AudioBusBuffers> inputBuffers, outputBuffers;
     ParameterChanges inputChanges, outputChanges;
-    ChangeRing toProcessor, fromProcessor;
+    ChangeRing toProcessor, fromProcessor; // the control thread's changes, and the processor's own
+    ChangeRing edits;                      // performEdit, from the plug-in's threads
+    std::mutex editsLock;
     ProcessContext context {};
     bool contextKnown = false;
 
@@ -1065,12 +1073,13 @@ void Vst3Insert::process (const float* const* inputs, float* const* outputs, int
     impl.inputChanges.clear();
     impl.outputChanges.clear();
     Change change;
-    while (impl.toProcessor.pop (change))
-    {
-        int32 index;
-        if (auto* queue = impl.inputChanges.addParameterData (change.id, index))
-            queue->addPoint (0, change.value, index);
-    }
+    for (auto* ring : { &impl.toProcessor, &impl.edits })
+        while (ring->pop (change))
+        {
+            int32 index;
+            if (auto* queue = impl.inputChanges.addParameterData (change.id, index))
+                queue->addPoint (0, change.value, index);
+        }
 
     auto inChannels = std::min (numChannels, impl.mainInputChannels);
     for (int ch = 0; ch < impl.mainInputChannels; ++ch)

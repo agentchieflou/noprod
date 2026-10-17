@@ -1367,6 +1367,39 @@ void testVst3()
         CHECK (errorAgainst (runProcessor (*insert, shorter), shorter, 0.5f) < 1e-6f);
     }
 
+    section ("VST3: a plug-in edits from its own thread while the control thread changes parameters");
+    {
+        // (the single-class test plug-in, told to by a state no parameter can
+        // produce, performEdits its gain 2000 times from a thread of its own
+        // and then reports 1.0 as the host tempo; the two producers must not
+        // share a ring, which TSan sees)
+        auto insert = Vst3Insert::create (module, module->getAudioEffects()[0].classId, error);
+        CHECK (insert != nullptr && insert->prepare (rate, 64, error));
+        if (insert != nullptr)
+        {
+            auto block = makeSignal (64);
+            std::atomic<bool> stop { false };
+            std::thread audio ([&] { while (! stop.load()) runProcessor (*insert, block); });
+            float storm = -1.0f;
+            std::vector<uint8_t> cue (sizeof (float));
+            std::memcpy (cue.data(), &storm, sizeof (float));
+            CHECK (insert->setState (cue));
+            auto allSet = true;
+            for (int i = 0; i < 2000; ++i)
+                allSet = insert->setParameterValue (0, static_cast<float> (i % 10) / 10.0f) && allSet;
+            CHECK (allSet);
+            for (int waited = 0; insert->getParameterValue (1) != 1.0f && waited < 500; ++waited)
+                sleepMs (10);
+            CHECK (insert->getParameterValue (1) == 1.0f);
+            stop = true;
+            audio.join();
+            runProcessor (*insert, block); // whatever either thread left is drained
+            CHECK (insert->setParameterValue (0, 0.75f));
+            runProcessor (*insert, block);
+            CHECK (errorAgainst (runProcessor (*insert, block), block, 0.75f) < 1e-6f);
+        }
+    }
+
     section ("VST3: through the host, by id, in a chain with an LPI insert");
     Rig rig;
     auto [gainId, separateId] = registerVst3 (rig.registry);
