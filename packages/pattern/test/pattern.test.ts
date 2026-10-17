@@ -120,7 +120,8 @@ test('struct takes the rhythm from the booleans', () => {
   assert.deepEqual(events(fastcat('a', 'b').struct(fastcat(true, false, true, true))), ['0 1/4 a', '1/2 1/4 b', '3/4 1/4 b']);
   assert.deepEqual(events(fastcat('a', 'b').struct(slowcat(fastcat(true, false), pure(true))), 2), ['0 1/2 a', '1 1 a']);
   assert.deepEqual(events(fastcat('a', 'b').mask(fastcat(true, false))), ['0 1/2 a']);
-  assert.deepEqual(events(pure('x').struct(fastcat<unknown>(1, 0, 'x', '~'))), ['0 1/4 x', '1/2 1/4 x', '3/4 1/4 x'], 'anything truthy counts');
+  assert.deepEqual(events(pure('x').struct(fastcat<unknown>(1, 0, 'x', 'f'))), ['0 1/4 x', '1/2 1/4 x'], 'f, false and 0 are off; anything else is on');
+  assert.deepEqual(events(pure('x').struct(fastcat<unknown>('t', 'false', 'true', '0'))), ['0 1/4 x', '1/2 1/4 x']);
 });
 
 test('Bjorklund spreads hits as evenly as it can', () => {
@@ -325,5 +326,5 @@ test('zero-width queries find the event under a point in time', () => {
 test('a Fraction can be used wherever a time is wanted', () => {
   assert.deepEqual(events(fastcat('a', 'b').late(new Fraction(1, 4))), ['1/4 1/2 a', '3/4 1/2 b']);
   assert.deepEqual(events(pure('a').fast(new Fraction(3, 2)), 2), ['0 2/3 a', '2/3 2/3 a', '4/3 2/3 a']);
-  assert.deepEqual(events(pure('a').fast('3/2'), 2), ['0 2/3 a', '2/3 2/3 a', '4/3 2/3 a']);
+  assert.deepEqual(events(pure('a').fast(Fraction.from('3/2')), 2), ['0 2/3 a', '2/3 2/3 a', '4/3 2/3 a']);
 });
