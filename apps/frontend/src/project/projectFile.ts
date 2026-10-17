@@ -1,98 +1,99 @@
-// .noprod project files: the project slice of the store as JSON, with every
-// AudioBuffer (clips, session clips, frozen tracks, takes) moved into a
-// de-duplicated table of base64 Float32 PCM, gzip-compressed as a whole.
+// .noprod project files (format.ts, README.md): the project slice of the
+// store, with every AudioBuffer (clips, session clips, frozen tracks, takes)
+// moved into a de-duplicated table of raw PCM. The worker does the writing
+// and reading; this side turns state into project.json and back.
 
-import { PROJECT_KEYS } from '../store/useDAWStore';
+import { v4 as uuidv4 } from 'uuid';
+import { PROJECT_KEYS, createDefaultProject } from '../store/useDAWStore';
+import { FORMAT, SCHEMA_VERSION, type BufferInfo, type ProjectDoc } from './schema';
+import type { Pcm } from './format';
 
-const FORMAT = 'noprod-project';
-const VERSION = 1;
+let worker: Worker | null = null;
+let nextId = 0;
+const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 
-interface EncodedBuffer {
-  sampleRate: number;
-  length: number;
-  channels: string[]; // base64 of each channel's Float32Array bytes
+// Calls an op in the project worker (projectWorker.ts); its errors keep
+// their name (QuotaExceededError, ProjectFileError, …)
+export function callWorker<T>(op: string, args: unknown = {}, transfer: Transferable[] = []): Promise<T> {
+  if (!worker) {
+    worker = new Worker(new URL('./projectWorker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (e) => {
+      const p = pending.get(e.data.id);
+      if (!p) return;
+      pending.delete(e.data.id);
+      if (e.data.ok) p.resolve(e.data.result);
+      else p.reject(Object.assign(new Error(e.data.error.message), { name: e.data.error.name }));
+    };
+    worker.onerror = (e) => {
+      pending.forEach((p) => p.reject(new Error(`The project worker failed: ${e.message}`)));
+      pending.clear();
+    };
+  }
+  const id = nextId++;
+  return new Promise<T>((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    worker!.postMessage({ id, op, args }, transfer);
+  });
 }
 
-const toBase64 = (bytes: Uint8Array) => {
-  let bin = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(bin);
-};
-
-const fromBase64 = (b64: string) => {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+// Each AudioBuffer keeps one id for the session, so autosave writes it once
+const bufferIds = new WeakMap<AudioBuffer, string>();
+const idOf = (buf: AudioBuffer) => {
+  let id = bufferIds.get(buf);
+  if (!id) { id = uuidv4(); bufferIds.set(buf, id); }
+  return id;
 };
 
 const isAudioBuffer = (v: unknown): v is AudioBuffer =>
   typeof AudioBuffer !== 'undefined' && v instanceof AudioBuffer;
 
-// Project state (plain data + AudioBuffers) -> gzip'd JSON blob
-export async function serializeProject(state: any): Promise<Blob> {
-  const buffers: Record<string, EncodedBuffer> = {};
-  const ids = new Map<AudioBuffer, string>();
-
-  const encode = (buf: AudioBuffer) => {
-    let id = ids.get(buf);
-    if (id) return id;
-    id = `buf${ids.size}`;
-    ids.set(buf, id);
-    const channels: string[] = [];
-    for (let c = 0; c < buf.numberOfChannels; c++) {
-      const data = buf.getChannelData(c);
-      channels.push(toBase64(new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength))));
-    }
-    buffers[id] = { sampleRate: buf.sampleRate, length: buf.length, channels };
-    return id;
-  };
-
+// The store's project slice -> project.json, and the buffers it refers to
+export function snapshotProject(state: any): { json: string; buffers: Map<string, AudioBuffer> } {
+  const buffers = new Map<string, AudioBuffer>();
   const project: Record<string, unknown> = {};
   PROJECT_KEYS.forEach((k) => { project[k] = state[k]; });
-  // `buffers` comes after `project`, so it is already filled by the time
-  // JSON.stringify reaches it
-  const json = JSON.stringify(
-    { format: FORMAT, version: VERSION, savedAt: new Date().toISOString(), project, buffers },
-    (_key, value) => (isAudioBuffer(value) ? { $audioBuffer: encode(value) } : value)
-  );
-  // Without CompressionStream the file is plain JSON; loading takes either
-  if (typeof CompressionStream === 'undefined') return new Blob([json]);
-  const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
-  return new Response(stream).blob();
+  const projectJson = JSON.stringify(project, (_key, value) => {
+    if (!isAudioBuffer(value)) return value;
+    const id = idOf(value);
+    buffers.set(id, value);
+    return { $audioBuffer: id };
+  });
+  const table: BufferInfo[] = [...buffers].map(([id, b]) => ({ id, sampleRate: b.sampleRate, length: b.length, channels: b.numberOfChannels }));
+  const head = JSON.stringify({ format: FORMAT, version: SCHEMA_VERSION, savedAt: new Date().toISOString(), buffers: table });
+  return { json: `${head.slice(0, -1)},"project":${projectJson}}`, buffers };
 }
 
-// gzip'd JSON blob -> project state with AudioBuffers rebuilt in `ctx`
-export async function deserializeProject(blob: Blob, ctx: BaseAudioContext): Promise<any> {
-  const magic = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
-  const gzipped = magic[0] === 0x1f && magic[1] === 0x8b;
-  if (gzipped && typeof DecompressionStream === 'undefined') throw new Error("This browser can't open compressed project files; update it");
-  const text = await new Response(gzipped ? blob.stream().pipeThrough(new DecompressionStream('gzip')) : blob).text();
-  const doc = JSON.parse(text);
-  if (doc.format !== FORMAT) throw new Error('Not a NoProd project file');
-  if (doc.version > VERSION) throw new Error(`Project was saved by a newer NoProd (format v${doc.version})`);
+// A copy of a buffer's samples, to transfer to the worker
+export const toPcm = (buf: AudioBuffer): Pcm => ({
+  sampleRate: buf.sampleRate,
+  channels: Array.from({ length: buf.numberOfChannels }, (_, c) => {
+    const data = new Float32Array(buf.length);
+    buf.copyFromChannel(data, c);
+    return data;
+  })
+});
 
+export const pcmTransfer = (pcm: Pcm[]) => pcm.flatMap((p) => p.channels.map((c) => c.buffer as ArrayBuffer));
+
+// Project state (plain data + AudioBuffers) -> a .noprod file
+export async function serializeProject(state: any): Promise<Blob> {
+  const { json, buffers } = snapshotProject(state);
+  const pcm = [...buffers.values()].map(toPcm);
+  return callWorker<Blob>('write', { json, pcm }, pcmTransfer(pcm));
+}
+
+// A checked doc and its samples -> project state with AudioBuffers in `ctx`
+export function reviveProject(doc: ProjectDoc, pcm: Pcm[], ctx: BaseAudioContext): any {
   const decoded = new Map<string, AudioBuffer>();
-  const decode = (id: string) => {
-    let buf = decoded.get(id);
-    if (buf) return buf;
-    const enc: EncodedBuffer = doc.buffers[id];
-    buf = ctx.createBuffer(enc.channels.length, enc.length, enc.sampleRate);
-    enc.channels.forEach((b64, c) => {
-      const bytes = fromBase64(b64);
-      buf!.copyToChannel(new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4), c);
-    });
-    decoded.set(id, buf);
-    return buf;
-  };
-
+  doc.buffers.forEach((info, i) => {
+    const buf = ctx.createBuffer(info.channels, info.length, info.sampleRate);
+    pcm[i].channels.forEach((data, c) => buf.copyToChannel(data as Float32Array<ArrayBuffer>, c));
+    decoded.set(info.id, buf);
+  });
   const revive = (value: any): any => {
     if (Array.isArray(value)) return value.map(revive);
     if (value && typeof value === 'object') {
-      if (typeof value.$audioBuffer === 'string') return decode(value.$audioBuffer);
+      if (typeof value.$audioBuffer === 'string') return decoded.get(value.$audioBuffer);
       const out: any = {};
       Object.keys(value).forEach((k) => { out[k] = revive(value[k]); });
       return out;
@@ -100,4 +101,10 @@ export async function deserializeProject(blob: Blob, ctx: BaseAudioContext): Pro
     return value;
   };
   return revive(doc.project);
+}
+
+// A .noprod file of any version -> project state, or a clear error
+export async function deserializeProject(blob: Blob, ctx: BaseAudioContext): Promise<any> {
+  const { doc, pcm } = await callWorker<{ doc: ProjectDoc; pcm: Pcm[] }>('read', { blob, defaults: createDefaultProject() });
+  return reviveProject(doc, pcm, ctx);
 }

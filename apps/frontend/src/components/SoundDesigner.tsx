@@ -12,6 +12,7 @@ import { useDAWStore } from '../store/useDAWStore';
 import { libraryOf } from '../audio/library';
 import { renderSound, toAudioBuffer, playRendered, exportWav, resynthesizeBuffer } from '../audio/designing';
 import { saveUserSound, findAnySound } from '../audio/userSounds';
+import { describeStorageError } from '../project/storage';
 import { audioContext, getStripInput, resumeAudio } from '../audio/engine';
 import { guarded } from '../notify';
 import { getFile } from '../browser/library';
@@ -290,9 +291,13 @@ export default function SoundDesigner({ track, onOpenDspMap }: { track: any; onO
   const saveMine = async () => {
     // A built-in sound is saved as a new one of mine, sounding exactly the same
     const mine = recipe.id.startsWith('my-') ? recipe : withId(recipe, `my-${uuidv4().slice(0, 8)}`);
-    await saveUserSound(mine);
     if (mine !== recipe) update(mine);
-    flash(`Saved “${mine.name}” to My Sounds`);
+    try {
+      await saveUserSound(mine);
+      flash(`Saved “${mine.name}” to My Sounds`);
+    } catch (err) {
+      flash(`“${mine.name}” is in My Sounds until you close the page: ${describeStorageError(err)}`);
+    }
   };
 
   return (

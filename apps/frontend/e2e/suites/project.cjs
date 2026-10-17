@@ -103,7 +103,7 @@ module.exports = async (page, ctx) => {
   const file = await page.evaluate(async () => { for (let i = 0; i < 100 && !window.__download; i++) await new Promise((r) => setTimeout(r, 50)); return window.__download; });
   const afterSave = await page.evaluate(() => ({ dirty: window.__store.isProjectDirty(window.__dawStore.getState()), name: document.querySelector('.project-name').textContent }));
   const bytes = file && Buffer.from(file.bytes);
-  check('Save As downloads a gzip\'d .noprod file and marks the project saved', !!bytes && file.name.endsWith('.noprod') && bytes[0] === 0x1f && bytes[1] === 0x8b && !afterSave.dirty,
+  check('Save As downloads a .noprod file (v2 signature) and marks the project saved', !!bytes && file.name.endsWith('.noprod') && bytes.subarray(0, 8).join() === '137,78,80,82,74,13,10,26' && !afterSave.dirty,
     file ? `${file.name}, ${(bytes.length / 1024).toFixed(1)} KB, dirty ${afterSave.dirty}` : 'no download');
 
   // 3. New Project clears everything
