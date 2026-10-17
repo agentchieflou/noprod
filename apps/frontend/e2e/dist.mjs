@@ -3,6 +3,7 @@
 // default, so audio starts with a click). Exits non-zero if a check fails.
 //
 //   npm run e2e:dist
+//   E2E_DIST_DIR=dist npm run e2e:dist   # test a build you made with NOPROD_BASE=/noprod/
 //
 // Chromium: CHROME_PATH, else /opt/pw-browsers/chromium if present, else
 // Puppeteer's own download.
@@ -18,7 +19,8 @@ import puppeteer from 'puppeteer';
 const here = dirname(fileURLToPath(import.meta.url));
 const frontend = resolve(here, '..');
 const BASE = '/noprod/';
-const outDir = mkdtempSync(join(tmpdir(), 'noprod-dist-'));
+const ownBuild = !process.env.E2E_DIST_DIR;
+const outDir = ownBuild ? mkdtempSync(join(tmpdir(), 'noprod-dist-')) : resolve(process.env.E2E_DIST_DIR);
 const shotDir = join(here, '.shots');
 mkdirSync(shotDir, { recursive: true });
 
@@ -30,8 +32,10 @@ const check = (name, ok, detail = '') => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-process.env.NOPROD_BASE = BASE;
-await build({ root: frontend, logLevel: 'error', build: { outDir, emptyOutDir: true } });
+if (ownBuild) {
+  process.env.NOPROD_BASE = BASE;
+  await build({ root: frontend, logLevel: 'error', build: { outDir, emptyOutDir: true } });
+}
 
 // A static host that serves dist only under BASE
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.json': 'application/json', '.wasm': 'application/wasm', '.map': 'application/json' };
@@ -134,7 +138,7 @@ try {
 } finally {
   await browser.close();
   server.close();
-  rmSync(outDir, { recursive: true, force: true });
+  if (ownBuild) rmSync(outDir, { recursive: true, force: true });
 }
 const failed = results.filter((r) => r.startsWith('FAIL'));
 console.log(`\n${results.length - failed.length}/${results.length} passed`);

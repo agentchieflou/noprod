@@ -36,8 +36,15 @@ version and commit shown in the top bar come from `package.json` and git.
 npm run e2e                      # every suite, against the dev server
 npm run e2e -- designer dspmap   # some of them
 npm run e2e:dist                 # builds, serves dist under /noprod/, smoke-tests it
+E2E_DIST_DIR=dist npm run e2e:dist   # smoke-tests a NOPROD_BASE=/noprod/ build you made
 ```
 
 Suites live in `e2e/suites/<name>.cjs`. `e2e:dist` runs `e2e/dist.mjs` against
 the built app with browser autoplay left on its default, so it covers the
 click that starts audio.
+
+## Deploy
+
+`.github/workflows/pages.yml` builds with `NOPROD_BASE=/noprod/`, runs the
+smoke test on that build and deploys it to GitHub Pages on every push to main.
+An admin enables Pages first (Settings → Pages → Source: GitHub Actions).

@@ -1,0 +1,59 @@
+name: Pages
+
+# Every push to main builds the app for /noprod/, smoke-tests that build and
+# deploys it. Pages must be enabled by an admin (Settings → Pages → Source:
+# GitHub Actions); until then configure-pages fails, on main only, and never
+# a pull request's CI.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Forks don't have Pages enabled
+    if: github.repository == 'agentchieflou/noprod'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - run: npx vite build
+        working-directory: apps/frontend
+        env:
+          NOPROD_BASE: /noprod/
+      # The smoke test runs on the very files that get uploaded
+      - run: npm run e2e:dist
+        env:
+          E2E_DIST_DIR: dist
+      # Sourcemaps are not served
+      - run: rm -f apps/frontend/dist/assets/*.map
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: apps/frontend/dist
+
+  deploy:
+    if: github.repository == 'agentchieflou/noprod'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
