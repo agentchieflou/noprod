@@ -78,3 +78,5 @@ the test runner and linters, may use any license that allows our use of them.
 If a dependency is restricted, we rebuild what it does in this repo rather than
 ship it. Work from documentation, specifications and observed behavior. Do not
 read or copy the restricted project's source.
+
+Still to rebuild: Strudel (AGPL; the sequencer and AI dictation) and JUCE (GhostDAW).

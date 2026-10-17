@@ -27,10 +27,10 @@ body:
     validations:
       required: true
   - type: input
-    id: version
+    id: commit
     attributes:
-      label: App version
-      description: The version or commit you are running. If you use the hosted app, say so.
-      placeholder: 1.0.0, or a commit hash
+      label: Commit
+      description: The commit you are running. In a clone, run `git rev-parse --short HEAD`.
+      placeholder: e.g. 8dab6ad
     validations:
       required: true
