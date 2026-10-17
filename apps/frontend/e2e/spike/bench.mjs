@@ -58,7 +58,8 @@ const cpuDelta = (before, after) => {
   return by;
 };
 
-const results = { machine: { cores: (await import('node:os')).cpus().length, cpu: (await import('node:os')).cpus()[0]?.model }, offline: [], realtime: [], latency: [], nodes: null };
+const previous = existsSync(join(here, 'results.json')) ? JSON.parse(readFileSync(join(here, 'results.json'), 'utf8')) : {};
+const results = { ...previous, machine: { cores: (await import('node:os')).cpus().length, cpu: (await import('node:os')).cpus()[0]?.model }, offline: want('offline') ? [] : previous.offline || [], realtime: want('realtime') ? [] : previous.realtime || [], latency: want('latency') ? [] : previous.latency || [], nodes: want('nodes') ? null : previous.nodes || null };
 const run = (fn, ...args) => page.evaluate((fn, args) => window.bench[fn](...args), fn, args);
 const row = (o) => Object.entries(o).map(([k, v]) => `${k}=${typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(2)) : JSON.stringify(v)}`).join(' ');
 
@@ -76,10 +77,14 @@ if (want('offline')) {
 
 if (want('realtime')) {
   console.log('\n── realtime: 14 s, main thread stalled 400 ms at 5 s and 900 ms at 9 s');
-  for (const [variant, window] of [['a', 0.25], ['a', 1.0], ['c', 0.25], ['c', 1.0], ['b', 1.0], ['a-fdn', 0.25]]) {
+  // Projects the render thread keeps up with here: no devices at 32 tracks,
+  // native devices at 4 tracks, the TypeScript engine at 32
+  const runs = [['a-nodev', 32, 0.25], ['a-nodev', 32, 1.0], ['c-nodev', 32, 0.25], ['c-nodev', 32, 1.0], ['b-nodev', 32, 1.0],
+    ['a', 4, 0.25], ['a-fdn', 4, 0.25], ['c', 4, 1.0], ['b', 32, 1.0], ['a', 32, 0.25], ['c', 32, 1.0]];
+  for (const [variant, tracks, window] of runs) {
     const before = audioThreadCpu();
     const wall0 = performance.now();
-    const r = await run('realtime', variant, 14, 32, window, [{ at: 5, ms: 400 }, { at: 9, ms: 900 }]);
+    const r = await run('realtime', variant, 14, tracks, window, [{ at: 5, ms: 400 }, { at: 9, ms: 900 }]);
     const wall = (performance.now() - wall0) / 1000;
     const cpu = cpuDelta(before, audioThreadCpu());
     r.audioThreadLoad = Object.fromEntries(Object.entries(cpu).filter(([, s]) => s > 0.05).map(([k, s]) => [k, s / (r.seconds + 0.5)]));
@@ -92,8 +97,8 @@ if (want('realtime')) {
 
 if (want('latency')) {
   console.log('\n── live input: trigger on the main thread to first sample');
-  for (const variant of ['a', 'c', 'b']) {
-    for (const loaded of [false, true]) {
+  for (const [variant, loaded] of [['a', false], ['c', false], ['b', false], ['a-nodev', true], ['c-nodev', true], ['b', true]]) {
+    {
       const r = await run('latency', variant, 32, loaded);
       results.latency.push(r);
       console.log(row(r));

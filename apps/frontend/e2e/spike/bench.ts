@@ -27,7 +27,7 @@ const SOUND_IDS = ['piano-electric', 'marimba', 'bass-finger', 'pad-warm'];
 const SCALE = [0, 2, 4, 7, 9, 12, 9, 7];
 const VELOCITY = 0.8;
 
-type Variant = 'a' | 'a-fdn' | 'a-nodev' | 'b' | 'b-nodev' | 'c' | 'c-fdn';
+type Variant = 'a' | 'a-fdn' | 'a-nodev' | 'b' | 'b-nodev' | 'c' | 'c-fdn' | 'c-nodev';
 
 interface Rendered { id: number; l: Float32Array; r: Float32Array }
 let rendered: Rendered[] = [];     // sound s, degree d -> id s * 8 + d

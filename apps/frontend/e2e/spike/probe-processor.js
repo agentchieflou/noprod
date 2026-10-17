@@ -41,6 +41,8 @@ class ProbeProcessor extends AudioWorkletProcessor {
       for (let i = 0; i < ch.length; i++) if (Math.abs(ch[i]) > QUIET) { loud = i; break; }
       if (loud >= 0 && this.silent) { this.silent = false; this.port.postMessage({ type: 'onset', frame: currentFrame + loud }); }
       else if (loud < 0) this.silent = true;
+    } else {
+      this.silent = true; // every source has ended: the input is gone
     }
     return true;
   }
