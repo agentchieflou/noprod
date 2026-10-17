@@ -23,7 +23,7 @@ initMidiLearn(useDAWStore)
 initRecorder(useDAWStore)
 initCapture(useDAWStore)
 initComputerKeyboard(useDAWStore)
-initCoach()
+initCoach(useDAWStore)
 initAccompany(useDAWStore)
 initEngine(useDAWStore).finally(() => {
   createRoot(document.getElementById('root')!).render(
