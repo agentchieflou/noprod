@@ -123,6 +123,20 @@ module.exports = async (page, ctx) => {
   await ctx.sleep(1500);
   await page.evaluate(([id, r]) => window.__dawStore.getState().updateTrackSend(id, r, 0), [track1, ret]);
 
+  // 6a. The master's loudness is measured in a worker and reported about 10 times a second
+  await page.evaluate(async () => { window.__engine = await import('/src/audio/engine.ts'); return 1; });
+  const reports = await page.evaluate(async () => {
+    let n = 0, last = window.__engine.getLoudness();
+    const end = performance.now() + 2000;
+    while (performance.now() < end) {
+      const now = window.__engine.getLoudness();
+      if (now !== last) { n++; last = now; }
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return n / 2;
+  });
+  check('Loudness readings arrive from the worker at about 10 Hz', reports >= 6 && reports <= 14, `${reports}/s`);
+
   // 6. Integrated loudness of a -12 LUFS library sound played for 3 s
   await page.evaluate(() => [...document.querySelectorAll('.mx-reset')][0].click());
   await ctx.sleep(300);

@@ -13,7 +13,7 @@ import { getAudioInputNode, isMonitoring, onInputsChange } from './inputs';
 import { createDeviceDSP, dspKind, resolvedParameters, loadDeviceWorklets, type DeviceDSP, type ParamTarget } from './devices';
 import { loadLiveModels } from './liveModels';
 import { onNativeLatencyChange } from '../native/trackBridge';
-import { analysis } from '@noprod/sound';
+import type { LoudnessReadings } from './meterWorker';
 import meterProcessorUrl from './worklets/meter-processor.js?url';
 
 // Why audio can't run, or null. When the browser refuses a real context (no
@@ -66,8 +66,12 @@ const createMeterTap = (source: AudioNode): MeterTap => {
 
 const masterTap = createMeterTap(masterAnalyser);
 
-// Master loudness (BS.1770-4) over the same signal, fed by a worklet
-export const masterLoudness = new analysis.LoudnessMeter(audioContext.sampleRate);
+// Master loudness (BS.1770-4) over the same signal. A worklet streams the
+// samples to a worker, which measures them and reports about ten times a second.
+let loudnessWorker: Worker | null = null;
+let loudnessReadings: LoudnessReadings = { momentary: -Infinity, shortTerm: -Infinity, integrated: -Infinity, truePeak: -Infinity };
+export const getLoudness = () => loudnessReadings;
+export const resetLoudness = () => loudnessWorker?.postMessage({ type: 'reset' });
 
 const MAX_COMPENSATION = 2; // seconds of latency compensation a strip can apply
 
@@ -403,7 +407,12 @@ export async function initEngine(store: { getState: () => any; subscribe: (fn: (
   try {
     await audioContext.audioWorklet.addModule(meterProcessorUrl);
     const node = new AudioWorkletNode(audioContext, 'noprod-meter', { numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' });
-    node.port.onmessage = (e) => masterLoudness.push(e.data[0], e.data[1]);
+    const worker = new Worker(new URL('./meterWorker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (e: MessageEvent<LoudnessReadings>) => { loudnessReadings = e.data; };
+    const { port1, port2 } = new MessageChannel();
+    worker.postMessage({ sampleRate: audioContext.sampleRate, port: port2 }, [port2]);
+    node.port.postMessage({ port: port1 }, [port1]);
+    loudnessWorker = worker;
     masterAnalyser.connect(node);
   } catch (err) {
     console.warn('Loudness meter unavailable', err);

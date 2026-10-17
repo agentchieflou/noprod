@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useDAWStore, RETURN_LETTERS, MASTER_STRIP_ID } from '../store/useDAWStore';
-import { flattenDevices, MASTER_ID, masterLoudness } from '../audio/engine';
+import { flattenDevices, MASTER_ID, resetLoudness } from '../audio/engine';
 import {
   FADER_MAX, faderToGain, gainToFader, formatDb, toDb, clearClip, drawMeter, drawLoudness,
   type MeterView, type LoudnessView
@@ -135,7 +135,7 @@ const Loudness = ({ view }: { view: LoudnessView }) => {
       {cell('shortTerm', 'Short-term', 'LUFS')}
       {cell('integrated', 'Integrated', 'LUFS')}
       {cell('truePeak', 'True peak', 'dBTP')}
-      <button className="mx-reset" title="Reset the integrated loudness and true peak" onClick={() => masterLoudness.reset()}>Reset</button>
+      <button className="mx-reset" title="Reset the integrated loudness and true peak" onClick={() => resetLoudness()}>Reset</button>
     </div>
   );
 };

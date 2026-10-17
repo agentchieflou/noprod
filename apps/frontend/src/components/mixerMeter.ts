@@ -1,7 +1,7 @@
 // The Mixer's numbers and drawing. Meters read the engine's analyser taps
 // straight into a canvas, so none of this touches React state or the store.
 
-import { getMeterTap, masterLoudness } from '../audio/engine';
+import { getMeterTap, getLoudness } from '../audio/engine';
 
 export const DB_MIN = -60;
 export const DB_MAX = 6;
@@ -132,9 +132,10 @@ export interface LoudnessView {
 const lufs = (v: number) => (v > -100 ? v.toFixed(1) : '-∞');
 
 export function drawLoudness(view: LoudnessView) {
+  const readings = getLoudness();
   const set = (el: HTMLElement | null, text: string) => { if (el && el.textContent !== text) el.textContent = text; };
-  set(view.momentary, lufs(masterLoudness.momentary));
-  set(view.shortTerm, lufs(masterLoudness.shortTerm));
-  set(view.integrated, lufs(masterLoudness.integrated));
-  set(view.truePeak, lufs(masterLoudness.truePeak <= FLOOR ? -Infinity : masterLoudness.truePeak));
+  set(view.momentary, lufs(readings.momentary));
+  set(view.shortTerm, lufs(readings.shortTerm));
+  set(view.integrated, lufs(readings.integrated));
+  set(view.truePeak, lufs(readings.truePeak <= FLOOR ? -Infinity : readings.truePeak));
 }
