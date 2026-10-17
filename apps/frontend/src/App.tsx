@@ -38,6 +38,8 @@ import AudioStatus from './components/AudioStatus';
 import Notices from './components/Notices';
 import { liveModelStats } from './audio/liveModels';
 import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
+// Not lazy with the DSP Map: it notes each track's sound as it's selected, for the map's A/B
+import './components/dspMapState';
 import './App.css';
 
 // Panels that aren't on screen at first load arrive when opened (#137)

@@ -163,6 +163,40 @@ module.exports = async (page, ctx) => {
   await page.keyboard.press('Escape');
   check('In learn mode with nothing picked, notes bind nothing either', (await mappings()).length === count);
 
+  // 9. A note mapped to a control drives it and plays nothing; so does the note that binds it
+  await page.evaluate(() => {
+    window.__midiSeen = [];
+    window.__unseen = window.__inputs.onMidiEvent((e) => window.__midiSeen.push(e));
+  });
+  const reset = () => page.evaluate(() => { window.__midiSeen = []; });
+  const seen = (pitch) => page.evaluate((pitch) => window.__midiSeen.filter((e) => e.pitch === pitch).length, pitch);
+  const muted = () => state((st, id) => st.tracks.find((t) => t.id === id).isMuted, track);
+  await state((st, id) => st.updateTrackVolume(id, 0.8), track);
+  await page.click(learnBtn);
+  await ctx.sleep(100);
+  await clickTarget(`track:${track}:mute`);
+  await reset();
+  await note('on', 36); await note('off', 36);
+  await page.keyboard.press('Escape');
+  const bind = (await mappings()).find((m) => m.source.type === 'note' && m.source.number === 36);
+  check('In learn mode a note binds the control picked, and plays nothing', bind?.target.param === 'mute' && (await seen(36)) === 0, `${await seen(36)} seen`);
+
+  await reset();
+  await note('on', 36);
+  check('A mapped note toggles its control and reaches no listener', (await muted()) && (await seen(36)) === 0, `muted ${await muted()}, ${await seen(36)} seen`);
+  const held = await level(300);
+  await note('off', 36);
+  check('The master stays silent while the mapped note is held', held < -60, `${held.toFixed(1)} dB`);
+  await note('on', 36); await note('off', 36);
+  check('A second mapped note toggles the mute back', !(await muted()));
+
+  await reset();
+  await note('on', 60);
+  const heard = await level(300);
+  await note('off', 60);
+  check('An unmapped note still plays', heard > -60 && (await seen(60)) === 2, `${heard.toFixed(1)} dB, ${await seen(60)} seen`);
+  await page.evaluate(() => window.__unseen());
+
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
