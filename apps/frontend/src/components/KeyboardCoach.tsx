@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { X, ChevronLeft, ChevronRight, RotateCcw, GraduationCap, Check, Music } from 'lucide-react';
 import { ACCOMPANY_STYLES, ALL_KEYS, findLesson, findStyle, keyName, sameKey, type CoachMode } from '@noprod/theory';
 import {
-  subscribeCoach, getCoachState, setCoachOpen, setCoachMode, setCoachKey, setCoachLesson, setCoachLessonFromNotes, restartLesson, getClipLesson, CLIP_LESSON, setCoachFocus, pretty, LESSON_GROUPS
+  subscribeCoach, getCoachState, setCoachOpen, setCoachMode, setCoachKey, setCoachLesson, setCoachLessonFromNotes, restartLesson, getClipLesson, CLIP_LESSON, CLIP_PICK, setCoachFocus, pretty, LESSON_GROUPS
 } from '../audio/coach';
 import { useDAWStore } from '../store/useDAWStore';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled, setKeyboardMode, setOctave } from '../audio/computerKeyboard';
@@ -69,12 +69,15 @@ export default function KeyboardCoach({ onPiano }: { onPiano: boolean }) {
         <div className="kb-row">
           <select className="rack-map-select coach-select" value={coach.lesson ?? ''} title={about}
             onChange={(e) => {
-              if (e.target.value !== CLIP_LESSON) return setCoachLesson(e.target.value || null);
+              if (e.target.value === CLIP_LESSON) return;   // already the lesson
+              if (e.target.value !== CLIP_PICK) return setCoachLesson(e.target.value || null);
               const region = useDAWStore.getState().regions.find((r: MidiRegion) => r.id === useDAWStore.getState().selectedRegionId);
               if (region?.notes?.length) setCoachLessonFromNotes(region.notes, region.file);
             }}>
             <option value="">Pick a lesson…</option>
-            <option value={CLIP_LESSON} disabled={!clip && coach.lesson !== CLIP_LESSON} title="Play the notes of the MIDI clip selected in the arrangement">From the selected clip</option>
+            {/* The action's value is one the select never holds, so it can be picked again for another clip */}
+            <option value={CLIP_PICK} disabled={!clip} title="Play the notes of the MIDI clip selected in the arrangement">From the selected clip</option>
+            {coach.lesson === CLIP_LESSON && <option value={CLIP_LESSON}>{pretty(getClipLesson()?.name ?? 'Clip')} (clip)</option>}
             {LESSON_GROUPS.map((g) => (
               <optgroup key={g.label} label={g.label}>
                 {g.lessons.map((l) => <option key={l.id} value={l.id}>{pretty(l.name)}</option>)}

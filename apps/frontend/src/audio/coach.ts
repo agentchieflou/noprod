@@ -76,6 +76,8 @@ export const setCoachMode = (mode: CoachMode) => { coach.setMode(mode); set({ mo
 export const setCoachKey = (key: Key | 'auto') => { coach.setKey(key); set({ key }); save(); refresh(); };
 // The picker's value for the lesson made from a clip, which isn't in LESSONS
 export const CLIP_LESSON = 'clip';
+// The picker entry that makes one; the select never holds it
+export const CLIP_PICK = 'clip-pick';
 let clipLesson: Lesson | null = null;
 export const getClipLesson = () => clipLesson;
 

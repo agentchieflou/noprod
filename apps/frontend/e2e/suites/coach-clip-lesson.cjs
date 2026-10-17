@@ -29,6 +29,15 @@ module.exports = async (page, ctx) => {
     const o = [...document.querySelectorAll('.coach-select option')].find((o) => o.textContent === 'From the selected clip');
     return o ? { disabled: o.disabled, value: o.value } : null;
   });
+  // Like a user: picking the value the select already holds fires no change event
+  // (puppeteer's page.select fires one anyway)
+  const pick = (value) => page.evaluate((value) => {
+    const select = document.querySelector('.coach-select');
+    if (select.value === value) return 1;
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return 1;
+  }, value);
   const progress = () => page.evaluate(() => document.querySelector('.coach-progress')?.textContent ?? '');
   const publish = (type, pitches) => page.evaluate((type, pitches) => {
     for (const pitch of pitches) window.__inputs.publishMidi({ type, pitch, velocity: type === 'on' ? 0.8 : 0, channel: 1, source: 'test-midi', time: 0 });
@@ -48,7 +57,7 @@ module.exports = async (page, ctx) => {
   await ctx.sleep(150);
   const some = await option();
   check('The entry is enabled once a MIDI clip is selected', some?.disabled === false, JSON.stringify(some));
-  await page.select('.coach-select', 'clip');
+  await pick('clip-pick');
   await page.evaluate(() => { document.activeElement?.blur?.(); return 1; });
   await ctx.sleep(200);
   const p1 = await progress();
@@ -65,14 +74,14 @@ module.exports = async (page, ctx) => {
   // 3. A melody clip
   await makeClip([[60, 0, 0.5], [64, 0.5, 0.5], [67, 1, 0.5], [64, 1.5, 0.5]]);
   await ctx.sleep(150);
-  await page.select('.coach-select', '');
-  await page.select('.coach-select', 'clip');
+  await pick('clip-pick');   // a second time, straight from the first clip's lesson
   await page.evaluate(() => { document.activeElement?.blur?.(); return 1; });
   await ctx.sleep(200);
   const m1 = await progress();
+  const held = await page.evaluate(() => document.querySelector('.coach-select').value);
   await play([60]);
   const m2 = await progress();
-  check('A melody clip gives melody steps', m1.startsWith('Step 1 / 4') && m1.includes('C4') && m2.startsWith('Step 2 / 4') && m2.includes('E4'), `${m1} → ${m2}`);
+  check('Picking it again takes the newly selected clip: melody steps', held === 'clip' && m1.startsWith('Step 1 / 4') && m1.includes('C4') && m2.startsWith('Step 2 / 4') && m2.includes('E4'), `${m1} → ${m2}`);
 
   // 4. Not saved across a reload
   await page.reload({ waitUntil: 'networkidle0' });
