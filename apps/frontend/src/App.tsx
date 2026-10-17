@@ -21,7 +21,11 @@ import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio
 import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from './audio/coachLoader';
 import { getPluginEditor, subscribePluginEditor } from './native/pluginEditor';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
-import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage } from './native/audioCore';
+import { handleOrchestratorMessage } from './native/audioCore';
+import { getOrchestratorStatus, onOrchestratorMessage, sendOrchestrator, subscribeOrchestrator } from './native/orchestrator';
+import { getServices, subscribeServices, getServicesDialogOpen, subscribeServicesDialog, setServicesDialogOpen } from './native/services';
+import { watchNativeConsent } from './native/consent';
+import NativeConsentDialog from './components/NativeConsentDialog';
 import ArrangementRuler from './components/ArrangementRuler';
 import TempoControls from './components/TempoControls';
 import Playhead from './components/Playhead';
@@ -63,7 +67,10 @@ if (import.meta.env.DEV) {
     // the coach's band, once it has loaded (coachLoader.ts)
     get accompany() { return accompanyDebug(); } };
 }
-const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
+const ServicesDialog = lazy(() => import('./components/ServicesDialog'));
+
+// A project that wants native plug-ins asks before GhostDAW loads them
+watchNativeConsent(useDAWStore);
 
 // A hosted plug-in's own editor changed a parameter: its device keeps it
 onNativeEditorParameter((deviceId, parameterId, value, gesture) =>
@@ -171,7 +178,7 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggedOverTrack, setDraggedOverTrack] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'dspmap' | 'vst-paths' | 'dictation'>('devices');
+  const [chosenTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'dspmap' | 'vst-paths' | 'dictation'>('devices');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [showIO, setShowIO] = useState(false);
@@ -182,8 +189,13 @@ function App() {
   const capturable = useSyncExternalStore(onCaptureBufferChange, () => hasCapturable(useDAWStore.getState())) && tracks.length > 0;
 
   // AI Dictation (Orchestrator connection)
-  const orchestratorWsRef = useRef<WebSocket | null>(null);
-  const [orchestratorConnected, setOrchestratorConnected] = useState(false);
+  const services = useSyncExternalStore(subscribeServices, getServices);
+  const servicesOpen = useSyncExternalStore(subscribeServicesDialog, getServicesDialogOpen);
+  const orchestratorConnected = useSyncExternalStore(subscribeOrchestrator, getOrchestratorStatus) === 'connected';
+  const dictationOn = services.dictation.enabled;
+  const ghostdawOn = services.ghostdaw.enabled;
+  // A tab for a service that is off isn't there to stay on
+  const activeTab = (chosenTab === 'dictation' && !dictationOn) || (chosenTab === 'vst-paths' && !ghostdawOn) ? 'devices' : chosenTab;
   const [dictationInput, setDictationInput] = useState('');
   const [dictationStatus, setDictationStatus] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
   const [dictationCode, setDictationCode] = useState<string | null>(null);
@@ -191,52 +203,39 @@ function App() {
   const [dictationResult, setDictationResult] = useState<DictationResult | null>(null);
   const awaitingCode = useRef(false); // only the window that dictated makes tracks from the result
 
-  useEffect(() => {
-    const ws = new WebSocket(ORCHESTRATOR_WS_URL);
-    orchestratorWsRef.current = ws;
-    attachOrchestrator(ws);
-
-    ws.onopen = () => setOrchestratorConnected(true);
-    ws.onclose = () => { setOrchestratorConnected(false); detachOrchestrator(ws); };
-    ws.onerror = () => setOrchestratorConnected(false);
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (handleOrchestratorMessage(msg)) return; // native plug-in host (Audio Core)
-      if (msg.type === 'GENERATED') {
-        // The code Gemini wrote: our pattern engine plays a cycle of it here,
-        // and its parts become tracks playing library sounds
-        setDictationCode(msg.code);
-        if (!awaitingCode.current) return;
-        awaitingCode.current = false;
-        import('./audio/dictation').then((d) => {
-          try {
-            setDictationResult(d.applyDictation(useDAWStore, msg.code));
-            setDictationStatus('done');
-          } catch (e) {
-            setDictationError(e instanceof Error ? e.message : String(e));
-            setDictationStatus('error');
-          }
-        });
-      } else if (msg.type === 'ERROR') {
-        awaitingCode.current = false;
-        setDictationError(msg.message);
-        setDictationStatus('error');
-      }
-    };
-
-    return () => { detachOrchestrator(ws); ws.close(); };
-  }, []);
+  useEffect(() => onOrchestratorMessage((msg) => {
+    if (handleOrchestratorMessage(msg)) return; // native plug-in host (Audio Core)
+    if (msg.type === 'GENERATED') {
+      // The code Gemini wrote: our pattern engine plays a cycle of it here,
+      // and its parts become tracks playing library sounds
+      setDictationCode(msg.code);
+      if (!awaitingCode.current) return;
+      awaitingCode.current = false;
+      import('./audio/dictation').then((d) => {
+        try {
+          setDictationResult(d.applyDictation(useDAWStore, msg.code));
+          setDictationStatus('done');
+        } catch (e) {
+          setDictationError(e instanceof Error ? e.message : String(e));
+          setDictationStatus('error');
+        }
+      });
+    } else if (msg.type === 'ERROR') {
+      awaitingCode.current = false;
+      setDictationError(msg.message);
+      setDictationStatus('error');
+    }
+  }), []);
 
   const handleSendDictation = () => {
-    const ws = orchestratorWsRef.current;
-    if (!dictationInput.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!dictationInput.trim() || !orchestratorConnected) return;
 
     setDictationStatus('sending');
     setDictationError(null);
     setDictationCode(null);
     setDictationResult(null);
     awaitingCode.current = true;
-    ws.send(JSON.stringify({ type: 'DICTATION', text: dictationInput.trim() }));
+    sendOrchestrator({ type: 'DICTATION', text: dictationInput.trim() });
   };
 
   // Playhead display: the transport owns position and scheduling; this just
@@ -532,11 +531,11 @@ function App() {
         alert("Invalid file format. Ensure this is a valid Ableton Live Set (.als) file.");
         return;
       }
-      const { tempo, tracksList, regionsList } = set;
+      const { tempo, tracksList, regionsList, skippedAudioClips } = set;
 
       // Update store state
       loadAbletonSet(tempo, tracksList, regionsList);
-      alert(`Loaded Ableton Live Set: "${file.name}"!\nBPM: ${tempo}\nTracks: ${tracksList.length}\nRegions: ${regionsList.length}`);
+      alert(`Loaded Ableton Live Set: "${file.name}"!\nBPM: ${tempo}\nTracks: ${tracksList.length}\nMIDI clips: ${regionsList.length}${skippedAudioClips ? `\nAudio clips not imported: ${skippedAudioClips} (their recordings aren't in the set)` : ''}`);
 
     } catch (err: any) {
       console.error("ALS Import Error:", err);
@@ -636,7 +635,7 @@ function App() {
         <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
 
         {/* AI Dictation */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        {dictationOn && <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           <input
             type="text"
             placeholder="Describe a beat or melody..."
@@ -661,7 +660,13 @@ function App() {
           >
             {orchestratorConnected ? '●' : '○'}
           </span>
-        </div>
+        </div>}
+
+        <button className="btn-metronome" onClick={() => setServicesDialogOpen(!servicesOpen)} title="Turn local services on or off: GhostDAW plug-in host, AI dictation">
+          Services
+        </button>
+        {servicesOpen && <Suspense fallback={null}><ServicesDialog /></Suspense>}
+        <NativeConsentDialog />
 
         {/* View Switcher */}
         <div className="view-switcher">
@@ -1103,8 +1108,8 @@ function App() {
           <button className={`detail-tab ${activeTab === 'clip' ? 'active' : ''}`} onClick={() => setActiveTab('clip')}>Clip View</button>
           <button className={`detail-tab ${activeTab === 'sound' ? 'active' : ''}`} onClick={() => setActiveTab('sound')}>Sound Designer</button>
           <button className={`detail-tab ${activeTab === 'dspmap' ? 'active' : ''}`} onClick={() => setActiveTab('dspmap')}>DSP Map</button>
-          <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>
-          <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>
+          {ghostdawOn && <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>}
+          {dictationOn && <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>}
         <span className="app-version" title={`noprod ${APP_VERSION}, build ${APP_COMMIT}`}>v{APP_VERSION} · {APP_COMMIT}</span>
         </div>
         
@@ -1154,11 +1159,11 @@ function App() {
 
           {activeTab === 'dspmap' && <Suspense fallback={null}><DspMap onOpenDesigner={() => setActiveTab('sound')} /></Suspense>}
 
-          {activeTab === 'vst-paths' && (
+          {activeTab === 'vst-paths' && ghostdawOn && (
             <Suspense fallback={null}><PluginFolders selectedTrack={selectedTrack} /></Suspense>
           )}
 
-          {activeTab === 'dictation' && (
+          {activeTab === 'dictation' && dictationOn && (
             <Suspense fallback={null}>
               <DictationPanel status={dictationStatus} code={dictationCode} result={dictationResult} error={dictationError} />
             </Suspense>

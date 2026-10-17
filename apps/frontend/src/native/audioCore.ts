@@ -5,6 +5,8 @@
 // chains and sends them commands (see apps/audio_core/src/PluginHost.h).
 
 import { hidePluginEditor, showPluginEditor } from './pluginEditor';
+import { getServices } from './services';
+import { approveNativePath } from './consent';
 
 export interface NativeParameter {
   index: number;
@@ -67,9 +69,11 @@ export const findNativePlugin = (name: string): NativePlugin | null => {
 };
 
 // A track device that the Audio Core hosts through the native bridge
-export const nativeDeviceFor = (p: NativePlugin) => ({
-  name: p.name, type: 'vst', pluginPath: p.path, format: p.format, pluginId: p.pluginId, parameters: {}
-});
+// (the user choosing the plug-in is their consent to load it, consent.ts)
+export const nativeDeviceFor = (p: NativePlugin) => {
+  approveNativePath(p.path);
+  return { name: p.name, type: 'vst', pluginPath: p.path, format: p.format, pluginId: p.pluginId, parameters: {} };
+};
 
 export const busInserts = (state: AudioCoreState | null, bus: NativeBusId): NativeInsert[] =>
   state?.buses.find((b) => b.bus === bus)?.inserts ?? [];
@@ -146,7 +150,7 @@ export function handleOrchestratorMessage(msg: any): boolean {
       return true;
     }
     case 'EDITOR_OPENED':
-      showPluginEditor(msg, () => send({ type: 'CLOSE_EDITOR' }));
+      showPluginEditor(msg, () => send({ type: 'CLOSE_EDITOR' }), snapshot.connected && getServices().ghostdaw.enabled);
       return true;
     case 'EDITOR_CLOSED':
       hidePluginEditor(msg.editorId);
