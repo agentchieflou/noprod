@@ -9,6 +9,7 @@ import {
 import { subscribeStorageIssue, getStorageIssue, reportStorageError, clearStorageIssue, requestPersistence } from '../project/storage';
 import { exportUserSounds, importUserSounds } from '../audio/userSounds';
 import { audioContext } from '../audio/engine';
+import { notify, guarded, errorMessage } from '../notify';
 import { setPosition } from '../audio/transport';
 
 const EXT = '.noprod';
@@ -116,7 +117,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
       fileHandle = handle;
       flash(`Opened ${file.name}`);
     } catch (err: any) {
-      if (err?.name !== 'AbortError') alert(`Could not open project: ${err.message || err}`);
+      if (err?.name !== 'AbortError') notify(`Could not open project: ${errorMessage(err)}`, 'error');
     }
   };
 
@@ -142,12 +143,12 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
       setRecovery((list) => list.filter((c) => c.key !== copy.key));
       flash(`Restored “${copy.name}”`);
     } catch (err: any) {
-      alert(`Could not restore “${copy.name}”: ${err.message || err}`);
+      notify(`Could not restore “${copy.name}”: ${errorMessage(err)}`, 'error');
     }
   };
 
-  const discard = (copy: RecoveryCopy) => {
-    dropRecoveryCopy(copy.key);
+  const discard = async (copy: RecoveryCopy) => {
+    await dropRecoveryCopy(copy.key);
     setRecovery((list) => list.filter((c) => c.key !== copy.key));
   };
 
@@ -158,9 +159,10 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
     flash(`Downloaded ${count} of My Sounds`);
   };
 
+  // A menu action: closes the menu, and shows its failure as a notice
   const run = (fn: () => unknown) => async () => {
     setOpen(false);
-    try { await fn(); } catch (err: any) { alert(`${err.message || err}`); }
+    try { await fn(); } catch (err) { notify(errorMessage(err), 'error'); }
   };
 
   // Keyboard shortcuts
@@ -263,7 +265,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
           e.target.value = '';
           if (!file) return;
           try { await loadBlob(file, baseName(file.name)); fileHandle = null; flash(`Opened ${file.name}`); }
-          catch (err: any) { alert(`Could not open project: ${err.message || err}`); }
+          catch (err) { notify(`Could not open project: ${errorMessage(err)}`, 'error'); }
         }}
       />
       <input
@@ -276,7 +278,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
           e.target.value = '';
           if (!file) return;
           try { flash(`Imported ${await importUserSounds(file)} sounds into My Sounds`); }
-          catch (err: any) { alert(`Could not import sounds: ${err.message || err}`); }
+          catch (err) { notify(`Could not import sounds: ${errorMessage(err)}`, 'error'); }
         }}
       />
       {status && <div className="file-status">{status}</div>}
@@ -292,7 +294,7 @@ export default function FileMenu({ onImportAls }: { onImportAls: () => void }) {
             <div className="recovery-banner" key={copy.key}>
               Unsaved project “{copy.name}” from {new Date(copy.savedAt).toLocaleString()} can be recovered.
               <button className="btn-metronome" onClick={() => restore(copy)}>Restore</button>
-              <button className="btn-metronome" onClick={() => discard(copy)}>Discard</button>
+              <button className="btn-metronome" onClick={guarded('Discarding the recovery copy', () => discard(copy))}>Discard</button>
             </div>
           ))}
         </div>

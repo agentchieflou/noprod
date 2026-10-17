@@ -33,8 +33,8 @@ export default function AudioCorePanel({ scanPaths }: { scanPaths: string[] }) {
 
       {!connected ? (
         <p className="native-hint">
-          Start the Audio Core (<code>apps/audio_core</code>, GhostDAW) and the Orchestrator to host native plug-ins.
-          The Sequencer's patterns play through its master inserts.
+          GhostDAW is a companion app that runs VST3 and other native plug-ins for noprod. It isn't running, or noprod
+          can't reach it at the addresses in Services. Start GhostDAW on this computer and noprod connects on its own.
         </p>
       ) : (
         <>

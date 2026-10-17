@@ -39,6 +39,8 @@ module.exports = async (page, ctx) => {
       };
     };
   }));
+  // Error notices (notify), as shown
+  const errors = (p = page) => p.evaluate(() => [...document.querySelectorAll('.notice-error')].map((n) => n.textContent));
   const banners = (p = page) => p.evaluate(() => [...document.querySelectorAll('.recovery-banner')].map((b) => b.textContent));
   const menu = async (label, p = page) => {
     await p.evaluate(() => document.querySelector('.file-menu-btn').click());
@@ -105,10 +107,9 @@ module.exports = async (page, ctx) => {
     return { name: st.projectName, bpm: st.bpm, scenes: st.scenes.length, frames: b?.length, first: b?.getChannelData(0)[10] };
   });
   check('A v1 file opens, with the keys it predates filled in', opened.name === 'Old Song' && opened.bpm === 97 && opened.scenes === 8 && opened.frames === 4800 && Math.abs(opened.first - Math.sin(1)) < 1e-6, JSON.stringify(opened));
-  const dialogs = ctx.logs.filter((l) => l.startsWith('[dialog]')).length;
   await input.uploadFile(join(ctx.fixtures, 'Broken.noprod'));
   await ctx.sleep(1500);
-  const refused = { said: ctx.logs.filter((l) => l.startsWith('[dialog]')).slice(dialogs), bpm: await page.evaluate(() => window.__dawStore.getState().bpm) };
+  const refused = { said: await errors(), bpm: await page.evaluate(() => window.__dawStore.getState().bpm) };
   check('A damaged file is refused with a clear message and nothing loaded', refused.bpm === 97 && refused.said.some((l) => /Could not open project: .*tracks: expected a list/.test(l)), JSON.stringify(refused));
 
   // 4. Autosave runs while playing, and a reload offers the work back
@@ -214,7 +215,8 @@ module.exports = async (page, ctx) => {
   });
   await ctx.sleep(2500);
   const full = await tabC.evaluate(() => document.querySelector('.storage-banner')?.textContent || '');
-  check('A quota error is shown to the user', /Autosave: browser storage is full/.test(full), full || JSON.stringify(await slots(tabC)));
+  const fullNotice = await errors(tabC);
+  check('A quota error is shown to the user, as a banner and a notice', /Autosave: browser storage is full/.test(full) && fullNotice.some((n) => /Autosave: browser storage is full/.test(n)), full || JSON.stringify({ slots: await slots(tabC), notices: fullNotice }));
   await tabC.screenshot({ path: join(ctx.shotDir, 'project-quota.png') });
   // Make room: lift the quota. Chrome counts an aborted write against it
   // until it cleans up, so freeing a little isn't enough; the worker reopens
@@ -250,10 +252,9 @@ module.exports = async (page, ctx) => {
   }));
   const listed = await page.evaluate(async () => (await import('/src/audio/userSounds.ts')).getUserSounds().map((s) => s.name));
   check('Imported sounds join My Sounds, stored with a schema version', listed.includes('Imported Marimba') && stored.version === 1 && stored.name === 'Imported Marimba' && stored.dbVersion === 2, JSON.stringify({ listed, stored }));
-  const before = ctx.logs.filter((l) => l.startsWith('[dialog]')).length;
   await soundsInput.uploadFile(join(ctx.fixtures, 'bad-sounds.json'));
   await ctx.sleep(800);
-  const badSaid = ctx.logs.filter((l) => l.startsWith('[dialog]')).slice(before);
+  const badSaid = await errors();
   check('A malformed sounds file is refused', badSaid.some((l) => /Could not import sounds: Sound 1 .*unknown type "laser"/.test(l)), JSON.stringify(badSaid));
   await page.evaluate(() => {
     window.__downloads = [];
@@ -264,6 +265,8 @@ module.exports = async (page, ctx) => {
   const exported = await page.evaluate(async () => { const d = await window.__downloads[0]; return { name: d.name, doc: JSON.parse(d.text) }; });
   check('My Sounds export as a versioned file', exported.name.endsWith('.json') && exported.doc.format === 'noprod-sounds' && exported.doc.version === 1 && exported.doc.sounds.some((s) => s.id === 'my-imported'), exported.name);
 
+  const alerts = ctx.logs.filter((l) => l.startsWith('[dialog]') && !/Discard unsaved changes/.test(l));
+  check('Nothing used an alert', alerts.length === 0, alerts.join(' | '));
   await ctx.shot('project');
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
   check('No page errors', errors.length === 0, errors.join(' / '));

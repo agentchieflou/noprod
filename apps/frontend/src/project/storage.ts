@@ -1,7 +1,10 @@
 // Browser storage problems, told to the user instead of swallowed: autosave,
-// My Sounds and the plug-in list report here, and the File menu shows the
-// latest one. Also asks once for persistent storage, so the browser won't
-// evict what's kept here (Safari does after a week without a visit).
+// My Sounds and the plug-in list report here, notify() announces each, and
+// the File menu shows the latest. Also asks once for persistent storage, so
+// the browser won't evict what's kept here (Safari does after a week without
+// a visit).
+
+import { notify } from '../notify';
 
 export interface StorageIssue {
   what: string;    // which store: "Autosave", "My Sounds", …
@@ -24,9 +27,13 @@ export function describeStorageError(err: unknown): string {
   return `the write failed (${(err as any)?.message || err})`;
 }
 
+// Shown as a notice when it starts, and as a banner until that store
+// writes again (autosave retries on every edit, so it isn't noticed each time)
 export function reportStorageError(what: string, err: unknown) {
   console.warn(`${what}:`, err);
-  issue = { what, message: `${what}: ${describeStorageError(err)}` };
+  const message = `${what}: ${describeStorageError(err)}`;
+  if (issue?.message !== message) notify(message, 'error');
+  issue = { what, message };
   emit();
 }
 

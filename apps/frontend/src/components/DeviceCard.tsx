@@ -4,6 +4,8 @@ import { DeviceExtra } from './DeviceVisuals';
 import ParamControl from './ParamControl';
 import { getParamSpecs, resolvedParameters, type ParamValue } from '../audio/devices';
 import { audioContext } from '../audio/engine';
+import { getServices, subscribeServices } from '../native/services';
+import { approveNativePath } from '../native/consent';
 import { getNativeDeviceState, isNativeDevice, openNativeDeviceEditor, subscribeNativeDevices, type NativeDeviceState } from '../native/trackBridge';
 
 interface DeviceCardProps {
@@ -93,14 +95,21 @@ export default function DeviceCard({ device, onChange, onRemove, className = '',
 
 // Where a hosted plug-in stands: connected and loaded, offline, or failed
 function NativeStatus({ device, state }: { device: any; state: NativeDeviceState | null }) {
+  const ghostdawOn = useSyncExternalStore(subscribeServices, getServices).ghostdaw.enabled;
   const ms = state ? Math.round((state.latencyFrames / audioContext.sampleRate) * 1000) : 0;
   let text: string;
   let tone = '';
   if (state?.error) {
     text = state.error;
     tone = 'error';
-  } else if (!state?.connected) {
-    text = 'Audio Core offline — audio passes through';
+  } else if (!ghostdawOn) {
+    text = 'GhostDAW is off — turn it on in Services to load this plug-in. Audio passes through';
+    tone = 'warn';
+  } else if (!state) {
+    text = 'waiting for your OK to load this plug-in — audio passes through';
+    tone = 'warn';
+  } else if (!state.connected) {
+    text = 'GhostDAW not reachable — audio passes through';
     tone = 'warn';
   } else if (!state.insert) {
     text = 'loading in the Audio Core…';
@@ -111,5 +120,10 @@ function NativeStatus({ device, state }: { device: any; state: NativeDeviceState
       tone = 'warn';
     }
   }
-  return <div className={`device-note native-device-status ${tone}`} title={device.pluginPath}>{text}</div>;
+  return (
+    <div className={`device-note native-device-status ${tone}`} title={device.pluginPath}>
+      {text}
+      {ghostdawOn && !state && <button className="browser-link" onClick={() => approveNativePath(device.pluginPath)}> Allow</button>}
+    </div>
+  );
 }

@@ -94,7 +94,7 @@ export const clearAutosave = () => {
   }).catch(() => undefined);
 };
 
-export const dropRecoveryCopy = (key: string) => serial(() => callWorker('drop', { key })).catch(() => undefined);
+export const dropRecoveryCopy = (key: string) => serial(() => callWorker('drop', { key }));
 
 // Unsaved work this tab can recover: its own (after a reload) and that of
 // tabs that are no longer open
@@ -125,5 +125,6 @@ export async function adoptRecoveryCopy(copy: RecoveryCopy, state: any) {
     reportStorageError('Autosave', err);
     return; // the copy stays where it is until this tab's slot holds it
   }
-  await dropRecoveryCopy(copy.key);
+  // Left behind if this fails: it's offered again next time, which is safe
+  await dropRecoveryCopy(copy.key).catch((err) => reportStorageError('Recovery', err));
 }
