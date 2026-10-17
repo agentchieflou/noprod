@@ -235,7 +235,27 @@ static void testFiles()
     CHECK (found.size() == 2 && found[0].filename() == "q.DLL" && found[1].filename() == "p.so");
     CHECK (listFiles (dir, { ".so" }, 1).size() <= 1);
     CHECK (createDirectories (dir / "Thing.vst3") && createDirectories (dir / "Other.VST3") && listBundles (dir, ".vst3").size() == 2);
+    // Bundles in a vendor's subfolder count; one inside another bundle doesn't
+    CHECK (createDirectories (dir / "Vendor" / "Deep.vst3") && createDirectories (dir / "Thing.vst3" / "Contents" / "Inner.vst3"));
+    auto bundles = listBundles (dir, ".vst3");
+    CHECK (bundles.size() == 3 && bundles[2].filename() == "Deep.vst3");
     CHECK (listFiles (dir / "nope", { ".so" }).empty() && listBundles (dir / "nope", ".vst3").empty());
+    // A symlink to a bundle is a bundle (the VST3 SDK installs plug-ins that
+    // way); a symlink back up the tree is not followed, by either walk
+    std::error_code linkError;
+    fs::create_directory_symlink (dir / "Vendor" / "Deep.vst3", dir / "Linked.vst3", linkError);
+    if (linkError) // (making links needs a privilege on some Windows setups)
+        std::cout << "  (skipping the symlink checks: " << linkError.message() << ")" << std::endl;
+    else
+    {
+        fs::create_directory_symlink (dir, dir / "Vendor" / "loop", linkError);
+        CHECK (! linkError);
+        bundles = listBundles (dir, ".vst3");
+        CHECK (bundles.size() == 4 && bundles[0].filename() == "Linked.vst3");
+        for (auto& b : bundles)
+            CHECK (pathToUtf8 (b).find ("loop") == std::string::npos);
+        CHECK (listFiles (dir, { ".so", ".dll" }).size() == 2);
+    }
     CHECK (restrictToOwner (dir / "a.txt"));
    #if ! GHOSTDAW_WINDOWS
     CHECK ((fs::status (dir / "a.txt").permissions() & (fs::perms::group_all | fs::perms::others_all)) == fs::perms::none);

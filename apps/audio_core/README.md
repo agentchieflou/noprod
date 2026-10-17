@@ -39,10 +39,11 @@ The new host lives beside the old one until the switch:
 | Path | What |
 | --- | --- |
 | `src/platform/` | Sockets (loopback only) and the WebSocket server, the message loop and timers, files, dynamic libraries, logging, JSON, pairing, the single-instance lock and the crash handler |
-| `src/host/` | The host: `InsertChain` (RCU, as before), `Mixer`, `HapAudioEngine`, `AudioDevice`, the `Watchdog`, `LpiPlugin` (the LPI loader and insert), `PluginRegistry` (the scanned list, the skipped binaries, the settings), `PluginScanner` (a child process per binary), `PluginHost` (the commands, by id), `TrackStreams`, `editor/` (off-screen editors streamed to the browser) and `Control` (pairing and the control messages) |
+| `src/host/` | The host: `InsertChain` (RCU, as before), `Mixer`, `HapAudioEngine`, `AudioDevice`, the `Watchdog`, `LpiPlugin` (the LPI loader and insert), `Vst3Plugin` (VST 3 modules and inserts), `PluginRegistry` (the scanned list, the skipped binaries, the settings), `PluginScanner` (a child process per binary), `PluginHost` (the commands, by id), `TrackStreams`, `editor/` (off-screen editors streamed to the browser) and `Control` (pairing and the control messages) |
 | `third_party/miniaudio/` | Device I/O: [miniaudio](https://github.com/mackron/miniaudio), public domain or MIT-0 (see its README there). Chosen over writing WASAPI, CoreAudio and ALSA backends ourselves: one well-tested file, no dependencies, a null backend for machines without a sound card and for CI |
+| `third_party/vst3/` | The VST 3 SDK's `pluginterfaces` (MIT), the interfaces alone: what a plug-in's binary exports and the COM-style objects host and plug-in exchange. The SDK's helper classes (its hosting library, `base/`, `public.sdk/`) are not used; the host-side objects are ours, in `Vst3Plugin.cpp` |
 | `src/ghostdaw_main.cpp` | The new entry point, `ghostdaw` |
-| `tests/` | Its tests, `ghostdaw_tests`: the WebSocket server over real sockets (handshake, framing, masking, fragmentation, limits, the token), JSON, the loop, pairing, the chains and mixer under concurrent swaps, the device on the null backend, the watchdog, and the plugin tests ported from the JUCE host (LPI, commands, streams, editors, keyboard, transport, latency), plus the scanner surviving a plugin that crashes or hangs |
+| `tests/` | Its tests, `ghostdaw_tests`: the WebSocket server over real sockets (handshake, framing, masking, fragmentation, limits, the token), JSON, the loop, pairing, the chains and mixer under concurrent swaps, the device on the null backend, the watchdog, and the plugin tests ported from the JUCE host (LPI, VST 3, commands, streams, editors, keyboard, transport, latency), plus the scanner surviving a plugin that crashes or hangs. The VST 3 test plug-in (`tests/plugins/vst3_test_gain.cpp`) is written against the interfaces too, and built as a bundle in two variants: a component that is its own controller, and a separate controller class |
 | `src/*.h`, `src/main.cpp` | The JUCE host, `GhostDAW`, until the switch |
 
 ```sh
@@ -59,6 +60,31 @@ when a port is taken and 2 when another GhostDAW already runs with that
 data folder. Crashes are written to `ghostdaw.log` there. `--null-audio`
 runs without a sound card (a machine without one falls back to that by
 itself).
+
+### VST 3
+
+A VST 3 plug-in is a bundle (`X.vst3/Contents/<arch>/X.so`, `.../MacOS/X`,
+`.../x86_64-win/X.vst3`; a single `.vst3` file still loads on Windows)
+exporting a module entry function and `GetPluginFactory`. `Vst3Module`
+loads the binary for this platform, runs the entry function
+(`ModuleEntry`, `bundleEntry` with the `CFBundle`, `InitDll`) and lists
+the factory's audio effect classes. A class's `pluginId` is the 32-digit
+hex of its class UID (the JUCE host used its own identifier string, so
+VST 3 devices in projects saved before the switch are matched again by
+name). `Vst3Insert` creates the component (and its separate controller,
+when it names one, connected through `IConnectionPoint` with the
+component's state copied over), takes stereo on the main buses and
+activates the rest as the plug-in declares them, and processes 32-bit
+float blocks with the chain's transport as its `ProcessContext`.
+
+Parameters are the controller's, normalized 0..1 with the plug-in's own
+text. A change from the browser goes to the controller at once and to the
+processor with the next block, through a lock-free queue the audio thread
+drains into `ProcessData.inputParameterChanges`; what the processor sends
+back (`outputParameterChanges`) and what the plug-in edits itself
+(`performEdit`, `restartComponent`) go the other way, to the controller
+and the browser, on the control thread. The component's state
+(`getState`/`setState`) is what a preset holds.
 
 ### Reliable
 
