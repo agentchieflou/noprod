@@ -14,7 +14,6 @@ import { createLibraryInstrument, soundAsBuffer, libraryStats } from './audio/li
 import { renderArrangement } from './audio/scheduler';
 import { startLibraryWarmup } from './audio/libraryWarmup';
 import { findAnySound, loadUserSounds } from './audio/userSounds';
-import './native/orchestrator'; // follows the GhostDAW setting
 import DictationBox from './components/DictationBox';
 import { hasKey, subscribeKey } from './dictation/key';
 import type { SoundRecipe } from '@noprod/sound';
@@ -24,6 +23,7 @@ import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio
 import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from './audio/coachLoader';
 import { getPluginEditor, subscribePluginEditor } from './native/pluginEditor';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
+import './native/audioCore'; // GhostDAW's own, paired connection (follows Services)
 import { getServices, subscribeServices, getServicesDialogOpen, subscribeServicesDialog, setServicesDialogOpen } from './native/services';
 import { watchNativeConsent } from './native/consent';
 import NativeConsentDialog from './components/NativeConsentDialog';
@@ -42,6 +42,7 @@ import { notify, guarded } from './notify';
 import { Panel } from './components/ErrorBoundary';
 import AudioStatus from './components/AudioStatus';
 import Notices from './components/Notices';
+import { isControl, onEnter } from './components/a11y';
 import { liveModelStats } from './audio/liveModels';
 import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain, engineStats, engineReady, getScheduler } from './audio/transport';
 // Not lazy with the DSP Map: it notes each track's sound as it's selected, for the map's A/B
@@ -328,7 +329,8 @@ function App() {
       // (a plugin editor with keyboard focus counts as typing)
       const target = e.target as HTMLElement;
       const isInput = target.tagName === 'INPUT' || !!target.closest?.('[data-keyboard-capture]');
-      if (e.code === 'Space' && !isInput) {
+      // Space on a focused button, select or slider belongs to that control
+      if (e.code === 'Space' && !isInput && !isControl(target)) {
         e.preventDefault();
         togglePlayback();
       }
@@ -611,7 +613,7 @@ function App() {
         {/* Master Controls */}
         <div className="master-fader">
           <Volume2 size={16} aria-label="Master volume" />
-          <input
+          <input aria-label="Master volume"
             type="range" min="0" max="1" step="0.01"
             value={masterVolume}
             onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
@@ -640,6 +642,9 @@ function App() {
               {/* Arranger Track Grid (Moved to left) */}
               <div
                 className="arranger-timeline"
+                role="region"
+                aria-label="Arrangement timeline"
+                tabIndex={0}
                 ref={arrangerScrollRef}
                 onScroll={() => syncScroll(arrangerScrollRef.current, headersScrollRef.current)}
                 onClick={() => setSelectedRegionId(null)}
@@ -755,6 +760,10 @@ function App() {
                   <Fragment key={track.id}>
                   <div
                     className={`track-header-box ${selectedTrackId === track.id ? 'selected' : ''} ${track.type === 'group' ? 'group-track' : ''}`}
+                    role="group"
+                    aria-label={track.name}
+                    tabIndex={0}
+                    onKeyDown={onEnter(() => setSelectedTrackId(track.id))}
                     onClick={() => setSelectedTrackId(track.id)}
                     style={{
                       borderLeft: `4px solid ${track.color}`,
@@ -777,7 +786,9 @@ function App() {
                         )}
                         {track.type !== 'group' && (
                           <button 
-                            className="btn-checkbox" 
+                            className="btn-checkbox"
+                            title="Select for grouping"
+                            aria-pressed={selectedTrackIds.includes(track.id)}
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleSelectTrackForGroup(track.id);
@@ -789,8 +800,10 @@ function App() {
                         
                         {/* Custom Color Panel Picker */}
                         <div style={{ position: 'relative' }}>
-                          <div 
-                            className="color-dot" 
+                          <button
+                            className="color-dot"
+                            title="Track colour"
+                            aria-expanded={activeColorPickerTrackId === track.id}
                             style={{ backgroundColor: track.color }}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -800,9 +813,10 @@ function App() {
                           {activeColorPickerTrackId === track.id && (
                             <div className="color-palette-popover">
                               {PRESET_COLORS.map(c => (
-                                <div 
-                                  key={c} 
-                                  className="color-palette-square" 
+                                <button
+                                  key={c}
+                                  className="color-palette-square"
+                                  title={c}
                                   style={{ backgroundColor: c }}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -871,7 +885,7 @@ function App() {
                       
                       <div className="strip-val">
                         <span style={{ fontSize: '9px' }}>PAN</span>
-                        <input 
+                        <input aria-label={`${track.name} pan`} 
                           type="range" min="-1" max="1" step="0.1" 
                           value={track.pan} 
                           onChange={(e) => updateTrackPan(track.id, parseFloat(e.target.value))}
@@ -884,7 +898,7 @@ function App() {
                         {returns.map((r: any, i: number) => (
                           <div key={r.id} className="strip-val" title={`Send to ${RETURN_LETTERS[i]} ${r.name}`}>
                             <span style={{ fontSize: '9px' }}>{RETURN_LETTERS[i]}</span>
-                            <input
+                            <input aria-label={`${track.name} send to ${r.name}`}
                               type="range" min="0" max="1" step="0.01"
                               value={track.sends?.[r.id] ?? 0}
                               onChange={(e) => updateTrackSend(track.id, r.id, parseFloat(e.target.value))}
@@ -898,7 +912,7 @@ function App() {
                     {/* Fader */}
                     <div className="fader-row">
                       <Volume2 size={12} />
-                      <input 
+                      <input aria-label={`${track.name} volume`} 
                         type="range" min="0" max="1" step="0.01" 
                         value={track.volume} 
                         onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
@@ -914,7 +928,7 @@ function App() {
                     const points = track.automation?.[key]?.length || 0;
                     return (
                       <div key={key} className="automation-lane-header" style={{ borderLeft: `4px solid ${track.color}` }}>
-                        <select
+                        <select aria-label="Automated parameter"
                           className="rack-map-select"
                           value={key}
                           onChange={(e) => setAutomationLanes(track.id, lanes.map((k, i) => (i === laneIdx ? e.target.value : k)))}
@@ -959,6 +973,10 @@ function App() {
                   <div
                     key={r.id}
                     className={`track-header-box return-master ${selectedTrackId === r.id ? 'selected' : ''}`}
+                    role="group"
+                    aria-label={r.name}
+                    tabIndex={0}
+                    onKeyDown={onEnter(() => setSelectedTrackId(r.id))}
                     onClick={() => setSelectedTrackId(r.id)}
                   >
                     <div className="track-title-row">
@@ -972,7 +990,7 @@ function App() {
                     </div>
                     <div className="fader-row">
                       <span style={{ fontSize: '9px' }}>PAN</span>
-                      <input
+                      <input aria-label={`${r.name} pan`}
                         type="range" min="-1" max="1" step="0.1"
                         value={r.pan}
                         onClick={(e) => e.stopPropagation()}
@@ -980,7 +998,7 @@ function App() {
                         className="mixer-dial"
                       />
                       <Volume2 size={12} />
-                      <input
+                      <input aria-label={`${r.name} volume`}
                         type="range" min="0" max="1" step="0.01"
                         value={r.volume}
                         onClick={(e) => e.stopPropagation()}
@@ -993,6 +1011,10 @@ function App() {
                 {/* Master strip: its device chain sits before the master fader and limiter */}
                 <div
                   className={`track-header-box return-master master-strip ${selectedTrackId === MASTER_STRIP_ID ? 'selected' : ''}`}
+                  role="group"
+                  aria-label="Master"
+                  tabIndex={0}
+                  onKeyDown={onEnter(() => setSelectedTrackId(MASTER_STRIP_ID))}
                   onClick={() => setSelectedTrackId(MASTER_STRIP_ID)}
                   title="Click to edit the master device chain"
                 >
@@ -1004,7 +1026,7 @@ function App() {
                   </div>
                   <div className="fader-row">
                     <Volume2 size={12} />
-                    <input
+                    <input aria-label="Master volume"
                       type="range" min="0" max="1" step="0.01"
                       value={masterVolume}
                       onClick={(e) => e.stopPropagation()}

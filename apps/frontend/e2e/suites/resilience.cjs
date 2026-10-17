@@ -92,7 +92,7 @@ module.exports = async (page, ctx) => {
   const alerts = await page.evaluate(() => window.__alerts);
   check('alert() is never called', alerts.length === 0 && !ctx.logs.some((l) => l.startsWith('[dialog]')), alerts.join(' | '));
 
-  const errors = ctx.logs.filter((l) => l.startsWith('[pageerror]') && !l.includes('ws://localhost:8080') && !/stray (error|rejection)/.test(l));
+  const errors = ctx.logs.filter((l) => l.startsWith('[pageerror]') && !/ws:\/\/localhost:808[235]/.test(l) && !/stray (error|rejection)/.test(l));
   check('No page errors', errors.length === 0, errors.join('; '));
 
   results.forEach((r) => console.log(r));

@@ -8,14 +8,18 @@ export type ServiceName = 'ghostdaw';
 
 export interface ServiceSetting {
   enabled: boolean;
-  url: string;   // ghostdaw: its audio stream server
+  url: string;   // ghostdaw: its control server (it announces its stream and editor ports)
 }
 
 export type Services = Record<ServiceName, ServiceSetting>;
 
 export const defaultServices = (dev: boolean): Services => ({
-  ghostdaw: { enabled: dev, url: 'ws://localhost:8083' }
+  ghostdaw: { enabled: dev, url: 'ws://localhost:8082' }
 });
+
+// What the GhostDAW address was before #134: its stream server, which the
+// control server announces now
+const OLD_GHOSTDAW_STREAM_URL = 'ws://localhost:8083';
 
 const KEY = 'noprod.services';
 
@@ -36,7 +40,7 @@ export function readServices(raw: string | null, dev: boolean): Services {
     (Object.keys(out) as ServiceName[]).forEach((name) => {
       const s = stored?.[name];
       if (typeof s?.enabled === 'boolean') out[name].enabled = s.enabled;
-      if (typeof s?.url === 'string' && isWebSocketUrl(s.url)) out[name].url = s.url;
+      if (typeof s?.url === 'string' && isWebSocketUrl(s.url) && !(name === 'ghostdaw' && s.url === OLD_GHOSTDAW_STREAM_URL)) out[name].url = s.url;
     });
   } catch { /* unreadable: the defaults */ }
   return out;

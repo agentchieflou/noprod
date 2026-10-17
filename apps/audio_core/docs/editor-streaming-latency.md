@@ -8,9 +8,10 @@ and of the input round trip. This is that measurement.
 
 ## What was measured
 
-- **Server:** `tools/EditorStreamSpike.cpp` (build with `-DGHOSTDAW_BUILD_TOOLS=ON`).
-  It serves a synthetic reverb editor (knobs, waveform, meter, a mouse-driven
-  knob, drawn with JUCE's software renderer) through `src/editor/EditorStream.h`:
+- **Server:** the B6a spike tool (`tools/EditorStreamSpike.cpp` at the
+  time; it went with the JUCE host, #134). It served a synthetic reverb
+  editor (knobs, waveform, meter, a mouse-driven knob, drawn with a CPU
+  renderer) through what is now `src/host/editor/EditorStream.h`:
   - one render thread per connection;
   - ambient frames at a fixed rate, plus an immediate frame on every input;
   - full RGBA frames, raw or zlib-deflated (level 1);
@@ -133,7 +134,7 @@ For comparison, raw frames at window 1: 800×600 is 46.3 / 66.5 ms and
 - **Decode off the main thread:** done (above). An `OffscreenCanvas` in the
   worker could take `putImageData` off the main thread too, but at under 1 ms
   per frame it isn't needed yet.
-- **Measure render cost again with cuif.** The synthetic editor uses JUCE's
+- **Measure render cost again with cuif.** The synthetic editor used a
   CPU renderer. cuif renders with OpenGL and needs a GPU → CPU readback.
   The extension now exists (v-loudio-t #111), but the Reverb's editor only
   builds for Windows, so this is still to measure on a Windows machine.

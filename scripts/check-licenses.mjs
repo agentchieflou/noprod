@@ -21,20 +21,12 @@ const ALLOWED = new Set([
   'MIT-0', 'CC0-1.0', 'Unlicense', 'BlueOak-1.0.0', 'Python-2.0',
 ]);
 
-// Temporary: each rebuild PR deletes its entry. A package-exception applies
-// only to packages reached from `only` and from no other workspace.
-//   - Strudel (AGPL) under apps/sequencer: #133
-//   - the JUCE submodule: #134
-export const EXCEPTIONS = [
-  {
-    pkg: /^(@strudel|@kabelsalat)\/|^(superdough|supradough|hydra-synth)$/,
-    only: 'apps/sequencer',
-    why: 'Strudel and its AGPL dependencies; replaced by our own pattern engine (#133)',
-  },
-];
-export const SUBMODULE_EXCEPTIONS = [
-  { path: 'apps/audio_core/JUCE', why: 'JUCE is paid/GPL; GhostDAW is rebuilt without it (#134)' },
-];
+// Exceptions: packages a workspace may ship under a restricted license
+// (`pkg` matches the name, reached from `only` and from no other
+// workspace), and submodules. Each rebuild PR deleted its entry: Strudel
+// (#133) and the JUCE submodule (#134) are gone, so both lists are empty.
+export const EXCEPTIONS = [];
+export const SUBMODULE_EXCEPTIONS = [];
 
 const NOT_INSTALLED = 'NOT INSTALLED (other platform)';
 
@@ -110,8 +102,9 @@ const allDeps = (p) => ({ ...prodDeps(p), ...p.devDependencies });
 // `lock` is the parsed package-lock.json; `readMeta(loc)` returns a
 // package's package.json (or null if it isn't installed); `thirdPartyDirs`
 // are the directories under apps/audio_core/third_party; `thirdPartyMd` is
-// THIRD_PARTY.md; `gitmodules` is the .gitmodules text.
-export function check({ lock, readMeta, thirdPartyDirs, thirdPartyMd, gitmodules }) {
+// THIRD_PARTY.md; `gitmodules` is the .gitmodules text. The tests pass
+// exceptions of their own; the real lists are above.
+export function check({ lock, readMeta, thirdPartyDirs, thirdPartyMd, gitmodules, exceptions = EXCEPTIONS, submoduleExceptions = SUBMODULE_EXCEPTIONS }) {
   const pkgs = lock.packages;
   const workspaces = Object.keys(pkgs).filter((l) => l && isWorkspace(l) && !pkgs[l].link);
 
@@ -142,11 +135,11 @@ export function check({ lock, readMeta, thirdPartyDirs, thirdPartyMd, gitmodules
     note(shippedLicenses, lic, name);
     if (allowed(lic)) continue;
     const owners = workspaces.filter((w) => reach.get(w).has(loc));
-    const ex = EXCEPTIONS.find((e) => e.pkg.test(name) && owners.every((w) => w === e.only));
+    const ex = exceptions.find((e) => e.pkg.test(name) && owners.every((w) => w === e.only));
     if (ex) excepted.push(`${name} (${lic}): ${ex.why}`);
     else {
       // Name the path from a workspace the exception doesn't cover
-      const bad = owners.find((w) => !EXCEPTIONS.some((e) => e.pkg.test(name) && e.only === w)) ?? owners[0];
+      const bad = owners.find((w) => !exceptions.some((e) => e.pkg.test(name) && e.only === w)) ?? owners[0];
       failures.push(`${name}@${pkgs[loc].version} is ${lic}: ${reach.get(bad).get(loc).join(' > ') || path.join(' > ')}`);
     }
   }
@@ -165,7 +158,7 @@ export function check({ lock, readMeta, thirdPartyDirs, thirdPartyMd, gitmodules
   }
   for (const [, p] of gitmodules.matchAll(/^\s*path\s*=\s*(.+)$/gm)) {
     const path = p.trim();
-    const ex = SUBMODULE_EXCEPTIONS.find((e) => e.path === path);
+    const ex = submoduleExceptions.find((e) => e.path === path);
     if (ex) excepted.push(`${path}: ${ex.why}`);
     else if (!listed.has(path)) failures.push(`submodule ${path} is neither listed in THIRD_PARTY.md nor an exception`);
   }

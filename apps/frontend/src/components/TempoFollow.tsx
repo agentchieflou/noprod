@@ -25,7 +25,7 @@ export default function TempoFollow() {
 
   return (
     <>
-      <select className="rack-map-select follow-input" value={tempoFollow.device} onFocus={() => refreshAudioDevices()}
+      <select aria-label="Input to follow" className="rack-map-select follow-input" value={tempoFollow.device} onFocus={() => refreshAudioDevices()}
         onChange={(e) => setTempoFollow({ device: e.target.value })} title="Input to follow">
         {getAudioInputDevices().map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
       </select>

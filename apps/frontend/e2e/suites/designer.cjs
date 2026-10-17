@@ -200,7 +200,7 @@ module.exports = async (page, ctx) => {
 
   await ctx.sleep(800);
   await ctx.shot('designer');
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));
 
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);

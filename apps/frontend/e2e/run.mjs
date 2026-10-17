@@ -7,14 +7,17 @@
 //   E2E_THROTTLE=4 npm run e2e        Chromium's CPU slowed 4x, like a busy CI runner
 //
 // A suite (suites/<name>.cjs) exports `async (page, ctx) => {}` and prints a
-// line per check, starting PASS or FAIL.  Dictation stubs
-// the provider's fetch, so no suite needs a network or a key.
+// line per check, starting PASS or FAIL. Dictation stubs the provider's
+// fetch, so no suite needs a network or a key. The audio-core suite runs
+// GhostDAW (GHOSTDAW_EXE, else build/audio_core/ghostdaw built with
+// -DGHOSTDAW_BUILD_TESTS=ON for its test plug-in; without a build the suite
+// is skipped unless asked for by name).
 //
 // Chromium: CHROME_PATH, else /opt/pw-browsers/chromium if present, else
 // Puppeteer's own download.
 
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,8 +38,16 @@ const found = readdirSync(join(here, 'suites')).filter((f) => f.endsWith('.cjs')
 const all = [...ORDER.filter((s) => found.includes(s)), ...found.filter((s) => !ORDER.includes(s))];
 const asked = process.argv.slice(2);
 const skip = (process.env.E2E_SKIP ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-const suites = (asked.length ? asked : all).filter((s) => !skip.includes(s));
+let suites = (asked.length ? asked : all).filter((s) => !skip.includes(s));
 for (const s of suites) if (!existsSync(join(here, 'suites', `${s}.cjs`))) throw new Error(`no suite ${s}`);
+
+// GhostDAW, for the audio-core suite
+const ghostdawExe = process.env.GHOSTDAW_EXE || join(root, 'build/audio_core', process.platform === 'win32' ? 'Release/ghostdaw.exe' : 'ghostdaw');
+const lpiTestFolder = join(root, 'build/audio_core/tests/lpi/good');
+if (suites.includes('audio-core') && !asked.includes('audio-core') && !(existsSync(ghostdawExe) && existsSync(lpiTestFolder))) {
+  console.log(`skipping audio-core: no GhostDAW build at ${ghostdawExe} with its test plug-ins (see apps/audio_core/README.md)`);
+  suites = suites.filter((s) => s !== 'audio-core');
+}
 
 const executablePath = process.env.CHROME_PATH || (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined);
 const shotDir = join(here, '.shots');
@@ -62,9 +73,44 @@ const throttle = Number(process.env.E2E_THROTTLE ?? 1);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// The audio-core suite's service: GhostDAW on the null audio device, in a
+// data folder of its own with the LPI test gain's folder registered. Its
+// pairing code is read from what it prints at launch.
+async function startGhostdaw() {
+  if (!existsSync(ghostdawExe) || !existsSync(lpiTestFolder)) throw new Error(`no GhostDAW build at ${ghostdawExe} with its test plug-ins (set GHOSTDAW_EXE, or build apps/audio_core with -DGHOSTDAW_BUILD_TESTS=ON)`);
+  const dataDir = mkdtempSync(join(tmpdir(), 'noprod-ghostdaw-'));
+  const added = spawnSync(ghostdawExe, ['--data-dir', dataDir, '--add-scan-folder', lpiTestFolder], { encoding: 'utf8' });
+  if (added.status !== 0) throw new Error(`ghostdaw --add-scan-folder failed: ${added.stderr || added.stdout}`);
+  const child = spawn(ghostdawExe, ['--data-dir', dataDir, '--null-audio'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  const pairingCode = await new Promise((done) => {
+    const timer = setTimeout(() => done(null), 30000);
+    const look = (d) => {
+      output += d.toString();
+      const m = output.match(/pairing code for this launch: ([A-Z0-9]{4}-[A-Z0-9]{4})/) || output.match(/^\s+([A-Z0-9]{4}-[A-Z0-9]{4})\s*$/m);
+      if (m) { clearTimeout(timer); done(m[1]); }
+    };
+    child.stdout.on('data', look);
+    child.stderr.on('data', look); // the log names it too
+    child.on('exit', () => { clearTimeout(timer); done(null); });
+  });
+  // Stops it and waits for it to be gone, so the next suite finds no GhostDAW
+  const stop = () => new Promise((done) => {
+    const finish = () => { rmSync(dataDir, { recursive: true, force: true }); done(); };
+    if (child.exitCode !== null) return finish();
+    const force = setTimeout(() => child.kill('SIGKILL'), 3000);
+    child.once('exit', () => { clearTimeout(force); finish(); });
+    child.kill();
+  });
+  if (!pairingCode) { await stop(); throw new Error(`GhostDAW did not print a pairing code:\n${output}`); }
+  console.log(`ghostdaw ${child.pid} paired with code ${pairingCode}`);
+  return { ready: true, pairingCode, stop };
+}
+
 const results = [];
 for (const name of suites) {
   console.log(`\n── ${name}`);
+  const services = name === 'audio-core' ? await startGhostdaw() : null;
   const browser = await puppeteer.launch({
     executablePath,
     headless: true,
@@ -89,7 +135,7 @@ for (const name of suites) {
   try {
     await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
     const suite = require(join(here, 'suites', `${name}.cjs`));
-    const ctx = { sleep, browser, url, logs, fixtures, shotDir, shot: (n) => page.screenshot({ path: join(shotDir, `${n}.png`) }) };
+    const ctx = { sleep, browser, url, logs, fixtures, shotDir, shot: (n) => page.screenshot({ path: join(shotDir, `${n}.png`) }), ghostdaw: services?.pairingCode ? { pairingCode: services.pairingCode } : null };
     await Promise.race([suite(page, ctx), sleep(10 * 60000).then(() => { throw new Error('timed out after 10 minutes'); })]);
   } catch (e) {
     lines.push(`FAIL ${name} stopped: ${e.message}`);
@@ -104,6 +150,7 @@ for (const name of suites) {
   }
   results.push({ name, passed: lines.length - failed.length, failed });
   await browser.close();
+  await services?.stop();
 }
 
 await server.close();

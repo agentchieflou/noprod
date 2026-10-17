@@ -20,7 +20,7 @@ export default function PluginEditorWindow() {
   };
 
   return (
-    <div className="plugin-editor-window" role="dialog" aria-label={`${editor.name} editor`}
+    <div className="plugin-editor-window" role="dialog" aria-label={`${editor.name} editor`} tabIndex={-1}
       style={{ transform: `translate(calc(-50% + ${offset.x}px), ${offset.y}px)` }}>
       <div className="plugin-editor-titlebar"
         onPointerDown={(e) => {

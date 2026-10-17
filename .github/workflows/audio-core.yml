@@ -1,9 +1,8 @@
 name: Audio core
 
-# GhostDAW is being rebuilt without JUCE (#134). "Build and test" covers the
-# new host on every platform it ships on; "JUCE host" keeps the old one
-# green until the switch. Both run when the audio core, the shared protocol
-# types or the frontend's native bridge change.
+# GhostDAW builds and tests on every platform it ships on, whenever the
+# audio core, the shared protocol types or the frontend's native bridge
+# change.
 on:
   pull_request:
     paths: ['apps/audio_core/**', 'packages/shared/**', 'apps/frontend/src/native/**', '.github/workflows/audio-core.yml']
@@ -43,10 +42,10 @@ jobs:
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ninja-build; else brew install ninja; fi
       - name: Configure
         if: runner.os != 'Windows'
-        run: cmake -S apps/audio_core -B build/audio_core -G Ninja -DCMAKE_BUILD_TYPE=Release -DGHOSTDAW_BUILD_TESTS=ON -DGHOSTDAW_JUCE_HOST=OFF
+        run: cmake -S apps/audio_core -B build/audio_core -G Ninja -DCMAKE_BUILD_TYPE=Release -DGHOSTDAW_BUILD_TESTS=ON
       - name: Configure (MSVC)
         if: runner.os == 'Windows'
-        run: cmake -S apps/audio_core -B build/audio_core -DGHOSTDAW_BUILD_TESTS=ON -DGHOSTDAW_JUCE_HOST=OFF
+        run: cmake -S apps/audio_core -B build/audio_core -DGHOSTDAW_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build/audio_core --config Release
       - name: Test
@@ -55,21 +54,3 @@ jobs:
       - name: Test (Windows)
         if: runner.os == 'Windows'
         run: build\audio_core\tests\Release\ghostdaw_tests.exe
-
-  juce-host:
-    name: JUCE host (Linux, until the switch)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: true
-          persist-credentials: false
-      - name: JUCE's Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build libasound2-dev libx11-dev libxrandr-dev libxinerama-dev \
-            libxcursor-dev libfreetype-dev libfontconfig1-dev libcurl4-openssl-dev libgl-dev
-      - run: cmake -S apps/audio_core -B build/audio_core -G Ninja -DCMAKE_BUILD_TYPE=Release -DGHOSTDAW_BUILD_TESTS=ON
-      - run: cmake --build build/audio_core
-      - run: build/audio_core/tests/GhostDAWTests_artefacts/Release/GhostDAWTests

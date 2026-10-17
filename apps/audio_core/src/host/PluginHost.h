@@ -103,6 +103,8 @@ public:
     std::function<bool()> isScanning;
     // Where the browser streams open editors from (reported in EDITOR_OPENED)
     int editorPort = 8085;
+    // Where browser tracks stream their audio through plugins (in the state)
+    int streamPort = 8083;
     // Extra words for the state (the version, say)
     std::string hostVersion;
 
@@ -269,6 +271,7 @@ public:
         state.set ("sampleRate", master.getSampleRate());
         state.set ("blockSize", master.getMaxBlockSize());
         state.set ("trackCount", Mixer::numTracks);
+        state.set ("streamPort", streamPort);
         if (describeDevice)
             state.set ("device", describeDevice());
         if (takeOutputPeak)

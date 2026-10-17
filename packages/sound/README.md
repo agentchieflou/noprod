@@ -196,7 +196,7 @@ electronic kit); synth and instrument names (`sawtooth`, `piano`,
 `gm_epiano1`, `strings`, …) are library sounds, and a note with no name
 plays the default triangle. `strudelParts(haps)` turns an evaluated
 cycle into parts (a kit, a sound per name) with their notes; names the
-library has nothing for are reported, not guessed. The orchestrator's
+library has nothing for are reported, not guessed. Dictation's
 dictation prompt lists exactly these names (a test keeps them in step).
 
 ## Resynthesis

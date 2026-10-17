@@ -7,7 +7,9 @@
 // their replies go back there. A dropped connection is retried, re-sending
 // OPEN and the last LOAD, after a delay that grows to a cap. `pause` stops
 // every connection and its retries (the service was turned off); `resume`
-// starts them again.
+// starts them again. The URL (GhostDAW's stream server, with the pairing
+// token) may not be known when a stream opens; `url` brings it, or a new
+// one, and every stream reconnects with it.
 
 interface LoadMessage {
   type: 'LOAD';
@@ -17,7 +19,7 @@ interface LoadMessage {
 
 interface Stream {
   id: string;
-  url: string;
+  url: string | null;      // null until GhostDAW's stream port and the token are known
   sampleRate: number;
   block: number;
   port: MessagePort;
@@ -40,6 +42,7 @@ let warnedBadMessage = false;
 const post = (message: unknown) => ctx.postMessage(message);
 
 function connect(s: Stream) {
+  if (!s.url) return; // `url` connects it
   let ws: WebSocket;
   try {
     ws = new WebSocket(s.url);
@@ -131,6 +134,28 @@ ctx.onmessage = (e: MessageEvent) => {
       s.attempts = 0;
       if (msg.url !== s.url) { s.url = msg.url; s.ws?.close(); } // reconnects through the retry
       if (!s.ws) connect(s);
+    });
+    return;
+  }
+
+  // The stream server's address or the pairing token changed (or became
+  // known): every stream reconnects with it
+  if (msg.type === 'url') {
+    streams.forEach((s) => {
+      if (msg.url === s.url) return;
+      s.url = msg.url;
+      s.attempts = 0;
+      if (s.ws) s.ws.close(); // onclose reconnects
+      else if (!paused && !s.retry) connect(s);
+    });
+    return;
+  }
+
+  // A new URL (the pairing token changed): every stream reconnects with it
+  if (msg.type === 'url') {
+    streams.forEach((stream) => {
+      stream.url = msg.url;
+      if (stream.ws) stream.ws.close(); // onclose reconnects
     });
     return;
   }

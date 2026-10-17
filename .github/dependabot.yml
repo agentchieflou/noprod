@@ -22,10 +22,3 @@ updates:
       actions:
         patterns: ['*']
         update-types: [minor, patch]
-  # JUCE is being removed (#134); nothing else is a submodule
-  - package-ecosystem: gitsubmodule
-    directory: /
-    schedule:
-      interval: weekly
-    ignore:
-      - dependency-name: apps/audio_core/JUCE

@@ -108,7 +108,7 @@ function LayerCard({ layer, index, onChange, onRemove, onDuplicate }: {
         )}
         <div className="param-slider-row" title="Several oscillators at these multiples of the layer's frequency">
           <span className="param-name">Ratios</span>
-          <input className="designer-text" defaultValue={(layer.ratios ?? [1]).join(', ')}
+          <input aria-label="Ratios" className="designer-text" defaultValue={(layer.ratios ?? [1]).join(', ')}
             onBlur={(e) => {
               const ratios = e.target.value.split(/[ ,]+/).map(Number).filter((x) => x > 0);
               set({ ratios: ratios.length > 1 || (ratios[0] ?? 1) !== 1 ? ratios : undefined });
@@ -313,15 +313,15 @@ export default function SoundDesigner({ track, onOpenDspMap }: { track: any; onO
     >
       <div className="designer-side">
         <div className="designer-row">
-          <input key={recipe.id + recipe.name} className="designer-name" defaultValue={recipe.name} title="Name"
+          <input aria-label="Name" key={recipe.id + recipe.name} className="designer-name" defaultValue={recipe.name} title="Name"
             onBlur={(e) => rename(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
-          <select className="rack-map-select designer-select" value={recipe.category} title="Category"
+          <select aria-label="Category" className="rack-map-select designer-select" value={recipe.category} title="Category"
             onChange={(e) => update({ ...recipe, category: e.target.value as Category })}>
             {Object.entries(CATEGORY_NAMES).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
         </div>
         {kit && (
-          <select className="rack-map-select designer-pad" value={soundId!} onChange={(e) => setPadSound(e.target.value)} title="Which of the kit's sounds to edit">
+          <select aria-label="Which of the kit's sounds to edit" className="rack-map-select designer-pad" value={soundId!} onChange={(e) => setPadSound(e.target.value)} title="Which of the kit's sounds to edit">
             {kitSoundIds.map((id) => {
               const notes = Object.keys(kit.pads).map(Number).filter((n) => kit.pads[n].sound === id);
               return <option key={id} value={id}>{lib.sounds?.[id]?.name} · {notes.map((n) => GM_DRUM_NAMES[n] || n).slice(0, 2).join(', ')}</option>;
@@ -331,10 +331,10 @@ export default function SoundDesigner({ track, onOpenDspMap }: { track: any; onO
         <Spectrogram sound={rendered} width={248} height={118} />
         <div className="designer-row">
           <button className="btn-icon designer-play" title="Play" onClick={() => play()}><Play size={13} /></button>
-          <select className="rack-map-select designer-select" value={playNote} onChange={(e) => setNote(Number(e.target.value))} title="Note to play and show">
+          <select aria-label="Note to play and show" className="rack-map-select designer-select" value={playNote} onChange={(e) => setNote(Number(e.target.value))} title="Note to play and show">
             {NOTES.map((n) => <option key={n} value={n}>{midiNoteName(n)}{n === recipe.root ? ' (root)' : ''}</option>)}
           </select>
-          <input type="range" className="param-slider" min={0.05} max={1} step={0.05} value={velocity} title={`Velocity ${velocity}`}
+          <input aria-label="Velocity" type="range" className="param-slider" min={0.05} max={1} step={0.05} value={velocity} title={`Velocity ${velocity}`}
             onChange={(e) => setVelocity(Number(e.target.value))} />
           <label className="designer-check" title="Play each edit as it renders">
             <input type="checkbox" checked={audition} onChange={(e) => setAudition(e.target.checked)} /> Hear edits

@@ -10,7 +10,10 @@ const THIRD_PARTY = '| `apps/audio_core/third_party/lpi` | the LPI header | MIT 
 
 // workspaces: { 'apps/x': { dependencies, devDependencies } }; licenses by
 // package name, hoisted to the top node_modules
-function run({ workspaces, licenses, thirdPartyDirs = ['lpi'], thirdPartyMd = THIRD_PARTY, gitmodules = '' }) {
+// A synthetic exception, as the rebuild steps had: Strudel, only in apps/sequencer
+const STRUDEL = [{ pkg: /^(@strudel|@kabelsalat)\/|^(superdough|supradough|hydra-synth)$/, only: 'apps/sequencer', why: 'test' }];
+
+function run({ workspaces, licenses, thirdPartyDirs = ['lpi'], thirdPartyMd = THIRD_PARTY, gitmodules = '', exceptions = [], submoduleExceptions = [] }) {
   const packages = { '': { name: 'root' } };
   for (const [loc, w] of Object.entries(workspaces)) packages[loc] = w;
   for (const name of Object.keys(licenses)) packages[`node_modules/${name}`] = { version: '1.0.0' };
@@ -20,6 +23,8 @@ function run({ workspaces, licenses, thirdPartyDirs = ['lpi'], thirdPartyMd = TH
     thirdPartyDirs,
     thirdPartyMd,
     gitmodules,
+    exceptions,
+    submoduleExceptions,
   });
 }
 
@@ -45,29 +50,31 @@ test('a GPL dev dependency is reported, not failed', () => {
   assert.deepEqual(r.devLicenses.get('GPL-3.0-only'), ['b']);
 });
 
-test('the Strudel exception covers packages reached only from apps/sequencer', () => {
+test('an exception covers packages reached only from its workspace', () => {
   const r = run({
     workspaces: { 'apps/sequencer': { dependencies: { '@strudel/core': '*' } } },
     licenses: { '@strudel/core': 'AGPL-3.0-or-later' },
+    exceptions: STRUDEL,
   });
   assert.deepEqual(r.failures, []);
   assert.equal(r.excepted.length, 1);
 });
 
-test('Strudel in another workspace fails, even if the sequencer has it too', () => {
+test('an excepted package in another workspace fails, even if the excepted one has it too', () => {
   const r = run({
     workspaces: {
       'apps/sequencer': { dependencies: { '@strudel/core': '*' } },
       'apps/orchestrator': { dependencies: { '@strudel/core': '*' } },
     },
     licenses: { '@strudel/core': 'AGPL-3.0-or-later' },
+    exceptions: STRUDEL,
   });
   assert.equal(r.failures.length, 1);
   assert.match(r.failures[0], /apps\/orchestrator > @strudel\/core/);
 });
 
 test('an excepted name reached from the frontend fails', () => {
-  const r = run({ workspaces: app({ 'hydra-synth': '*' }), licenses: { 'hydra-synth': 'AGPL' } });
+  const r = run({ workspaces: app({ 'hydra-synth': '*' }), licenses: { 'hydra-synth': 'AGPL' }, exceptions: STRUDEL });
   assert.equal(r.failures.length, 1);
 });
 
@@ -95,11 +102,15 @@ test('a vendored directory must be listed exactly, not as a prefix', () => {
 });
 
 test('submodules: restricted ones are exceptions, permissive ones are listed', () => {
-  const gitmodules = '[submodule "a"]\n\tpath = apps/audio_core/JUCE\n[submodule "b"]\n\tpath = vendor/vst3sdk\n';
-  const listed = run({ workspaces: app({}), licenses: {}, gitmodules, thirdPartyMd: THIRD_PARTY + '\n| `vendor/vst3sdk` | MIT |' });
+  const gitmodules = '[submodule "a"]\n\tpath = vendor/restricted\n[submodule "b"]\n\tpath = vendor/vst3sdk\n';
+  const submoduleExceptions = [{ path: 'vendor/restricted', why: 'test' }];
+  const listed = run({ workspaces: app({}), licenses: {}, gitmodules, thirdPartyMd: THIRD_PARTY + '\n| `vendor/vst3sdk` | MIT |', submoduleExceptions });
   assert.deepEqual(listed.failures, []);
-  const unlisted = run({ workspaces: app({}), licenses: {}, gitmodules });
+  assert.equal(listed.excepted.length, 1);
+  const unlisted = run({ workspaces: app({}), licenses: {}, gitmodules, submoduleExceptions });
   assert.deepEqual(unlisted.failures, ['submodule vendor/vst3sdk is neither listed in THIRD_PARTY.md nor an exception']);
+  const noException = run({ workspaces: app({}), licenses: {}, gitmodules: '[submodule "a"]\n\tpath = vendor/restricted\n' });
+  assert.deepEqual(noException.failures, ['submodule vendor/restricted is neither listed in THIRD_PARTY.md nor an exception']);
 });
 
 test('a package that isn\'t installed falls back to the lockfile\'s license', () => {

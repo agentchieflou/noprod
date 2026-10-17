@@ -561,8 +561,14 @@ module.exports = async (page, ctx) => {
   check('…failing again within 2 s stops playback instead', !crash.twice.playing && crash.twice.restarts === 2 && crash.twice.halts === 1,
     `${crash.twice.restarts} restarts, ${crash.twice.halts} halt, playing ${crash.twice.playing}`);
 
+  // The two failures above were asked for: exactly their two reports are
+  // expected, and taken out of the log, so an engine failure anywhere else
+  // in the suite still fails "No page errors" below
+  const reported = ctx.logs.filter((l) => /^\[error\]/.test(l) && l.includes('The audio engine failed and was restarted'));
+  check('…and the two failures were reported, and no other', reported.length === 2, `${reported.length} reported`);
+  for (const l of reported.slice(0, 2)) ctx.logs.splice(ctx.logs.indexOf(l), 1);
+
   await ctx.shot('engine');
-  // the two failures above were asked for: their reports are expected
-  const errors = ctx.logs.filter((l) => /^\[(pageerror|error)\]/.test(l) && !l.includes('ws://localhost:8080') && !l.includes('The audio engine failed and was restarted'));
+  const errors = ctx.logs.filter((l) => /^\[(pageerror|error)\]/.test(l) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 };
