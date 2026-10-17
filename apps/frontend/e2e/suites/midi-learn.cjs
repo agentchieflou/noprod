@@ -22,9 +22,9 @@ module.exports = async (page, ctx) => {
   const cc = (controller, raw) => page.evaluate((controller, raw) => window.__inputs.publishMidi({
     type: 'cc', pitch: -1, velocity: 0, controller, value: raw / 127, channel: 1, source: 'test-midi', time: 0
   }), controller, raw);
-  const note = (type, pitch) => page.evaluate((type, pitch, track) => window.__inputs.publishMidi({
-    type, pitch, velocity: type === 'on' ? 0.8 : 0, channel: 1, source: 'test-midi', time: window.__transport.audioContext.currentTime, targets: [track]
-  }), type, pitch, track);
+  const note = (type, pitch, target = track) => page.evaluate((type, pitch, target) => window.__inputs.publishMidi({
+    type, pitch, velocity: type === 'on' ? 0.8 : 0, channel: 1, source: 'test-midi', time: window.__transport.audioContext.currentTime, targets: [target]
+  }), type, pitch, target);
   const level = (ms = 300) => page.evaluate(async (ms) => {
     const an = window.__transport.masterAnalyser;
     const buf = new Float32Array(an.fftSize);
@@ -37,6 +37,14 @@ module.exports = async (page, ctx) => {
     }
     return 10 * Math.log10(sum / n + 1e-20);
   }, ms);
+  // Waits (with a deadline) for the master to fall quiet: earlier notes ring on
+  // through the reverb return, and a check of what a press adds must start after
+  const settle = async (db = -70, deadline = 20000) => {
+    const end = Date.now() + deadline;
+    let last = await level(100);
+    while (last >= db && Date.now() < end) last = await level(100);
+    return last;
+  };
   const learnBtn = '.midi-learn-btn';
   const clickTarget = async (key) => { await page.evaluate((key) => document.querySelector(`[data-midi-target="${key}"]`).click(), key); await ctx.sleep(80); };
 
@@ -170,6 +178,9 @@ module.exports = async (page, ctx) => {
   });
   const reset = () => page.evaluate(() => { window.__midiSeen = []; });
   const seen = (pitch) => page.evaluate((pitch) => window.__midiSeen.filter((e) => e.pitch === pitch).length, pitch);
+  // The mapped note is pressed with this audible track as its target, while the
+  // mapping mutes `track`: if the note reached a listener, this track would play it
+  const sounder = await page.evaluate(() => { window.__dawStore.getState().addTrack('midi'); return window.__dawStore.getState().tracks.at(-1).id; });
   const muted = () => state((st, id) => st.tracks.find((t) => t.id === id).isMuted, track);
   await state((st, id) => st.updateTrackVolume(id, 0.8), track);
   await page.click(learnBtn);
@@ -182,19 +193,21 @@ module.exports = async (page, ctx) => {
   check('In learn mode a note binds the control picked, and plays nothing', bind?.target.param === 'mute' && (await seen(36)) === 0, `${await seen(36)} seen`);
 
   await reset();
-  await note('on', 36);
+  const floor = await settle();
+  check('The master falls quiet before the mapped note is pressed', floor < -70, `${floor.toFixed(1)} dB`);
+  await note('on', 36, sounder);
   check('A mapped note toggles its control and reaches no listener', (await muted()) && (await seen(36)) === 0, `muted ${await muted()}, ${await seen(36)} seen`);
   const held = await level(300);
-  await note('off', 36);
-  check('The master stays silent while the mapped note is held', held < -60, `${held.toFixed(1)} dB`);
-  await note('on', 36); await note('off', 36);
+  await note('off', 36, sounder);
+  check('The master stays silent while the mapped note is held', held < -60 && held < Math.max(floor, -80) + 3, `${held.toFixed(1)} dB, ${floor.toFixed(1)} dB just before`);
+  await note('on', 36, sounder); await note('off', 36, sounder);
   check('A second mapped note toggles the mute back', !(await muted()));
 
   await reset();
-  await note('on', 60);
+  await note('on', 60, sounder);
   const heard = await level(300);
-  await note('off', 60);
-  check('An unmapped note still plays', heard > -60 && (await seen(60)) === 2, `${heard.toFixed(1)} dB, ${await seen(60)} seen`);
+  await note('off', 60, sounder);
+  check('An unmapped note still plays, on the track a mapped note would have sounded on', heard > -60 && (await seen(60)) === 2, `${heard.toFixed(1)} dB, ${await seen(60)} seen`);
   await page.evaluate(() => window.__unseen());
 
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
