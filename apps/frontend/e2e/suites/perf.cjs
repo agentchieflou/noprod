@@ -18,12 +18,11 @@ module.exports = async (page, ctx) => {
   await page.evaluate(async () => { window.__memory = await import('/src/audio/memory.ts'); return 1; });
   await page.evaluate(async () => { window.__designing = await import('/src/audio/designing.ts'); return 1; });
   await page.evaluate(async () => { window.__services = await import('/src/native/services.ts'); return 1; });
-  // The dev build turns the Orchestrator and GhostDAW connections on, and with
+  // The dev build turns the GhostDAW connections on, and with
   // nothing listening each failed attempt redraws the status in React's
   // development build (up to 130 ms at 4x CPU slowdown), in the middle of the
   // playback below. A production build has them off until the user enables them.
   await page.evaluate(() => {
-    window.__services.setService('dictation', { enabled: false });
     window.__services.setService('ghostdaw', { enabled: false });
     return 1;
   });
