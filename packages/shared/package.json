@@ -8,10 +8,8 @@
   "scripts": {
     "build": "tsc"
   },
-  "dependencies": {
-    "typescript": "^5.3.3"
-  },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "private": true
 }
