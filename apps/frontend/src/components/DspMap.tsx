@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useState } from 'react';
-import { Play, Power, X } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { Play, Power, Square, X } from 'lucide-react';
 import {
   BLOCKS, CATEGORY_NAMES, LIBRARY, STAGES, addBlock, branchesFor, chainOf, removeBlock, setBlockOn, setKindOn, sharedBlocks,
   type Block, type BlockKind, type Category, type Chain, type Layer, type SharedBlock, type SoundRecipe, type Stage
@@ -11,7 +11,7 @@ import { midiNoteName } from '../audio/synth';
 import { Param, Choice, EnvelopeParams, FilterParams } from './designerControls';
 import { filtersOf, asFilter } from './designerUtils';
 import { ExciterParams, ResonatorParams, RadiatorParams, StringSetParams } from './ModelParams';
-import { savedColumns, saveColumns, savedNote, saveNote, scratchColumn, type MapColumn } from './dspMapState';
+import { defaultColumns, savedColumns, saveColumns, savedNote, saveNote, scratchColumn, type MapColumn } from './dspMapState';
 
 // The DSP Map (#80): instruments side by side, each drawn as the stages its
 // sound passes through (player input → excitation → resonator → radiator →
@@ -163,6 +163,20 @@ export default function DspMap() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [hover, setHover] = useState<BlockKind | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
+  const [playingAll, setPlayingAll] = useState(false);
+  // Each "Play all" takes a number, and Stop moves it on: a sequence waiting
+  // between columns sees its number is no longer the current one, and ends
+  const playRun = useRef(0);
+
+  // Escape clears the inspector, unless someone is typing or choosing in a field
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (e.key === 'Escape' && tag !== 'INPUT' && tag !== 'SELECT') setSelection(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // The columns, resolved to what they play now
   const trackColumn = (track: any, column: MapColumn | null): Column => {
@@ -205,10 +219,22 @@ export default function DspMap() {
     setTimeout(() => setPlaying((p) => (p === c.key ? null : p)), 1400);
   };
   const playAll = async () => {
+    const run = ++playRun.current;
+    setPlayingAll(true);
     for (const c of shown) {
+      if (playRun.current !== run) return;
       await play(c);
       await new Promise((r) => setTimeout(r, 1500));
     }
+    if (playRun.current === run) setPlayingAll(false);
+  };
+  const stopAll = () => {
+    playRun.current++;
+    setPlayingAll(false);
+  };
+  const resetMap = () => {
+    setColumns(defaultColumns());
+    setSelection(null);
   };
 
   const add = (value: string) => {
@@ -344,7 +370,10 @@ export default function DspMap() {
           <select className="rack-map-select designer-select" value={note} onChange={(e) => setNote(Number(e.target.value))} title="The note every column plays">
             {NOTES.map((n) => <option key={n} value={n}>{midiNoteName(n)}</option>)}
           </select>
-          <button className="designer-button" onClick={playAll} disabled={!shown.length}><Play size={10} /> Play all</button>
+          <button className="designer-button" onClick={playingAll ? stopAll : playAll} disabled={!shown.length && !playingAll}>
+            {playingAll ? <><Square size={10} /> Stop</> : <><Play size={10} /> Play all</>}
+          </button>
+          <button className="designer-button" onClick={resetMap} title="The four classic instruments again. Tracks are not changed">Reset map</button>
           <select className="rack-map-select designer-select dsp-map-picker" value="" onChange={(e) => e.target.value && add(e.target.value)} title="Add an instrument to compare">
             <option value="">+ Add instrument…</option>
             <optgroup label="Tracks">
