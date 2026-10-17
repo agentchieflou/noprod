@@ -15,17 +15,30 @@ let band: typeof import('./accompany') | null = null;
 let loading: Promise<typeof import('./coach')> | null = null;
 export function loadCoach() {
   loading ??= Promise.all([import('./coach'), import('./accompany')]).then(([coach, accompany]) => {
-    coach.initCoach(store);
     accompany.initAccompany(store);
     band = accompany;
-    coach.subscribeCoach(() => {
-      if (coach.getCoachState().open === open) return;
-      open = coach.getCoachState().open;
-      listeners.forEach((fn) => fn());
-    });
     return coach;
   });
   return loading;
+}
+
+// coach.ts calls this as it loads, however it was loaded (here, or by a
+// panel or test importing it): it starts listening at once, the app follows
+// whether it's open, and the band loads after it
+type CoachModule = Pick<typeof import('./coach'), 'initCoach' | 'subscribeCoach' | 'getCoachState'>;
+let adopted = false;
+export function adoptCoach(coach: CoachModule) {
+  if (adopted) return;
+  adopted = true;
+  coach.initCoach(store);
+  const follow = () => {
+    if (coach.getCoachState().open === open) return;
+    open = coach.getCoachState().open;
+    listeners.forEach((fn) => fn());
+  };
+  coach.subscribeCoach(follow);
+  follow();
+  loadCoach();
 }
 
 export const setCoachOpen = (next: boolean) => loadCoach().then((coach) => coach.setCoachOpen(next));
