@@ -7,6 +7,12 @@ module.exports = async (page, ctx) => {
   await page.reload({ waitUntil: 'networkidle0' });
   await page.evaluate(async () => {
     window.__session = await import('/src/audio/session.ts');
+    // Every wait has a deadline, so a regression prints a FAIL line instead of stalling the suite
+    window.__until = async (fn, ms = 6000) => {
+      const end = performance.now() + ms;
+      while (performance.now() < end) { if (fn()) return true; await new Promise((r) => setTimeout(r, 5)); }
+      return false;
+    };
     return 1;
   });
 
@@ -57,15 +63,13 @@ module.exports = async (page, ctx) => {
   };
   // Poll for the moment a track starts playing a slot, returning the transport position then
   const waitPlaying = (trackId, slot, ms = 5000) => page.evaluate(async (trackId, slot, ms) => {
-    const end = performance.now() + ms;
     let queuedSeen = false;
-    while (performance.now() < end) {
+    const ok = await window.__until(() => {
       const s = window.__session.getSessionSnapshot();
       if (s.queued[trackId] === slot) queuedSeen = true;
-      if (s.playing[trackId] === slot) return { position: window.__transport.getPosition(), queuedSeen };
-      await new Promise((r) => setTimeout(r, 5));
-    }
-    return null;
+      return s.playing[trackId] === slot;
+    }, ms);
+    return ok ? { position: window.__transport.getPosition(), queuedSeen } : null;
   }, trackId, slot, ms);
 
   // 1. The grid shows the clips, and its launch button starts a clip and the transport
@@ -89,15 +93,12 @@ module.exports = async (page, ctx) => {
   const wait = await page.evaluate(async () => {
     const barOf = () => window.__transport.getPosition() % 2;
     // start just after a bar line so the wait is long and unambiguous
-    while (barOf() < 0.3 || barOf() > 0.6) await new Promise((r) => setTimeout(r, 5));
+    await window.__until(() => barOf() >= 0.3 && barOf() <= 0.6);
     const launchedAt = window.__transport.getPosition();
     window.__session.launchClip(window.__ids[1], 0);
     const first = window.__session.getSessionSnapshot();
     let at = null;
-    while (at === null && window.__transport.getPosition() - launchedAt < 4) {
-      if (window.__session.getSessionSnapshot().playing[window.__ids[1]] === 0) at = window.__transport.getPosition();
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    if (await window.__until(() => window.__session.getSessionSnapshot().playing[window.__ids[1]] === 0, 4000)) at = window.__transport.getPosition();
     return { launchedAt, queued: first.queued[window.__ids[1]], playingAtLaunch: first.playing[window.__ids[1]], at };
   });
   // The session picks up a launch 0.3 s ahead of its bar line, so the snapshot flips just before it
@@ -106,7 +107,7 @@ module.exports = async (page, ctx) => {
     JSON.stringify({ ...wait, bar }));
   const queuedClass = await page.evaluate(async () => {
     const pos = () => window.__transport.getPosition() % 2;
-    while (pos() < 0.3 || pos() > 0.6) await new Promise((r) => setTimeout(r, 5));
+    await window.__until(() => pos() >= 0.3 && pos() <= 0.6);
     window.__session.launchClip(window.__ids[0], 1);
     await new Promise((r) => setTimeout(r, 100));
     return document.querySelectorAll('.session-view .session-track-column')[window.__cols[0]].querySelectorAll('.session-clip-slot')[1].className;
@@ -114,45 +115,38 @@ module.exports = async (page, ctx) => {
   check('A queued slot is marked while it waits', queuedClass.includes('queued') && !queuedClass.includes('playing'), queuedClass);
   await waitPlaying(ids[0], 1);
 
-  // 3. Quantize 'none' launches at once, '1/4' on the next beat
+  // 3. Quantize 'none' launches at once, '1/4' on the next beat. Each launch is timed from a
+  // known place in the bar, where a bar or beat launch would wait far longer than 'none'.
+  const launchTimed = (slot, trackIdx, from, to, mod) => page.evaluate(async (slot, trackIdx, from, to, mod) => {
+    const id = window.__ids[trackIdx];
+    const place = () => window.__transport.getPosition() % mod;
+    await window.__until(() => place() >= from && place() <= to);
+    const t0 = window.__transport.getPosition();
+    window.__session.launchClip(id, slot);
+    const queued = window.__session.getSessionSnapshot().queued[id] === slot;
+    let at = null;
+    if (await window.__until(() => window.__session.getSessionSnapshot().playing[id] === slot, 3000)) at = window.__transport.getPosition();
+    return { t0, at, queued };
+  }, slot, trackIdx, from, to, mod);
   await page.evaluate(() => { window.__dawStore.getState().setLaunchQuantization('none'); return 1; });
-  const now = await page.evaluate(async () => {
-    const t0 = window.__transport.getPosition();
-    window.__session.launchClip(window.__ids[1], 1);
-    let at = null;
-    while (at === null && window.__transport.getPosition() - t0 < 2) {
-      if (window.__session.getSessionSnapshot().playing[window.__ids[1]] === 1) at = window.__transport.getPosition();
-      await new Promise((r) => setTimeout(r, 5));
-    }
-    return at === null ? null : at - t0;
-  });
-  check('With quantization off a launch starts within a moment', now !== null && now < 0.4, String(now));
+  const now = await launchTimed(1, 1, 0.3, 0.6, 2);
+  check('With quantization off a launch starts at once, mid-bar', now.at !== null && !now.queued && now.at - now.t0 < 0.15, JSON.stringify(now));
   await page.evaluate(() => { window.__dawStore.getState().setLaunchQuantization('1/4'); return 1; });
-  const beat = await page.evaluate(async () => {
-    // a beat is 0.5 s; launch just after a beat line
-    const b = () => window.__transport.getPosition() % 0.5;
-    while (b() < 0.1 || b() > 0.2) await new Promise((r) => setTimeout(r, 5));
-    const t0 = window.__transport.getPosition();
-    window.__session.launchClip(window.__ids[1], 0);
-    let at = null;
-    while (at === null && window.__transport.getPosition() - t0 < 2) {
-      if (window.__session.getSessionSnapshot().playing[window.__ids[1]] === 0) at = window.__transport.getPosition();
-      await new Promise((r) => setTimeout(r, 5));
-    }
-    return { t0, at };
-  });
+  const beat = await launchTimed(0, 1, 0.01, 0.04, 0.5);
   const nextBeat = Math.ceil(beat.t0 / 0.5) * 0.5;
-  check('With 1/4 quantization a launch lands on a beat line', beat.at !== null && beat.at >= nextBeat - 0.45 && beat.at <= nextBeat + 0.1, JSON.stringify({ ...beat, nextBeat }));
+  // the session picks a launch up 0.3 s before its time, so the flip shows near nextBeat - 0.3
+  check('With 1/4 quantization a launch waits for the next beat line', beat.at !== null && beat.queued && beat.at - beat.t0 > 0.05 && Math.abs(beat.at - (nextBeat - 0.3)) < 0.15,
+    JSON.stringify({ ...beat, nextBeat }));
   await page.evaluate(() => { window.__dawStore.getState().setLaunchQuantization('1 bar'); return 1; });
 
   // 4. A scene launches its row; a track with an empty slot there stops
   await page.evaluate(() => { window.__session.launchScene(0); return 1; });
-  await page.evaluate(async () => { while (window.__session.getSessionSnapshot().playingScene !== 0) await new Promise((r) => setTimeout(r, 10)); return 1; });
+  await page.evaluate(() => window.__until(() => window.__session.getSessionSnapshot().playingScene === 0));
   const row0 = await snap();
   check('Launching scene 1 puts both tracks on slot 0', row0.playing[ids[0]] === 0 && row0.playing[ids[1]] === 0 && row0.playingScene === 0, JSON.stringify(row0.playing));
   await page.evaluate((i) => { document.querySelectorAll('.scene-row .btn-scene-launch')[i].click(); return 1; }, 2);
   const queuedScene = await snap();
-  await page.evaluate(async () => { while (window.__session.getSessionSnapshot().playingScene !== 2) await new Promise((r) => setTimeout(r, 10)); return 1; });
+  await page.evaluate(() => window.__until(() => window.__session.getSessionSnapshot().playingScene === 2));
   await ctx.sleep(300);
   const row2 = await snap();
   check('The scene button queues the scene, then a track with an empty slot there stops',
@@ -161,15 +155,25 @@ module.exports = async (page, ctx) => {
   check('The scene is audible', peakScene > 0.01, peakScene.toFixed(3));
 
   // 5. Per-track stop and Stop All Clips, then silence
-  await page.evaluate((id) => { window.__session.launchScene(0); return 1; }, ids[0]);
-  await page.evaluate(async () => { while (window.__session.getSessionSnapshot().playingScene !== 0) await new Promise((r) => setTimeout(r, 10)); return 1; });
-  await page.evaluate(() => { document.querySelectorAll('.session-view .session-track-column')[window.__cols[1]].querySelector('.btn-stop-track').click(); return 1; });
-  await page.evaluate(async (id) => { while (window.__session.getSessionSnapshot().playing[id] !== undefined) await new Promise((r) => setTimeout(r, 10)); return 1; }, ids[1]);
+  await page.evaluate(() => { window.__session.launchScene(0); return 1; });
+  await page.evaluate(() => window.__until(() => window.__session.getSessionSnapshot().playingScene === 0));
+  // stop from just after a bar line, so the stop has a bar to wait for
+  const stop = await page.evaluate(async (id) => {
+    const place = () => window.__transport.getPosition() % 2;
+    await window.__until(() => place() >= 0.3 && place() <= 0.6);
+    const t0 = window.__transport.getPosition();
+    document.querySelectorAll('.session-view .session-track-column')[window.__cols[1]].querySelector('.btn-stop-track').click();
+    const stopped = await window.__until(() => window.__session.getSessionSnapshot().playing[id] === undefined, 4000);
+    return { t0, at: stopped ? window.__transport.getPosition() : null };
+  }, ids[1]);
   const afterStop = await snap();
-  check('A track\'s stop button stops its clip at the next bar and leaves the rest', afterStop.playing[ids[1]] === undefined && afterStop.playing[ids[0]] === 0, JSON.stringify(afterStop.playing));
-  const overridden = await page.evaluate(() => !document.querySelector('.session-toolbar .back-to-arr')?.disabled);
+  const stopBar = Math.ceil(stop.t0 / 2) * 2;
+  check('A track\'s stop button stops its clip at the next bar and leaves the rest',
+    afterStop.playing[ids[1]] === undefined && afterStop.playing[ids[0]] === 0 && stop.at !== null && stop.at - stop.t0 > 0.5 && Math.abs(stop.at - (stopBar - 0.3)) < 0.2,
+    JSON.stringify({ ...stop, stopBar, playing: afterStop.playing }));
+  const overridden = await page.evaluate(() => { const b = document.querySelector('.session-toolbar .back-to-arr'); return !!b && !b.disabled; });
   await page.evaluate(() => { [...document.querySelectorAll('.session-toolbar button')].find((b) => b.textContent.includes('Stop All Clips')).click(); return 1; });
-  await page.evaluate(async () => { while (Object.keys(window.__session.getSessionSnapshot().playing).length) await new Promise((r) => setTimeout(r, 10)); return 1; });
+  await page.evaluate(() => window.__until(() => Object.keys(window.__session.getSessionSnapshot().playing).length === 0));
   await ctx.sleep(1500); // let the last notes' sources end
   const quiet = await listen(500);
   check('Stop All Clips stops everything, and the master falls silent', quiet < 0.005, quiet.toFixed(4));

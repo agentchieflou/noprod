@@ -10,6 +10,12 @@ module.exports = async (page, ctx) => {
     window.__devices = await import('/src/audio/devices.ts');
     window.__auto = await import('/src/audio/automation.ts');
     window.__tp = await import('/src/audio/transport.ts');
+    // Every wait has a deadline, so a regression prints a FAIL line instead of stalling the suite
+    window.__until = async (fn, ms = 6000) => {
+      const end = performance.now() + ms;
+      while (performance.now() < end) { if (fn()) return true; await new Promise((r) => setTimeout(r, 5)); }
+      return false;
+    };
     return 1;
   });
   await page.evaluate(() => {
@@ -62,7 +68,7 @@ module.exports = async (page, ctx) => {
     const pts = st.tracks.find((t) => t.id === window.__track).automation[key];
     const out = [];
     for (const at of [0.2, 2, 3]) {
-      while (window.__transport.getPosition() < at) await new Promise((r) => setTimeout(r, 5));
+      await window.__until(() => window.__transport.getPosition() >= at);
       out.push({ position: window.__transport.getPosition(), value: target.value, expected: window.__tp.envelopeAt(pts, window.__transport.getPosition()) });
     }
     return out;
@@ -120,9 +126,9 @@ module.exports = async (page, ctx) => {
     const pan = window.__engine.getAutomationTargets(window.__track, 'pan')[0].param;
     const dev = window.__engine.getAutomationTargets(window.__track, window.__deviceKey);
     const read = () => ({ pan: pan.value, dev: dev.map((d) => d.param.value) });
-    while (window.__transport.getPosition() < 0.3) await new Promise((r) => setTimeout(r, 5));
+    await window.__until(() => window.__transport.getPosition() >= 0.3);
     const a = read();
-    while (window.__transport.getPosition() < 3) await new Promise((r) => setTimeout(r, 5));
+    await window.__until(() => window.__transport.getPosition() >= 3);
     return { a, b: read(), targets: dev.length };
   });
   await page.evaluate(() => { const st = window.__dawStore.getState(); if (st.isPlaying) st.togglePlayback(); return 1; });
