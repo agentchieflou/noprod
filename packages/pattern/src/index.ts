@@ -9,9 +9,11 @@ export { Hap, sortHaps } from './hap.ts';
 export { PatternError } from './errors.ts';
 export { randomAt, randomInCycle, hashNumbers } from './random.ts';
 export {
-  Pattern, Budget, DEFAULT_LIMITS, reify, setStringParser, patternify,
+  Pattern, Budget, DEFAULT_LIMITS, reify, setStringParser, patternify, truthy,
   silence, pure, signal, rand, sine, cosine, saw, isaw, tri, square,
   stack, slowcat, cat, fastcat, sequence, seq, timecat, randcat, choose, polymeter,
-  bjorklund, euclidBools
+  bjorklund, euclidBools, MAX_EUCLID_STEPS
 } from './pattern.ts';
 export type { Limits, QueryFn, Transform, Patternable } from './pattern.ts';
+export { mini, parseMini, toPattern, tokenize, MINI_LIMITS } from './mini.ts';
+export type { MiniNode, MiniStep, MiniValue } from './mini.ts';
