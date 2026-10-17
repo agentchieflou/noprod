@@ -3063,6 +3063,24 @@ body {
   font-weight: 600;
 }
 
+/* MIDI learn */
+.midi-mappable { outline: 1px dashed var(--accent-blue); outline-offset: 2px; cursor: crosshair; }
+.midi-mapped { outline-style: solid; outline-color: var(--accent-green); }
+.midi-pending { outline: 2px solid #ffb300; animation: midi-pulse 0.8s ease-in-out infinite alternate; }
+@keyframes midi-pulse { to { outline-color: transparent; } }
+.midi-dropped { font-size: 0.7rem; color: #ffb300; cursor: pointer; white-space: nowrap; }
+.midi-map-dialog {
+  position: fixed; top: 52px; right: 12px; z-index: 50; width: 640px; max-height: 60vh; overflow: auto;
+  background: var(--bg-panel, #1f1f1f); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); font-size: 0.75rem;
+}
+.midi-map-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.midi-map-empty { opacity: 0.7; padding: 6px; }
+.midi-map-row { display: flex; gap: 8px; align-items: center; padding: 3px 0; border-top: 1px solid var(--border-color); }
+.midi-map-target { flex: 1; min-width: 120px; }
+.midi-map-source { opacity: 0.7; min-width: 120px; }
+.midi-map-row input[type=number] { width: 44px; }
+
 .app-version {
   margin-left: auto;
   align-self: center;
