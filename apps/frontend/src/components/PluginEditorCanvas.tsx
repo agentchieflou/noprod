@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { lpiKeyCode, lpiModifiers, lpiTypedChar } from '../native/editorKeys';
 
 // A plugin editor streamed from the Audio Core (#44 B6): frames arrive over a
@@ -46,9 +46,11 @@ export default function PluginEditorCanvas({ url, editorId, width, height, fps =
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const onFrameRef = useRef(onFrame);
-  onFrameRef.current = onFrame;
   const onClosedRef = useRef(onClosed);
-  onClosedRef.current = onClosed;
+  useLayoutEffect(() => {
+    onFrameRef.current = onFrame;
+    onClosedRef.current = onClosed;
+  });
 
   useEffect(() => {
     const worker = new Worker(new URL('../native/editorStreamWorker.ts', import.meta.url), { type: 'module' });

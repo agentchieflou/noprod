@@ -29,6 +29,12 @@ export interface ProjectDoc {
 
 export const BUFFER_LIMITS = { count: 100_000, channels: 32, minSampleRate: 3000, maxSampleRate: 768000, frames: 2 ** 31 - 1 };
 
+// How many items a list may hold: generous, so no real project reaches them
+export const COUNT_LIMITS = {
+  tracks: 1000, returns: 64, regions: 100_000, notes: 100_000, devices: 256, takeLanes: 64,
+  locators: 10_000, timeSignatures: 10_000, midiMappings: 10_000
+};
+
 const isObject = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 // ---- migrations
@@ -77,9 +83,10 @@ const nullable = (c: Check): Check => (v, p) => (v === null ? null : c(v, p));
 const either = (...cs: Check[]): Check => (v, p) => (cs.some((c) => !c(v, p)) ? null : cs[0](v, p));
 const oneOf = (...vals: unknown[]): Check => (v, p) => (vals.includes(v) ? null : `${p}: unexpected value ${JSON.stringify(v)}`);
 
-const list = (c: Check, min = 0): Check => (v, p) => {
+const list = (c: Check, min = 0, max = Infinity): Check => (v, p) => {
   if (!Array.isArray(v)) return `${p}: expected a list`;
   if (v.length < min) return `${p}: expected at least ${min}`;
+  if (v.length > max) return `${p}: more than ${max} items`;
   for (let i = 0; i < v.length; i++) { const e = c(v[i], `${p}[${i}]`); if (e) return e; }
   return null;
 };
@@ -106,7 +113,7 @@ const shape = (fields: Record<string, Check>): Check => (v, p) => {
 
 const device: Check = (v, p) => shape({
   'id?': str, name: str, 'type?': str, 'kind?': str, 'parameters?': nullable(record(any)),
-  'devices?': list(device), 'macros?': list(shape({ id: str, 'name?': str, 'value?': num, 'mappings?': list(any) }))
+  'devices?': list(device, 0, COUNT_LIMITS.devices),'macros?': list(shape({ id: str, 'name?': str, 'value?': num, 'mappings?': list(any) }))
 })(v, p);
 
 function projectChecks(bufferIds: Set<string>): Record<string, Check> {
@@ -115,33 +122,33 @@ function projectChecks(bufferIds: Set<string>): Record<string, Check> {
     return bufferIds.has(v.$audioBuffer) ? null : `${p}: refers to audio the file does not hold`;
   };
   const note = shape({ 'id?': either(str, num), pitch: range(0, 127), start: num, duration: num, 'velocity?': num });
-  const clip = shape({ 'id?': str, 'type?': str, 'file?': str, duration: num, 'startOffset?': num, 'audioBuffer?': nullable(buffer), 'notes?': list(note) });
+  const clip = shape({ 'id?': str, 'type?': str, 'file?': str, duration: num, 'startOffset?': num, 'audioBuffer?': nullable(buffer), 'notes?': list(note, 0, COUNT_LIMITS.notes) });
   const region: Check = (v, p) => shape({ id: str, trackId: str, startTime: num })(v, p) ?? clip(v, p);
-  const strip = { id: str, name: str, volume: num, pan: num, plugins: list(device), 'isMuted?': bool };
+  const strip = { id: str, name: str, volume: num, pan: num, plugins: list(device, 0, COUNT_LIMITS.devices), 'isMuted?': bool };
   const track = shape({
     ...strip, type: oneOf('audio', 'midi', 'group'), 'sends?': record(num), 'instrument?': nullable(device),
     'isSoloed?': bool, 'isArmed?': bool, 'frozenBuffer?': nullable(buffer),
-    'takeLanes?': list(shape({ id: str, name: str, regions: list(region) }))
+    'takeLanes?': list(shape({ id: str, name: str, regions: list(region) }), 0, COUNT_LIMITS.takeLanes)
   });
   return {
     bpm: range(20, 999),
-    timeSignatures: list(shape({ bar: range(0, 1e6, true), numerator: range(1, 99, true), denominator: range(1, 64, true) }), 1),
+    timeSignatures: list(shape({ bar: range(0, 1e6, true), numerator: range(1, 99, true), denominator: range(1, 64, true) }), 1, COUNT_LIMITS.timeSignatures),
     countInBars: range(0, 64),
     masterVolume: num,
     masterPan: range(-1, 1),
-    returns: list(shape(strip)),
-    masterPlugins: list(device),
+    returns: list(shape(strip), 0, COUNT_LIMITS.returns),
+    masterPlugins: list(device, 0, COUNT_LIMITS.devices),
     isLimiterEnabled: bool,
     isLoopEnabled: bool,
     loopStart: num,
     loopEnd: num,
-    locators: list(shape({ id: str, time: num, 'name?': str })),
+    locators: list(shape({ id: str, time: num, 'name?': str }), 0, COUNT_LIMITS.locators),
     punchInTime: num,
     punchOutTime: num,
     isPunchEnabled: bool,
     vstScanPaths: list(str),
-    tracks: list(track),
-    regions: list(region),
+    tracks: list(track, 0, COUNT_LIMITS.tracks),
+    regions: list(region, 0, COUNT_LIMITS.regions),
     sessionClips: record(record(clip)),
     scenes: list(shape({ id: str, 'name?': str, 'tempo?': nullable(num) })),
     launchQuantization: str,
@@ -152,7 +159,7 @@ function projectChecks(bufferIds: Set<string>): Record<string, Check> {
       target: shape({ kind: oneOf('track', 'send', 'master', 'device', 'instrument', 'tempo') }),
       source: shape({ input: str, channel: range(1, 16, true), type: oneOf('cc', 'note'), number: range(0, 127, true) }),
       min: range(0, 1), max: range(0, 1), mode: oneOf('pickup', 'jump'), invert: bool
-    }))
+    }), 0, COUNT_LIMITS.midiMappings)
   };
 }
 
