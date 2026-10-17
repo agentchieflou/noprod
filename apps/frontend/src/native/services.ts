@@ -1,19 +1,19 @@
-// The local services the app can talk to (#139): AI dictation's orchestrator
-// and GhostDAW, the native plug-in host. Each is opt-in: off by default in a
-// production build (the hosted app has no local services), on in dev. The
-// choice and the addresses are kept per browser.
+// The local services the app can talk to (#139): GhostDAW, the native plug-in
+// host. Opt-in: off by default in a production build (the hosted app has no
+// local services), on in dev. The choice and the address are kept per
+// browser. (AI dictation is not one: it calls its provider with the user's own
+// key, #157.)
 
-export type ServiceName = 'dictation' | 'ghostdaw';
+export type ServiceName = 'ghostdaw';
 
 export interface ServiceSetting {
   enabled: boolean;
-  url: string;   // dictation: the orchestrator; ghostdaw: its audio stream server
+  url: string;   // ghostdaw: its audio stream server
 }
 
 export type Services = Record<ServiceName, ServiceSetting>;
 
 export const defaultServices = (dev: boolean): Services => ({
-  dictation: { enabled: dev, url: 'ws://localhost:8080' },
   ghostdaw: { enabled: dev, url: 'ws://localhost:8083' }
 });
 

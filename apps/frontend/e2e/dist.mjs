@@ -98,6 +98,13 @@ try {
   const html = readFileSync(join(outDir, 'index.html'), 'utf8');
   check('index.html is noprod\'s own', /<title>noprod<\/title>/.test(html) && /name="description"/.test(html) && /<noscript>/.test(html) && html.includes(`${BASE}favicon.svg`) && html.includes(`${BASE}manifest.webmanifest`));
 
+  // The page can hold a user's key, so it carries a policy: its own scripts,
+  // and connections to itself, the provider and GhostDAW on this computer
+  const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(html)?.[1].replaceAll('&#39;', "'") ?? '';
+  const directive = (name) => csp.split('; ').find((d) => d.startsWith(`${name} `))?.split(' ').slice(1).join(' ');
+  check('index.html carries a Content-Security-Policy: script-src \'self\', connect-src self, the provider and local sockets only',
+    directive('script-src') === "'self'" && directive('connect-src') === "'self' https://generativelanguage.googleapis.com ws://localhost:* ws://127.0.0.1:*", csp);
+
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 1000 });
   const throttle = Number(process.env.E2E_THROTTLE ?? 1);
@@ -176,9 +183,55 @@ try {
   check('A library note is audible at the master', level > 0.01, `peak ${level.toFixed(3)} after ${presses} press${presses === 1 ? '' : 'es'}`);
   await page.screenshot({ path: join(shotDir, 'dist-noprod.png') });
 
+  // Dictation under the policy, with a stubbed key: the box starts as one
+  // line, a key makes it a box, and the answer becomes a track. The stub
+  // answers in the page, so no network is needed.
+  // (one argument: Playwright's evaluate takes no more)
+  const typeInto = (placeholder, text) => page.evaluate(({ placeholder, text }) => {
+    const input = [...document.querySelectorAll('input')].find((i) => (i.placeholder || '').includes(placeholder));
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, text);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, { placeholder, text });
+  const press = (label) => page.evaluate((label) => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === label)?.click(), label);
+  await page.evaluate(() => {
+    window.__violations = [];
+    document.addEventListener('securitypolicyviolation', (e) => window.__violations.push(`${e.violatedDirective} ${e.blockedURI}`));
+    window.__providerCalls = [];
+    const real = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const u = String(input?.url ?? input);
+      if (!u.startsWith('https://generativelanguage.googleapis.com/')) return real(input, init);
+      window.__providerCalls.push({ key: init?.headers?.['x-goog-api-key'], url: u });
+      return Promise.resolve(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'note("c3 e3 g3 c4").s("flute")' }] } }] })));
+    };
+  });
+  await until('the one-line box', `[...document.querySelectorAll('button')].some((b) => b.textContent.includes('Add your API key to dictate'))`);
+  check('With no key the box is one line, "Add your API key to dictate"', true);
+  await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.textContent.includes('Add your API key to dictate')).click());
+  await until('the settings', `!!document.querySelector('[data-dictation-settings]')`);
+  await typeInto('Paste your key', 'AIzaSyDISTKEY-0123456789');
+  await press('Save');
+  await until('the dictation box', `[...document.querySelectorAll('input')].some((i) => (i.placeholder || '').includes('Describe'))`);
+  await page.evaluate(() => document.querySelector('[data-dictation-settings] button[title=Close]')?.click());
+  await typeInto('Describe', 'a flute line');
+  await press('Dictate');
+  await until('the dictated track', `[...document.querySelectorAll('.track-name')].some((e) => /flute/i.test(e.textContent))`);
+  const calls = await page.evaluate(() => window.__providerCalls);
+  check('Under the policy a stubbed key dictates: one request with the key, and the answer becomes a track', calls.length === 1 && calls[0].key === 'AIzaSyDISTKEY-0123456789', JSON.stringify(calls));
+
+  // The policy holds: a connection to any other host is blocked
+  const blocked = await page.evaluate(async () => {
+    const outcome = await fetch('https://example.com/', { mode: 'no-cors' }).then(() => 'allowed', () => 'blocked');
+    await new Promise((r) => setTimeout(r, 300));
+    return { outcome, violations: window.__violations };
+  });
+  check('A request to another host is blocked by the policy', blocked.outcome === 'blocked' && blocked.violations.some((v) => v.startsWith('connect-src')), JSON.stringify(blocked));
+  check('Nothing the app does breaks the policy', !blocked.violations.some((v) => !v.includes('example.com')), JSON.stringify(blocked.violations));
+
   const unexpected = failedRequests.filter((r) => !r.includes('localhost:8080'));
   check('Every asset loads under the base path', unexpected.length === 0, unexpected.slice(0, 3).join(' | '));
-  const realErrors = errors.filter((e) => !e.includes('ws://localhost:8080') && !/ERR_CONNECTION_REFUSED|WebSocket/.test(e));
+  const realErrors = errors.filter((e) => !e.includes('ws://localhost:8080') && !/ERR_CONNECTION_REFUSED|WebSocket/.test(e)
+    && !e.includes('example.com')); // the probe above, blocked on purpose
   check('No page errors', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));
 } catch (e) {
   check(`dist suite stopped: ${e.message}`, false);
