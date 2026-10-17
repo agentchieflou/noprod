@@ -1,6 +1,11 @@
 // #103: the DSP Map's A/B, Revert and Save to My Sounds
 module.exports = async (page, ctx) => {
   const results = [];
+  // One import per call: several in one can hang ("Promise was collected")
+  await page.evaluate(async () => { window.__sound = await import(window.__fs + '/packages/sound/src/index.ts'); return 1; });
+  await page.evaluate(async () => { window.__library = await import('/src/audio/library.ts'); return 1; });
+  await page.evaluate(async () => { window.__userSounds = await import('/src/audio/userSounds.ts'); return 1; });
+  await page.evaluate(async () => { window.__dspState = await import('/src/components/dspMapState.ts'); return 1; });
   const check = (name, ok, detail = '') => { const line = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`; results.push(line); console.log(line); };
   const track = () => page.evaluate(() => {
     const st = window.__dawStore.getState();
@@ -8,11 +13,11 @@ module.exports = async (page, ctx) => {
     return { id: t.id, sound: t.instrument.parameters.Library.sound, past: st.past.length };
   });
   const same = (a, b) => page.evaluate(async (a, b) => {
-    const { render } = await import(window.__fs + '/packages/sound/src/index.ts');
+    const { render } = window.__sound;
     const x = render(a, { sampleRate: 22050, gate: 0.5, normalize: false }).left, y = render(b, { sampleRate: 22050, gate: 0.5, normalize: false }).left;
     return x.length === y.length && x.every((v, i) => v === y[i]);
   }, a, b);
-  const played = () => page.evaluate(async () => (await import('/src/components/dspMapState.ts')).lastPlayed);
+  const played = () => page.evaluate(() => window.__dspState.lastPlayed);
   await page.mouse.click(5, 5);
 
   // A violin on a track, the DSP Map open on it
@@ -61,7 +66,7 @@ module.exports = async (page, ctx) => {
   const saved = await page.evaluate(async () => {
     const st = window.__dawStore.getState();
     const now = st.tracks.find((t) => t.id === st.selectedTrackId).instrument.parameters.Library.sound;
-    const { getUserSounds } = await import('/src/audio/userSounds.ts');
+    const { getUserSounds } = window.__userSounds;
     const db = await new Promise((resolve) => {
       const req = indexedDB.open('noprod-sounds', 1);
       req.onsuccess = () => { const g = req.result.transaction('sounds').objectStore('sounds').getAll(); g.onsuccess = () => resolve(g.result.map((x) => x.id)); };
@@ -82,7 +87,7 @@ module.exports = async (page, ctx) => {
   await page.click(`.dsp-map-head[data-col="${scol}"] .dsp-save`);
   await ctx.sleep(500);
   const scratch = await page.evaluate(async (c) => {
-    const { savedColumns } = await import('/src/components/dspMapState.ts');
+    const { savedColumns } = window.__dspState;
     return savedColumns().find((x) => x.key === c)?.recipe.id;
   }, scol);
   check('A scratch column now holds the saved copy', /^my-/.test(scratch ?? ''), String(scratch));
@@ -92,14 +97,14 @@ module.exports = async (page, ctx) => {
   await tabs();
   await ctx.sleep(200);
   await page.evaluate(async () => {
-    const { findSound } = await import(window.__fs + '/packages/sound/src/index.ts');
-    const { createLibraryInstrument } = await import('/src/audio/library.ts');
+    const { findSound } = window.__sound;
+    const { createLibraryInstrument } = window.__library;
     window.__dawStore.getState().addMidiTrackWithInstrument(createLibraryInstrument(findSound('trumpet-modeled')), 'Trumpet');
   });
   await ctx.sleep(300);
   const t4 = await track();
   await page.evaluate(async () => {
-    const { setBlockOn, chainOf } = await import(window.__fs + '/packages/sound/src/index.ts');
+    const { setBlockOn, chainOf } = window.__sound;
     const st = window.__dawStore.getState();
     const t = st.tracks.find((x) => x.id === st.selectedTrackId);
     const lib = t.instrument.parameters.Library;
@@ -121,8 +126,8 @@ module.exports = async (page, ctx) => {
 
   // 7. A kit's pads each have their own original: switching pads isn't a change
   await page.evaluate(async () => {
-    const { KITS } = await import(window.__fs + '/packages/sound/src/index.ts');
-    const { createLibraryKit } = await import('/src/audio/library.ts');
+    const { KITS } = window.__sound;
+    const { createLibraryKit } = window.__library;
     window.__dawStore.getState().addMidiTrackWithInstrument(createLibraryKit(KITS[0]), 'Kit');
   });
   await ctx.sleep(400);
