@@ -51,6 +51,7 @@ target_compile_definitions(lpi_test_crash PRIVATE LPI_TEST_CRASH=1)
 target_compile_definitions(lpi_test_hang PRIVATE LPI_TEST_HANG=1)
 
 set(GHOSTDAW_TEST_PLUGIN_DEFINITIONS
+    LPI_TEST_FOLDER="${CMAKE_CURRENT_BINARY_DIR}/lpi"
     LPI_TEST_GAIN_PATH="$<TARGET_FILE:lpi_test_gain_good>"
     LPI_TEST_BAD_MAJOR_PATH="$<TARGET_FILE:lpi_test_gain_bad_major>"
     LPI_TEST_NO_EXPORT_PATH="$<TARGET_FILE:lpi_test_gain_no_export>"

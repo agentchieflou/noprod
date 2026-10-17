@@ -1133,7 +1133,7 @@ void testScanner()
     auto dir = tempDir ("scan");
     auto worker = pathFromUtf8 (GHOSTDAW_EXE_PATH);
     CHECK (fileExists (worker));
-    auto pluginFolder = pathFromUtf8 (LPI_TEST_GAIN_PATH).parent_path().parent_path(); // tests/lpi/<variant>/...
+    auto pluginFolder = pathFromUtf8 (LPI_TEST_FOLDER); // tests/lpi/<variant>/ (a multi-config build adds /Release/)
     MessageLoop loop;
     PluginRegistry registry (dir);
     CHECK (registry.addUserScanFolder (pluginFolder) && ! registry.addUserScanFolder (pluginFolder));
