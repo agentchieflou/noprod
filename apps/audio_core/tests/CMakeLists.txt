@@ -9,16 +9,6 @@
 # an LPI gain with an editor (and its polling and latency variants), and a
 # JUCE VST3 gain bundle.
 
-add_executable(ghostdaw_tests main.cpp platform_tests.cpp host_tests.cpp)
-target_link_libraries(ghostdaw_tests PRIVATE ghostdaw_host)
-target_compile_definitions(ghostdaw_tests PRIVATE GHOSTDAW_EXE_PATH="$<TARGET_FILE:ghostdaw>")
-add_dependencies(ghostdaw_tests ghostdaw)
-ghostdaw_warnings(ghostdaw_tests)
-add_test(NAME ghostdaw_tests COMMAND ghostdaw_tests)
-
-if(NOT GHOSTDAW_JUCE_HOST)
-    return()
-endif()
 
 foreach(variant IN ITEMS good bad_major no_export)
     set(target lpi_test_gain_${variant})
@@ -47,6 +37,46 @@ target_compile_definitions(lpi_test_gui_polling PRIVATE LPI_TEST_GUI_POLLING=1)
 target_compile_definitions(lpi_test_gui_latency PRIVATE LPI_TEST_GUI_LATENCY=64)
 target_compile_definitions(lpi_test_gui_transport PRIVATE LPI_TEST_GUI_TRANSPORT=1)
 
+# Binaries that misbehave when loaded: one crashes in lpi_get_factory, one
+# never returns from it. The scanner's child process takes the hit. They
+# live in a folder of their own, which the JUCE host's tests (it loads
+# plugins in-process) don't scan.
+foreach(variant IN ITEMS crash hang)
+    add_library(lpi_test_${variant} MODULE plugins/lpi_test_bad.cpp)
+    target_include_directories(lpi_test_${variant} PRIVATE "${LPI_INCLUDE_DIR}")
+    set_target_properties(lpi_test_${variant} PROPERTIES
+        PREFIX ""
+        CXX_VISIBILITY_PRESET hidden
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lpi_bad/${variant}")
+endforeach()
+target_compile_definitions(lpi_test_crash PRIVATE LPI_TEST_CRASH=1)
+target_compile_definitions(lpi_test_hang PRIVATE LPI_TEST_HANG=1)
+
+set(GHOSTDAW_TEST_PLUGIN_DEFINITIONS
+    LPI_TEST_FOLDER="${CMAKE_CURRENT_BINARY_DIR}/lpi"
+    LPI_TEST_BAD_FOLDER="${CMAKE_CURRENT_BINARY_DIR}/lpi_bad"
+    LPI_TEST_GAIN_PATH="$<TARGET_FILE:lpi_test_gain_good>"
+    LPI_TEST_BAD_MAJOR_PATH="$<TARGET_FILE:lpi_test_gain_bad_major>"
+    LPI_TEST_NO_EXPORT_PATH="$<TARGET_FILE:lpi_test_gain_no_export>"
+    LPI_TEST_GUI_PATH="$<TARGET_FILE:lpi_test_gui>"
+    LPI_TEST_GUI_POLLING_PATH="$<TARGET_FILE:lpi_test_gui_polling>"
+    LPI_TEST_GUI_LATENCY_PATH="$<TARGET_FILE:lpi_test_gui_latency>"
+    LPI_TEST_GUI_TRANSPORT_PATH="$<TARGET_FILE:lpi_test_gui_transport>"
+    LPI_TEST_CRASH_PATH="$<TARGET_FILE:lpi_test_crash>"
+    LPI_TEST_HANG_PATH="$<TARGET_FILE:lpi_test_hang>")
+set(GHOSTDAW_TEST_PLUGIN_TARGETS lpi_test_gain_good lpi_test_gain_bad_major lpi_test_gain_no_export lpi_test_gui lpi_test_gui_polling lpi_test_gui_latency lpi_test_gui_transport lpi_test_crash lpi_test_hang)
+
+add_executable(ghostdaw_tests main.cpp platform_tests.cpp host_tests.cpp plugin_tests.cpp)
+target_link_libraries(ghostdaw_tests PRIVATE ghostdaw_host)
+target_include_directories(ghostdaw_tests PRIVATE "${LPI_INCLUDE_DIR}")
+target_compile_definitions(ghostdaw_tests PRIVATE GHOSTDAW_EXE_PATH="$<TARGET_FILE:ghostdaw>" ${GHOSTDAW_TEST_PLUGIN_DEFINITIONS})
+add_dependencies(ghostdaw_tests ghostdaw ${GHOSTDAW_TEST_PLUGIN_TARGETS})
+ghostdaw_warnings(ghostdaw_tests)
+add_test(NAME ghostdaw_tests COMMAND ghostdaw_tests)
+
+if(NOT GHOSTDAW_JUCE_HOST)
+    return()
+endif()
 juce_add_plugin(TestGainVst3
     PRODUCT_NAME "NoProd Test Gain"
     COMPANY_NAME "NoProd"
@@ -71,13 +101,7 @@ target_compile_definitions(GhostDAWTests PRIVATE
     JUCE_PLUGINHOST_VST3=1
     JUCE_PLUGINHOST_AU=1
     JUCE_MODAL_LOOPS_PERMITTED=1 # runDispatchLoopUntil, for the editor tests
-    LPI_TEST_GAIN_PATH="$<TARGET_FILE:lpi_test_gain_good>"
-    LPI_TEST_BAD_MAJOR_PATH="$<TARGET_FILE:lpi_test_gain_bad_major>"
-    LPI_TEST_NO_EXPORT_PATH="$<TARGET_FILE:lpi_test_gain_no_export>"
-    LPI_TEST_GUI_PATH="$<TARGET_FILE:lpi_test_gui>"
-    LPI_TEST_GUI_POLLING_PATH="$<TARGET_FILE:lpi_test_gui_polling>"
-    LPI_TEST_GUI_LATENCY_PATH="$<TARGET_FILE:lpi_test_gui_latency>"
-    LPI_TEST_GUI_TRANSPORT_PATH="$<TARGET_FILE:lpi_test_gui_transport>"
+    ${GHOSTDAW_TEST_PLUGIN_DEFINITIONS}
     TEST_VST3_PATH="$<GENEX_EVAL:$<TARGET_PROPERTY:TestGainVst3_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
 target_link_libraries(GhostDAWTests PRIVATE
     juce::juce_core
