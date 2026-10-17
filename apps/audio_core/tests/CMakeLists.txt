@@ -38,20 +38,23 @@ target_compile_definitions(lpi_test_gui_latency PRIVATE LPI_TEST_GUI_LATENCY=64)
 target_compile_definitions(lpi_test_gui_transport PRIVATE LPI_TEST_GUI_TRANSPORT=1)
 
 # Binaries that misbehave when loaded: one crashes in lpi_get_factory, one
-# never returns from it. The scanner's child process takes the hit.
+# never returns from it. The scanner's child process takes the hit. They
+# live in a folder of their own, which the JUCE host's tests (it loads
+# plugins in-process) don't scan.
 foreach(variant IN ITEMS crash hang)
     add_library(lpi_test_${variant} MODULE plugins/lpi_test_bad.cpp)
     target_include_directories(lpi_test_${variant} PRIVATE "${LPI_INCLUDE_DIR}")
     set_target_properties(lpi_test_${variant} PROPERTIES
         PREFIX ""
         CXX_VISIBILITY_PRESET hidden
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lpi/${variant}")
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lpi_bad/${variant}")
 endforeach()
 target_compile_definitions(lpi_test_crash PRIVATE LPI_TEST_CRASH=1)
 target_compile_definitions(lpi_test_hang PRIVATE LPI_TEST_HANG=1)
 
 set(GHOSTDAW_TEST_PLUGIN_DEFINITIONS
     LPI_TEST_FOLDER="${CMAKE_CURRENT_BINARY_DIR}/lpi"
+    LPI_TEST_BAD_FOLDER="${CMAKE_CURRENT_BINARY_DIR}/lpi_bad"
     LPI_TEST_GAIN_PATH="$<TARGET_FILE:lpi_test_gain_good>"
     LPI_TEST_BAD_MAJOR_PATH="$<TARGET_FILE:lpi_test_gain_bad_major>"
     LPI_TEST_NO_EXPORT_PATH="$<TARGET_FILE:lpi_test_gain_no_export>"

@@ -1140,16 +1140,18 @@ void testScanner()
     auto dir = tempDir ("scan");
     auto worker = pathFromUtf8 (GHOSTDAW_EXE_PATH);
     CHECK (fileExists (worker));
-    auto pluginFolder = pathFromUtf8 (LPI_TEST_FOLDER); // tests/lpi/<variant>/ (a multi-config build adds /Release/)
+    // tests/lpi/<variant>/ and tests/lpi_bad/<variant>/ (a multi-config build adds /Release/)
+    auto pluginFolder = pathFromUtf8 (LPI_TEST_FOLDER), badFolder = pathFromUtf8 (LPI_TEST_BAD_FOLDER);
     MessageLoop loop;
     PluginRegistry registry (dir);
     CHECK (registry.addUserScanFolder (pluginFolder) && ! registry.addUserScanFolder (pluginFolder));
-    CHECK (registry.getUserScanFolders().size() == 1 && registry.getScanFolders().size() == PluginRegistry::defaultScanFolders().size() + 1);
+    CHECK (registry.addUserScanFolder (badFolder));
+    CHECK (registry.getUserScanFolders().size() == 2 && registry.getScanFolders().size() == PluginRegistry::defaultScanFolders().size() + 2);
 
     // The candidates: every shared library there, nothing inside a .vst3 bundle
     createDirectories (pluginFolder / "Fake.vst3" / "Contents");
     writeFile (pluginFolder / "Fake.vst3" / "Contents" / ("inside" + std::string (sharedLibraryExtension)), "");
-    auto candidates = PluginScanner::candidates ({ pluginFolder });
+    auto candidates = PluginScanner::candidates ({ pluginFolder, badFolder });
     CHECK (candidates.size() == 9); // gain x3, gui x4, crash, hang
     for (auto& c : candidates)
         CHECK (pathToUtf8 (c).find ("Fake.vst3") == std::string::npos);
@@ -1206,7 +1208,7 @@ void testScanner()
 
     // All of it survives a restart (plugins.json)
     PluginRegistry again (dir);
-    CHECK (again.getPlugins().size() == 5 && again.getSkipped().size() == 2 && again.getUserScanFolders().size() == 1);
+    CHECK (again.getPlugins().size() == 5 && again.getSkipped().size() == 2 && again.getUserScanFolders().size() == 2);
     std::string pluginsJson;
     CHECK (readFile (dir / "plugins.json", pluginsJson) && crashedOrFailed (pluginsJson) && pluginsJson.find ("hung") != std::string::npos);
 
