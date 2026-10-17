@@ -138,7 +138,41 @@ const PLUCKED: SoundRecipe[] = [
       resonator: { kind: 'string', decay: 3, brightness: 0.7, stiffness: 0.08 },
       radiators: [{ kind: 'body', preset: 'box', mix: 0.5 }], pan: 0.3, env: { sustain: 1, release: 0.5 }
     }
-  ])
+  ]),
+  // courses of two strings, picked together and a few cents apart
+  sound('mandolin', 'Mandolin', 'plucks', ['mandolin', 'string', 'acoustic', 'bright', 'folk'], 67, 2, [
+    {
+      type: 'model', exciter: { kind: 'pluck', position: 0.12, hardness: 0.4 },
+      resonator: { kind: 'string', decay: 1.5, brightness: 0.7, stiffness: 0.02 },
+      radiators: [{ kind: 'body', preset: 'guitar', mix: 0.5 }], pan: -0.3, env: { sustain: 1, release: 0.2 }
+    },
+    {
+      type: 'model', exciter: { kind: 'pluck', position: 0.13, hardness: 0.4 }, ratio: 1.002,
+      resonator: { kind: 'string', decay: 1.5, brightness: 0.7, stiffness: 0.02 },
+      radiators: [{ kind: 'body', preset: 'guitar', mix: 0.5 }], pan: 0.3, env: { sustain: 1, release: 0.2 }
+    }
+  ]),
+  sound('ukulele', 'Ukulele', 'plucks', ['ukulele', 'string', 'acoustic', 'nylon', 'small'], 67, 2, [{
+    type: 'model', exciter: { kind: 'pluck', position: 0.16, hardness: 0.35 },
+    resonator: { kind: 'string', decay: 1.5, brightness: 0.4, stiffness: 0.02 },
+    radiators: [{ kind: 'body', preset: 'box', mix: 0.6 }, { kind: 'helmholtz', hz: 220, q: 6, mix: 0.25 }],
+    filter: { type: 'highpass', cutoff: 150 },
+    env: { sustain: 1, release: 0.2 }
+  }]),
+  sound('cello-pizzicato', 'Cello Pizzicato', 'plucks', ['pizzicato', 'cello', 'string', 'orchestral', 'short'], 48, 1.5, [{
+    type: 'model', exciter: { kind: 'pluck', position: 0.25, hardness: 0.25 },
+    resonator: { kind: 'string', decay: 0.9, brightness: 0.4 },
+    radiators: [{ kind: 'body', preset: 'cello', mix: 0.7 }],
+    filter: { type: 'highpass', cutoff: 70 },
+    env: { sustain: 1, release: 0.15 }
+  }]),
+  // no wooden body: the string's own sound, rounded by a pickup
+  sound('bass-electric-modeled', 'Electric Bass (Modeled)', 'bass', ['bass', 'electric', 'string', 'plucked'], 40, 3, [{
+    type: 'model', exciter: { kind: 'pluck', position: 0.15, hardness: 0.5 },
+    resonator: { kind: 'string', decay: 2.5, brightness: 0.45 },
+    radiators: [{ kind: 'damping', a: 0.3 }],
+    env: { sustain: 1, release: 0.2 }
+  }])
 ];
 
 // ------------------------------------------------- strings at a bridge (#108)
