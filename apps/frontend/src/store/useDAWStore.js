@@ -188,11 +188,8 @@ export const createDefaultProject = () => ({
   punchOutTime: 8,
   isPunchEnabled: false,
   
-  // Custom VST Paths for local scanning (Antares, FabFilter)
-  vstScanPaths: [
-    'C:/Program Files/Common Files/VST3',
-    'C:/Program Files/Steinberg/VstPlugins'
-  ],
+  // Folders GhostDAW scans for plug-ins, besides the system's own
+  vstScanPaths: [],
 
   // Tracks list
   tracks: [
@@ -209,9 +206,7 @@ export const createDefaultProject = () => ({
       isSoloed: false,
       isArmed: false,
       color: '#3b82f6',
-      plugins: [
-        { id: uuidv4(), name: 'Antares AutoTune', type: 'vst', parameters: { 'Retune Speed': 20, 'Humanize': 60 } }
-      ],
+      plugins: [],
     },
     {
       id: 'track-midi-2',
@@ -227,9 +222,7 @@ export const createDefaultProject = () => ({
       isArmed: false,
       color: '#10b981',
       instrument: createDefaultInstrument(),
-      plugins: [
-        { id: uuidv4(), name: 'FabFilter Pro-Q 3', type: 'vst', parameters: { 'Freq': 440, 'Gain': 0.0 } }
-      ],
+      plugins: [],
     },
   ],
   

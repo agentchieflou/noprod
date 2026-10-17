@@ -3128,6 +3128,15 @@ body {
 .audio-bar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 6px 12px; font-size: 12px; color: var(--text-primary); background: var(--bg-panel); border-bottom: 1px solid var(--accent-blue); }
 .audio-bar-error { border-bottom-color: var(--accent-red); }
 
+/* Services dialog, native plug-in consent */
+.services-dialog { width: 460px; }
+.service-row { padding: 8px 0; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px; }
+.service-head { display: flex; align-items: center; gap: 8px; }
+.service-head .native-status { margin-left: auto; }
+.service-address { display: flex; align-items: center; gap: 8px; }
+.service-address input { flex: 1; }
+.native-consent-list { margin: 6px 0; padding-left: 18px; }
+
 /* Browser notes */
 .small-screen-notice {
   position: fixed;

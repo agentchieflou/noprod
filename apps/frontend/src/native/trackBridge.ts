@@ -14,8 +14,8 @@
 import type { DeviceDSP, ParamValue } from '../audio/devices';
 import type { NativeInsert } from './audioCore';
 import { hidePluginEditor, showPluginEditor } from './pluginEditor';
+import { getServices, subscribeServices } from './services';
 
-export const NATIVE_STREAM_URL = 'ws://localhost:8083';
 export const BRIDGE_BLOCK = 256;
 
 // The round trip's fixed delay. Long enough to ride out worker / socket
@@ -101,7 +101,7 @@ const getWorker = () => {
         editorParameterListener?.(streamId, param.id, message.value, gesture);
       }
     } else if (message?.type === 'EDITOR_OPENED') {
-      showPluginEditor(message, () => worker?.postMessage({ type: 'command', streamId, message: { type: 'CLOSE_EDITOR' } }));
+      showPluginEditor(message, () => worker?.postMessage({ type: 'command', streamId, message: { type: 'CLOSE_EDITOR' } }), state.connected);
     } else if (message?.type === 'EDITOR_CLOSED') {
       hidePluginEditor(message.editorId);
     } else if (message?.type === 'AUDIO_CORE_ERROR') {
@@ -110,6 +110,20 @@ const getWorker = () => {
   };
   return worker;
 };
+
+// Turning GhostDAW off stops every stream's connection and its retries;
+// turning it on (or changing its address) connects them again
+let lastGhostDaw = getServices().ghostdaw;
+subscribeServices(() => {
+  const g = getServices().ghostdaw;
+  if (g === lastGhostDaw) return;
+  const was = lastGhostDaw;
+  lastGhostDaw = g;
+  if (g.enabled !== was.enabled || g.url !== was.url) worker?.postMessage({ type: g.enabled ? 'resume' : 'pause', url: g.url });
+});
+
+// A native device may load (or no longer may): the engine looks again
+export const refreshNativeDevices = () => latencyListeners.forEach((fn) => fn());
 
 const sampleRates = new Map<string, number>();
 
@@ -156,7 +170,7 @@ export function createNativeInsertDSP(ctx: BaseAudioContext, device: any): Devic
   const link = new MessageChannel();
   node.port.postMessage({ type: 'link', port: link.port1 }, [link.port1]);
   const w = getWorker();
-  w.postMessage({ type: 'open', streamId, url: NATIVE_STREAM_URL, sampleRate: ctx.sampleRate, block: BRIDGE_BLOCK, port: link.port2 }, [link.port2]);
+  w.postMessage({ type: 'open', streamId, url: getServices().ghostdaw.url, sampleRate: ctx.sampleRate, block: BRIDGE_BLOCK, port: link.port2 }, [link.port2]);
 
   sentValues.set(streamId, { ...(device.parameters || {}) });
   w.postMessage({

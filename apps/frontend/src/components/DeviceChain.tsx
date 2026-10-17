@@ -7,13 +7,8 @@ import InstrumentCard from './InstrumentCard';
 import RackDevice from './RackDevice';
 import DeviceCard from './DeviceCard';
 
-// Add Device choices: stock devices with real DSP first, then third-party
-// plugins (passed through untouched until Audio Core hosts them natively).
-const BROWSER_PLUGINS = [
-  ...Object.keys(DEVICE_DEFS).map(createDevice),
-  { name: 'FabFilter Pro-Q 3', type: 'vst', parameters: { 'Freq': 440, 'Gain': 0.0, 'Q': 1.0 } },
-  { name: 'Antares AutoTune', type: 'vst', parameters: { 'Retune Speed': 20, 'Humanize': 60, 'Key': 'C min' } },
-];
+// Add Device choices: the stock devices (plug-ins come from the Browser)
+const BROWSER_PLUGINS = Object.keys(DEVICE_DEFS).map(createDevice);
 
 // The Device Chain tab for the selected track: adding devices and racks,
 // its MIDI effects, instrument and devices

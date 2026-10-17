@@ -15,6 +15,8 @@ export interface OpenPluginEditor {
   close: () => void; // asks the Audio Core to close it
 }
 
+import { serviceHost } from './services';
+
 let current: OpenPluginEditor | null = null;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((fn) => fn());
@@ -22,11 +24,19 @@ const emit = () => listeners.forEach((fn) => fn());
 export const subscribePluginEditor = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 export const getPluginEditor = () => current;
 
-// From an EDITOR_OPENED message
-export function showPluginEditor(msg: any, close: () => void) {
+// An editor stream's port is a plain unprivileged port number
+export const isEditorPort = (port: unknown): port is number => Number.isInteger(port) && (port as number) >= 1024 && (port as number) <= 65535;
+
+// From an EDITOR_OPENED message. `fromGhostDaw`: it arrived over a connected
+// GhostDAW link; anything else, or a port out of range, is ignored.
+export function showPluginEditor(msg: any, close: () => void, fromGhostDaw: boolean) {
+  if (!fromGhostDaw || !isEditorPort(msg?.port)) {
+    console.warn('Ignoring an editor the Audio Core did not open properly');
+    return;
+  }
   current = {
     editorId: msg.editorId, slotId: msg.slotId, name: msg.name,
-    url: `ws://localhost:${msg.port}`,
+    url: `ws://${serviceHost('ghostdaw')}:${msg.port}`,
     width: msg.width, height: msg.height, scale: msg.scale || 1,
     keyboard: !!msg.keyboard,
     close
