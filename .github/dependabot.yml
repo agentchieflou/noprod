@@ -1,5 +1,7 @@
 version: 2
 updates:
+  # Minor and patch updates come grouped; a major one comes on its own, so
+  # it can be judged (and fixed) by itself
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -7,6 +9,7 @@ updates:
     groups:
       npm:
         patterns: ['*']
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -14,10 +17,11 @@ updates:
     groups:
       actions:
         patterns: ['*']
+        update-types: [minor, patch]
+  # JUCE is being removed (#134); nothing else is a submodule
   - package-ecosystem: gitsubmodule
     directory: /
     schedule:
       interval: weekly
-    groups:
-      submodules:
-        patterns: ['*']
+    ignore:
+      - dependency-name: apps/audio_core/JUCE
