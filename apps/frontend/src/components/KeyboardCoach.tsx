@@ -1,9 +1,11 @@
-import { useSyncExternalStore } from 'react';
-import { X, ChevronLeft, ChevronRight, RotateCcw, GraduationCap, Check, Music } from 'lucide-react';
+import { useState, useSyncExternalStore } from 'react';
+import { X, ChevronLeft, ChevronRight, RotateCcw, GraduationCap, Check, Music, FilePlus } from 'lucide-react';
 import { ACCOMPANY_STYLES, ALL_KEYS, findLesson, findStyle, keyName, sameKey, type CoachMode } from '@noprod/theory';
 import {
-  subscribeCoach, getCoachState, setCoachOpen, setCoachMode, setCoachKey, setCoachLesson, restartLesson, setCoachFocus, pretty, LESSON_GROUPS
+  subscribeCoach, getCoachState, setCoachOpen, setCoachMode, setCoachKey, setCoachLesson, restartLesson, setCoachFocus, pretty, LESSON_GROUPS,
+  progressionsFor, clipBlocker, writeChordsToClip, type ClipSource
 } from '../audio/coach';
+import { useDAWStore } from '../store/useDAWStore';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled, setKeyboardMode, setOctave } from '../audio/computerKeyboard';
 import { subscribeAccompany, getAccompanyState, setAccompany, setAccompanyStyle } from '../audio/accompany';
 
@@ -29,6 +31,10 @@ export default function KeyboardCoach({ onPiano }: { onPiano: boolean }) {
   const kb = useSyncExternalStore(subscribeKeyboard, getKeyboardState);
   const band = useSyncExternalStore(subscribeAccompany, getAccompanyState);
   const { readout, mode, key } = coach;
+  // The clip control: re-render when the selected track changes
+  useDAWStore((s: any) => `${s.selectedTrackId}`);
+  const [pick, setPick] = useState('played');
+  const [withBass, setWithBass] = useState(true);
   const lesson = readout.lesson;
   const about = coach.lesson ? findLesson(coach.lesson)?.description : undefined;
   const keyIndex = key === 'auto' ? 'auto' : String(ALL_KEYS.findIndex((k) => sameKey(k, key)));
@@ -101,6 +107,28 @@ export default function KeyboardCoach({ onPiano }: { onPiano: boolean }) {
           </select>
         </div>
       )}
+
+      {mode === 'chords' && (() => {
+        const source: ClipSource | null = pick === 'played' ? { kind: 'played' } : { kind: 'progression', name: pick };
+        const blocked = clipBlocker(source);
+        return (
+          <div className="kb-row">
+            <button className="btn-metronome coach-clip" disabled={!!blocked} onClick={() => writeChordsToClip(source, withBass)}
+              title={blocked ?? 'Write the chords as a clip on the selected track, one bar each, from the playhead'}>
+              <FilePlus size={11} /> Write to clip
+            </button>
+            <select className="rack-map-select coach-select" value={pick} aria-label="Chords to write" onChange={(e) => setPick(e.target.value)}>
+              <option value="played">What I played</option>
+              <optgroup label="A progression">
+                {progressionsFor(readout.key).map((p) => <option key={p.name} value={p.name}>{pretty(p.name)}</option>)}
+              </optgroup>
+            </select>
+            <label className="coach-bass" title="Add each chord's root an octave below">
+              <input type="checkbox" checked={withBass} onChange={(e) => setWithBass(e.target.checked)} /> Bass
+            </label>
+          </div>
+        );
+      })()}
 
       <div className={`coach-readout ${lesson?.done ? 'done' : ''}`}>
         {lesson && (lesson.done ? (
