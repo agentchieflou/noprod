@@ -366,9 +366,51 @@ export interface RenderOptions {
   report?: (r: { engine: EngineStats; counts: Scheduler['counts'] }) => void; // for the tests
 }
 
+// Drives an engine on an OfflineAudioContext a window at a time: each
+// window's events are posted and acknowledged while the context is
+// suspended on a block boundary (the worklet gets no messages while it
+// renders; a time between two boundaries is rounded up to the next, so a
+// note due at the boundary isn't late). `onWindow` is told each window's
+// end, in timeline seconds, before the context runs on; returning false
+// cancels: the context stays suspended and the render never resolves.
+export async function driveOffline(
+  ctx: OfflineAudioContext, scheduler: Scheduler, engine: Engine, span: Span, from: number, to: number,
+  onWindow?: (end: number) => boolean | void
+): Promise<AudioBuffer | null> {
+  const blockSeconds = BLOCK / ctx.sampleRate;
+  const windowSeconds = Math.round((WINDOW * ctx.sampleRate) / BLOCK) * blockSeconds;
+  const window = async (end: number) => {
+    scheduler.advance(span, end);
+    await whenRendered(ctx);
+    await engine.sync();
+  };
+  let next = from + windowSeconds;
+  await window(next);
+  if (onWindow?.(Math.min(next, to)) === false) return null;
+  let cancelled = false;
+  const pause = (): Promise<void> | null => {
+    if (next >= to) return null;
+    const at = next - from;
+    // just short of the boundary, so rounding up lands on it, not past it
+    const p = ctx.suspend(at - blockSeconds / 2).then(async () => {
+      next += windowSeconds;
+      await window(next);
+      if (onWindow?.(Math.min(next, to)) === false) { cancelled = true; return; }
+      const again = pause();
+      await ctx.resume();
+      return again ?? undefined;
+    });
+    return p;
+  };
+  const chain = pause();
+  const rendering = ctx.startRendering();
+  await chain;
+  if (cancelled) return null;
+  return rendering;
+}
+
 // The arrangement, or some of its tracks, rendered through the engine on an
-// OfflineAudioContext: the same scheduler, a window at a time, each
-// window's events posted and acknowledged while the context is suspended.
+// OfflineAudioContext: the same scheduler, a window at a time (driveOffline).
 // Sources only, as freezing renders them: a track's devices are not applied.
 export async function renderArrangement(o: RenderOptions): Promise<AudioBuffer> {
   if (o.perTrack && o.trackIds.length > PAIRS) throw new Error(`at most ${PAIRS} tracks render to their own pairs at once: see renderStems`);
@@ -391,36 +433,7 @@ export async function renderArrangement(o: RenderOptions): Promise<AudioBuffer> 
   }, Math.max(1, o.trackIds.length));
   const scheduler = new Scheduler(engine, ctx, () => o.state, new Set(o.trackIds));
   const span = scheduler.open(0, o.from, o.to);
-
-  // Each window: post its notes, wait for their renders and for the worklet
-  // to have every message, then let the context run on. Windows end on a
-  // block boundary: the context suspends there exactly (a time between two
-  // is rounded up to the next), so a note due at the boundary isn't late.
-  const blockSeconds = BLOCK / o.sampleRate;
-  const windowSeconds = Math.round((WINDOW * o.sampleRate) / BLOCK) * blockSeconds;
-  const window = async (end: number) => {
-    scheduler.advance(span, end);
-    await whenRendered(ctx);
-    await engine.sync();
-  };
-  let next = o.from + windowSeconds;
-  await window(next);
-  const pause = (): Promise<void> | null => {
-    if (next >= o.to) return null;
-    const at = next - o.from;
-    // just short of the boundary, so rounding up lands on it, not past it
-    const p = ctx.suspend(at - blockSeconds / 2).then(async () => {
-      next += windowSeconds;
-      await window(next);
-      const again = pause();
-      await ctx.resume();
-      return again ?? undefined;
-    });
-    return p;
-  };
-  const chain = pause();
-  const rendered = await ctx.startRendering();
-  await chain;
+  const rendered = (await driveOffline(ctx, scheduler, engine, span, o.from, o.to))!;
   if (o.report) o.report({ engine: await engine.stats(), counts: scheduler.counts });
   engine.dispose();
   return rendered;
