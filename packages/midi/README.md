@@ -64,18 +64,25 @@ would make the first note outlast the second, and a note-off could never
 shorten the note you meant. A note never released ends at its track's last
 event; a zero-length note is one tick long.
 
+**Chunks** are walked one at a time and only the tracks are kept: a file of
+millions of empty unknown chunks costs the walk, no memory. Tracks beyond the
+header's count are skipped unread, with a warning.
+
 **Format 2** (independent patterns): every track is read from beat 0, with a
 warning; tempo and meter are merged like format 1's. **SMPTE division**
 (a negative high byte): ticks are seconds there, so positions convert at the
 file's first tempo or 120 BPM, with a warning, and `ticksPerBeat` is the
-effective ticks per beat at that tempo (not necessarily an integer). A time
+effective ticks per beat at that tempo (not necessarily an integer). `tempo`
+is then only `[{ beat: 0, bpm }]` at that tempo, whatever other Set Tempo events
+the file has (they are dropped, with a warning): the positions were converted
+at the first, so a `TempoMap` of later ones would put notes at the wrong second. A time
 signature that falls mid-bar moves to the next bar line, with a warning.
 
 ### Warnings
 
 Each is said once, whatever the number of occurrences: a missing End of Track;
 bytes after one or after the last chunk; tracks beyond the header's count; a
-format 0 file with several tracks; format 2; SMPTE division; a note-off with
+format 0 file with several tracks; format 2; SMPTE division, and tempos dropped under it; a note-off with
 no note-on; a note with no note-off; a mid-bar Time Signature; and a Set
 Tempo, Time Signature or Key Signature that is malformed or out of range
 (ignored).
@@ -111,8 +118,11 @@ before everything else, note-ons last. Running status is used. A value a file
 cannot hold throws a `RangeError`.
 
 `read(write(x))` equals `x` when `x`'s positions are on the division's ticks,
-its velocities are multiples of 1/127, and its tempos are whole microseconds
-per quarter (anything else is rounded, as a MIDI file has no finer unit).
+its velocities are multiples of 1/127, its tempos are whole microseconds per
+quarter (anything else is rounded, as a MIDI file has no finer unit), and no
+note of a pitch and channel is contained in another of the same: a file has
+only on/off pairs, so the pairing rule above reads those back first in, first
+out (a note 0..4 holding one 1..3 returns as 0..3 and 1..4).
 
 ## Tests
 
