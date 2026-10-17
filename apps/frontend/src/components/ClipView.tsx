@@ -257,7 +257,7 @@ export default function ClipView({ region, onChange, trackColor, onAudition }: P
 
       <div className="clip-editor">
         {isMidi ? (
-          <PianoRoll region={region} trackColor={trackColor} bpm={bpm} onAudition={onAudition}
+          <PianoRoll key={region.id} region={region} trackColor={trackColor} bpm={bpm} onAudition={onAudition}
             onNotesChange={(notes: any[]) => onChange({ notes })} />
         ) : buf ? (
           <SampleDisplay region={region} color={trackColor} onChange={onChange} />
