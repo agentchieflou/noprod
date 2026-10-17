@@ -1,6 +1,15 @@
-// WAV files: 16- or 24-bit PCM, or 32-bit float.
+// WAV files: 16- or 24-bit PCM (with TPDF dither if asked), or 32-bit float.
 
 export type WavBits = 16 | 24 | 32;
+
+// A seeded uniform generator (the dither is the same every time)
+const seeded = (seed: number) => {
+  let s = seed >>> 0 || 1;
+  return () => {
+    s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0;
+    return s / 4294967296;
+  };
+};
 
 export interface DecodedWav {
   sampleRate: number;
@@ -11,8 +20,14 @@ const PCM = 1;
 const FLOAT = 3;
 const EXTENSIBLE = 0xfffe;
 
-export function encodeWav(channels: Float32Array[], sampleRate: number, bits: WavBits = 16): Uint8Array {
+// `dither`: triangular (TPDF) noise of one quantization step, peak to peak,
+// added before rounding to 16 or 24 bits, so quiet material fades into noise
+// instead of into distortion. Deterministic: the noise is seeded.
+export function encodeWav(channels: Float32Array[], sampleRate: number, bits: WavBits = 16, dither = false): Uint8Array {
   const count = channels.length;
+  const random = seeded(0x9e3779b9);
+  const step = bits === 16 ? 1 / 32768 : 1 / 8388608;
+  const noise = () => (dither ? (random() - random()) * step : 0);
   const frames = count ? channels[0].length : 0;
   const bytes = bits / 8;
   const float = bits === 32;
@@ -53,7 +68,7 @@ export function encodeWav(channels: Float32Array[], sampleRate: number, bits: Wa
       if (float) {
         view.setFloat32(at, x, true);
       } else {
-        const clamped = Math.max(-1, Math.min(1, x));
+        const clamped = Math.max(-1, Math.min(1, x + (float ? 0 : noise())));
         // Negative samples reach one step further, so ±1 both fit
         if (bits === 16) {
           view.setInt16(at, Math.round(clamped * (clamped < 0 ? 32768 : 32767)), true);
