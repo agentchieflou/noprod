@@ -235,6 +235,61 @@ module.exports = async (page, ctx) => {
   await ctx.sleep(500);
   const el = await page.$('.bottom-detail-panel');
   await el.screenshot({ path: require('path').join(ctx.shotDir, 'dspmap_end.png') });
+
+  // 13. Stop (#97): Play all reads Stop while it runs; Stop ends the sequence
+  const clickToolbar = (label) => page.evaluate((label) => [...document.querySelectorAll('.dsp-map-toolbar button')].find((b) => b.textContent.trim() === label).click(), label);
+  const inspectorTitle = () => page.evaluate(() => document.querySelector('.dsp-inspector-title')?.firstChild?.textContent);
+  await clickToolbar('Play all');
+  await ctx.sleep(200);
+  const running = await page.evaluate(() => [...document.querySelectorAll('.dsp-map-toolbar button')].map((b) => b.textContent.trim()).find((t) => /^(Play all|Stop)$/.test(t)));
+  const firstPlaying = await page.evaluate(() => document.querySelector('.dsp-map-head.playing')?.dataset.col ?? null);
+  await clickToolbar('Stop');
+  const stopped = await page.evaluate(async () => {
+    const label = () => [...document.querySelectorAll('.dsp-map-toolbar button')].map((b) => b.textContent.trim()).find((t) => /^(Play all|Stop)$/.test(t));
+    const seen = new Set();
+    let back = null;
+    const t0 = performance.now();
+    while (performance.now() - t0 < 2500) {
+      for (const h of document.querySelectorAll('.dsp-map-head.playing')) seen.add(h.dataset.col);
+      if (back === null && label() === 'Play all') back = performance.now() - t0;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return { back, seen: [...seen] };
+  });
+  check('Play all reads Stop while it runs', running === 'Stop', running);
+  check('Stop turns it back to Play all within 2 s, and no other column starts',
+    firstPlaying !== null && stopped.back !== null && stopped.back < 2000 && stopped.seen.every((c) => c === firstPlaying), JSON.stringify({ firstPlaying, ...stopped }));
+
+  // 14. Reset map (#97): the four classic instruments again, no track touched.
+  // The selected track still leads the map, as it always does.
+  const trumpet = (await heads()).find((h) => h.name.startsWith('Trumpet')).col;
+  await page.click(`.dsp-map-head[data-col="${trumpet}"] button[title="Take off the map"]`);
+  await ctx.sleep(150);
+  const beforeReset = await T();
+  await clickToolbar('Reset map');
+  await ctx.sleep(200);
+  const afterReset = await T();
+  const classic = (await heads()).filter((h) => !h.source.includes('(selected)')).map((h) => h.name);
+  check('Reset map shows Violin, Trumpet (Modeled), Flute (Modeled) and Nylon Guitar (Modeled), and changes no track',
+    JSON.stringify(classic) === JSON.stringify(['Violin', 'Trumpet (Modeled)', 'Flute (Modeled)', 'Nylon Guitar (Modeled)'])
+    && afterReset.tracks === beforeReset.tracks && JSON.stringify(afterReset.sound) === JSON.stringify(beforeReset.sound), JSON.stringify(classic));
+
+  // 15. Esc (#97): clears the inspector, but not while a field has focus
+  await page.click('.dsp-map-cell[data-col^="trumpet-modeled-"] .dsp-block');
+  await ctx.sleep(100);
+  const titleOpen = await inspectorTitle();
+  await page.keyboard.press('Escape');
+  await ctx.sleep(100);
+  const titleClosed = await inspectorTitle();
+  check('Escape brings back the Inspector help', titleOpen !== 'Inspector' && titleClosed === 'Inspector', `${titleOpen} → ${titleClosed}`);
+  await page.click('.dsp-map-cell[data-col^="trumpet-modeled-"] .dsp-block');
+  await ctx.sleep(100);
+  await page.focus('.dsp-map-toolbar select');
+  await page.keyboard.press('Escape');
+  await ctx.sleep(100);
+  const inField = await inspectorTitle();
+  check('Escape in a field leaves the inspector open', inField !== 'Inspector', inField);
+
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
   check('No page errors', errors.length === 0, errors.join(' / '));
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);

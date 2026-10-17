@@ -12,8 +12,10 @@ const C = [60, 64, 67], F = [65, 69, 72], G = [67, 71, 74], Am = [69, 72, 76];
 // Plays `inputs` into an Accompanist on a mocked clock: every `tick` beats
 // it commits `lookahead` beats ahead, as the app's scheduler does. Returns
 // its events, and the notes they leave sounding.
-function run(styleId: string, inputs: Input[], until: number, { tick = 0.05, lookahead = 0.3, stopAt = Infinity } = {}) {
+function run(styleId: string, inputs: Input[], until: number,
+  { tick = 0.05, lookahead = 0.3, stopAt = Infinity, setup = (_: Accompanist) => {} } = {}) {
   const acc = new Accompanist(findStyle(styleId)!);
+  setup(acc);
   const events: AccompanyEvent[] = [];
   const queue = [...inputs].sort((a, b) => a[0] - b[0]);
   for (let k = 0; k * tick <= until; k++) {
@@ -214,4 +216,45 @@ test('stopping ends every note then and there', () => {
 test('the same input gives the same notes', () => {
   const a = run('shuffle', PROGRESSION, 32), b = run('shuffle', PROGRESSION, 32);
   assert.deepEqual(a.events, b.events);
+});
+
+test('a long session keeps a bounded history, and plays exactly as it would with all of it', () => {
+  const bars = 200;
+  const inputs = Array.from({ length: bars }, (_, bar): Input[] => {
+    const pitches = [C, Am, F, G][bar % 4];
+    return [[bar * 4 - 0.3, 'on', pitches], [bar * 4 + 0.5, 'off', pitches]];
+  }).flat();
+  for (const style of ACCOMPANY_STYLES) {
+    const pruned = run(style.id, inputs, bars * 4, { tick: 0.25 });
+    // The same session with nothing forgotten
+    const whole = run(style.id, inputs, bars * 4, { tick: 0.25, setup: (acc) => { (acc as any).forget = () => {}; } });
+    assert.deepEqual(pruned.events, whole.events, style.id);
+    const kept = pruned.acc as any;
+    assert.ok(kept.changes.length <= 3 && kept.voicings.size <= 8, `${style.id}: ${kept.changes.length} changes, ${kept.voicings.size} voicings`);
+    assert.equal((whole.acc as any).changes.length, bars);
+  }
+});
+
+test('after a stop and chords played meanwhile, it starts again voice-led as if nothing was forgotten', () => {
+  const session = (forget: boolean) => {
+    const acc = new Accompanist(findStyle('ballad')!);
+    if (!forget) (acc as any).forget = () => {};
+    const events: AccompanyEvent[] = [];
+    const chord = (pitches: number[], at: number) => {
+      for (const p of pitches) events.push(...acc.noteOn(p, at));
+      for (const p of pitches) acc.noteOff(p);
+    };
+    const progression = [C, Am, F, G, Am, F, C, G];
+    for (let beat = 0; beat < 32; beat += 0.25) {
+      if (beat % 4 === 3.5) chord(progression[(beat + 0.5) / 4 % 8], beat);
+      events.push(...acc.advance(beat, beat + 0.3));
+    }
+    events.push(...acc.stop(32));
+    // Chords put down while the band is stopped, ending C then F (voice-led
+    // from C, F is an inversion; voiced afresh it would be root position)
+    for (let bar = 9; bar < 20; bar++) chord(bar % 2 ? F : C, bar * 4 - 0.5);
+    for (let beat = 80; beat < 96; beat += 0.25) events.push(...acc.advance(beat, beat + 0.3));
+    return events;
+  };
+  assert.deepEqual(session(true), session(false));
 });
