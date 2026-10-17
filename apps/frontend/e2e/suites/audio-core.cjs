@@ -3,9 +3,26 @@
 // pairing surviving a reload, and unpairing. Then, from this process as a
 // client would: the hosted app's origin pairs, other origins and a wrong
 // token are refused at the handshake, and a LOAD_PLUGIN by path is refused.
+// A plug-in on a track keeps its whole state in the project (#216): the
+// chunk GhostDAW reports is saved with the device and sent back with LOAD.
 // The runner starts GhostDAW on the null audio backend with the LPI test
 // gain's folder registered (ctx.ghostdaw: its pairing code).
+const fs = require('node:fs');
+const path = require('node:path');
 const WebSocket = require('ws');
+
+// Opens a track stream as the bridge would and sends `messages` in order;
+// resolves with the replies once there is one per message
+const streamProbe = (url, messages, ms = 5000) => new Promise((done) => {
+  const result = { opened: false, status: null, replies: [] };
+  const ws = new WebSocket(url);
+  const finish = () => { clearTimeout(timer); try { ws.close(); } catch {} done(result); };
+  const timer = setTimeout(finish, ms);
+  ws.on('unexpected-response', (_req, res) => { result.status = res.statusCode; finish(); });
+  ws.on('error', () => finish());
+  ws.on('open', () => { result.opened = true; messages.forEach((m) => ws.send(JSON.stringify(m))); });
+  ws.on('message', (data) => { result.replies.push(JSON.parse(data.toString())); if (result.replies.length >= messages.length) setTimeout(finish, 200); });
+});
 
 // Opens a control connection as a client of `origin` would (none: a
 // program) and sends `message` once open; resolves with what happened
@@ -78,6 +95,67 @@ module.exports = async (page, ctx) => {
   check('A slider change comes back with the plug-in\'s text', await until(async () => { const p = (await core()).master[0]?.parameters?.[0]; return p && Math.abs(p.value - 0.5) < 1e-6 && /0\.5/.test(p.text); }), JSON.stringify((await core()).master[0]?.parameters?.[0]));
   await ctx.shot('audio-core');
 
+  // 5b. A plug-in on a track keeps its whole state in the project: the chunk
+  // GhostDAW reports is saved with the device and sent back with its LOAD,
+  // so what no parameter sets (the test gain's preset name) survives
+  const streamPort = await page.evaluate(() => window.__audioCore().state?.streamPort);
+  const deviceId = await page.evaluate(async () => {
+    const { approveNativePlugin } = await import('/src/native/consent.ts');
+    const st = window.__dawStore.getState();
+    const device = { name: 'NoProd Test Gain', type: 'vst', pluginId: 'com.noprod.test.gain', format: 'LPI', parameters: {} };
+    approveNativePlugin(device);
+    st.addDeviceToTrack(st.tracks[0].id, device);
+    const plugins = window.__dawStore.getState().tracks[0].plugins;
+    return plugins[plugins.length - 1].id;
+  });
+  const bridge = (id) => page.evaluate(async (id) => {
+    const s = (await import('/src/native/trackBridge.ts')).getNativeDeviceState(id);
+    return s ? { connected: s.connected, state: s.state, gain: s.insert?.parameters?.[0]?.value ?? null } : null;
+  }, id);
+  const deviceChunk = (id) => page.evaluate((id) => window.__dawStore.getState().tracks[0].plugins.find((p) => p.id === id)?.state ?? null, id);
+  check('A track device loads its plug-in by id and reads the plug-in\'s state back', await until(async () => typeof (await bridge(deviceId))?.state === 'string'), JSON.stringify(await bridge(deviceId)));
+  // The chunk as a preset would set it: gain 0.25, mute off, then the preset name
+  const chunk = Buffer.concat([Buffer.from(new Float32Array([0.25, 0]).buffer), Buffer.from('verse')]).toString('base64');
+  await page.evaluate((id, chunk) => window.__dawStore.getState().setNativeDeviceState(id, chunk), deviceId, chunk);
+  check('The chunk is kept with the device', (await deviceChunk(deviceId)) === chunk, String(await deviceChunk(deviceId)));
+  await page.evaluate(() => {
+    window.showSaveFilePicker = undefined;
+    window.showOpenFilePicker = undefined;
+    window.__download = null;
+    const click = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      if (this.download) {
+        const name = this.download;
+        window.__download = fetch(this.href).then((r) => r.arrayBuffer()).then((b) => ({ name, bytes: [...new Uint8Array(b)] }));
+        return;
+      }
+      return click.call(this);
+    };
+    return 1;
+  });
+  await page.click('.file-menu-btn');
+  await page.evaluate(() => { [...document.querySelectorAll('.file-menu-list button')].find((b) => b.textContent.startsWith('Save As')).click(); return 1; });
+  const file = await page.evaluate(async () => { for (let i = 0; i < 100 && !window.__download; i++) await new Promise((r) => setTimeout(r, 50)); return window.__download; });
+  check('The project saves with the device', !!file && file.name.endsWith('.noprod'), file ? file.name : 'no download');
+  await page.click('.file-menu-btn');
+  await page.evaluate(() => { [...document.querySelectorAll('.file-menu-list button')].find((b) => b.textContent === 'New Project').click(); return 1; });
+  check('A new project unloads it', await until(async () => (await bridge(deviceId)) === null));
+  const saved = path.join(ctx.fixtures, 'State Trip.noprod');
+  fs.writeFileSync(saved, Buffer.from(file.bytes));
+  await (await page.$('.file-menu input[type=file]')).uploadFile(saved);
+  check('Opening the project loads the plug-in again', await until(async () => typeof (await bridge(deviceId))?.state === 'string'), JSON.stringify(await bridge(deviceId)));
+  const back = await bridge(deviceId);
+  const decoded = Buffer.from(back?.state ?? '', 'base64');
+  check('The plug-in got the project\'s chunk: the preset name no parameter sets, and the gain it held',
+    decoded.length === 13 && decoded.subarray(8).toString() === 'verse' && Math.abs(decoded.readFloatLE(0) - 0.25) < 1e-6 && Math.abs((back?.gain ?? 0) - 0.25) < 1e-6,
+    `${decoded.toString('hex')} gain ${back?.gain}`);
+  check('The opened project still holds its chunk, unchanged', (await deviceChunk(deviceId)) === chunk && !(await page.evaluate(async () => (await import('/src/store/useDAWStore.js')).isProjectDirty(window.__dawStore.getState()))), String(await deviceChunk(deviceId)));
+  await page.evaluate((id) => { const st = window.__dawStore.getState(); st.updateDeviceParameter(st.tracks[0].id, id, 'gain', 0.75); }, deviceId);
+  check('After a parameter change the device takes the plug-in\'s new state, the name still in it',
+    await until(async () => { const c = await deviceChunk(deviceId); if (!c || c === chunk) return false; const d = Buffer.from(c, 'base64'); return Math.abs(d.readFloatLE(0) - 0.75) < 1e-6 && d.subarray(8).toString() === 'verse'; }),
+    String(await deviceChunk(deviceId)));
+  await page.evaluate((id) => { const st = window.__dawStore.getState(); st.removeDeviceFromTrack(st.tracks[0].id, id); }, deviceId);
+
   // 6. A reload connects with the kept token: paired without a code, the insert still there
   await page.reload({ waitUntil: 'networkidle0', timeout: 120000 });
   await page.mouse.click(5, 5);
@@ -116,6 +194,11 @@ module.exports = async (page, ctx) => {
   check('A paired client\'s LOAD_PLUGIN by path is refused', byPath.opened && byPath.replies[0]?.type === 'AUDIO_CORE_ERROR' && /pluginId/.test(byPath.replies[0].message), JSON.stringify(byPath));
   const folders = await probe(`${control}/?token=${token}`, null, { type: 'SCAN_PLUGINS', paths: ['/tmp'] });
   check('SCAN_PLUGINS ignores the folders a client names', folders.opened && folders.replies[0]?.type === 'AUDIO_CORE_STATE' && !folders.replies[0].scanFolders.includes('/tmp'), JSON.stringify(folders.replies[0]?.scanFolders));
+  const tooBig = await streamProbe(`ws://localhost:${streamPort}/?token=${token}`, [
+    { type: 'OPEN', streamId: 'probe', sampleRate: 48000, maxBlockSize: 256 },
+    { type: 'LOAD', pluginId: 'com.noprod.test.gain', state: 'A'.repeat(3 * 1024 * 1024) }
+  ]);
+  check('A stream LOAD with a state chunk past the limit is refused', tooBig.replies[0]?.type === 'STREAM_OPENED' && tooBig.replies[1]?.type === 'AUDIO_CORE_ERROR' && /state: more than/.test(tooBig.replies[1].message), JSON.stringify(tooBig).slice(0, 300));
 
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !/ws:\/\/localhost:808[235]/.test(l));
   check('No page errors', errors.length === 0, errors.join(' / '));

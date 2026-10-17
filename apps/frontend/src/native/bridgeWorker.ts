@@ -180,6 +180,12 @@ ctx.onmessage = (e: MessageEvent) => {
     return;
   }
 
+  // The plug-in's own state as it last reported it: a reconnect loads it back
+  if (msg.type === 'rememberState') {
+    if (s.load) s.load.state = msg.state;
+    return;
+  }
+
   if (msg.type === 'close') {
     s.closed = true;
     if (s.retry) clearTimeout(s.retry);

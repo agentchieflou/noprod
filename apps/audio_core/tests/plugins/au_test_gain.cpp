@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace
@@ -42,6 +43,7 @@ struct TestGainUnit
     AURenderCallbackStruct input = {};
     HostCallbackInfo hostCallbacks = {};
     float gain = 1.0f, hostTempo = 0.0f;
+    std::string presetName = "gain"; // the class info's name: what no parameter sets
     std::vector<float> scratch[2];
     std::vector<uint8_t> inputListStorage;
 
@@ -152,7 +154,9 @@ CFDictionaryRef makeClassInfo (const TestGainUnit& unit)
     auto* versionNumber = CFNumberCreate (kCFAllocatorDefault, kCFNumberSInt32Type, &version);
     CFDictionarySetValue (dict, CFSTR (kAUPresetVersionKey), versionNumber);
     CFRelease (versionNumber);
-    CFDictionarySetValue (dict, CFSTR (kAUPresetNameKey), CFSTR ("gain"));
+    auto* name = CFStringCreateWithCString (kCFAllocatorDefault, unit.presetName.c_str(), kCFStringEncodingUTF8);
+    CFDictionarySetValue (dict, CFSTR (kAUPresetNameKey), name);
+    CFRelease (name);
     auto* data = CFDataCreate (kCFAllocatorDefault, reinterpret_cast<const UInt8*> (&unit.gain), sizeof (unit.gain));
     CFDictionarySetValue (dict, CFSTR (kAUPresetDataKey), data);
     CFRelease (data);
@@ -275,6 +279,10 @@ OSStatus setProperty (void* self, AudioUnitPropertyID id, AudioUnitScope scope, 
             if (data == nullptr || CFGetTypeID (data) != CFDataGetTypeID() || CFDataGetLength (data) != static_cast<CFIndex> (sizeof (float)))
                 return kAudioUnitErr_InvalidPropertyValue;
             std::memcpy (&unit.gain, CFDataGetBytePtr (data), sizeof (float));
+            auto name = static_cast<CFStringRef> (CFDictionaryGetValue (static_cast<CFDictionaryRef> (plist), CFSTR (kAUPresetNameKey)));
+            char text[64] = {};
+            if (name != nullptr && CFGetTypeID (name) == CFStringGetTypeID() && CFStringGetCString (name, text, sizeof (text), kCFStringEncodingUTF8))
+                unit.presetName = text;
             return noErr;
         }
         default:

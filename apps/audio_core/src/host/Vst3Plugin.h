@@ -82,9 +82,11 @@ public:
     bool setParameterValue (int index, float value) override;
     bool refreshLatency() override;
 
-    // The component's state (what a preset holds), for tests and saving
-    bool getState (std::vector<uint8_t>& out);
-    bool setState (const std::vector<uint8_t>& data);
+    // The state as saved: the component's state (what a preset holds) and,
+    // with a separate controller, the controller's own (its view settings):
+    //   u32 LE: the component state's size, the component state, the controller state
+    bool getState (std::vector<uint8_t>& out) override;
+    bool setState (const std::vector<uint8_t>& data) override;
 
     struct Impl;
 

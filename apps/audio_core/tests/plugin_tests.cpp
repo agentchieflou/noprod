@@ -18,6 +18,7 @@
 #include "host/Vst3Plugin.h"
 #include "plugins/au_test_gain.h"
 #include "host/editor/LpiEditor.h"
+#include "platform/Base64.h"
 #include "platform/ChildProcess.h"
 #include "platform/Files.h"
 #include "platform/Json.h"
@@ -34,6 +35,11 @@
 #include <iostream>
 #include <set>
 #include <thread>
+
+#if GHOSTDAW_MAC
+#include <AudioToolbox/AudioToolbox.h>
+#include <CoreFoundation/CoreFoundation.h>
+#endif
 
 using namespace ghostdaw;
 
@@ -110,6 +116,59 @@ Json findByName (const Json& list, const std::string& name)
     for (auto& item : list.elements())
         if (item["name"].toString() == name)
             return item;
+    return {};
+}
+
+std::vector<uint8_t> floatBytes (float value)
+{
+    std::vector<uint8_t> bytes (sizeof (float));
+    std::memcpy (bytes.data(), &value, sizeof (float));
+    return bytes;
+}
+
+std::vector<uint8_t> operator+ (std::vector<uint8_t> bytes, const std::string& text)
+{
+    bytes.insert (bytes.end(), text.begin(), text.end());
+    return bytes;
+}
+
+std::string textOf (const std::vector<uint8_t>& bytes) { return std::string (bytes.begin(), bytes.end()); }
+
+// A VST3 state chunk as Vst3Insert saves it (Vst3Plugin.h)
+std::vector<uint8_t> vst3Chunk (const std::vector<uint8_t>& component, const std::vector<uint8_t>& controller = {})
+{
+    std::vector<uint8_t> chunk;
+    auto size = static_cast<uint32_t> (component.size());
+    for (int shift : { 0, 8, 16, 24 })
+        chunk.push_back (static_cast<uint8_t> (size >> shift));
+    chunk.insert (chunk.end(), component.begin(), component.end());
+    chunk.insert (chunk.end(), controller.begin(), controller.end());
+    return chunk;
+}
+
+// The LPI test gain's state: its two values, then a preset name no
+// parameter sets
+std::vector<uint8_t> lpiGainState (float gain, float mute, const std::string& name)
+{
+    auto bytes = floatBytes (gain);
+    auto muteBytes = floatBytes (mute);
+    bytes.insert (bytes.end(), muteBytes.begin(), muteBytes.end());
+    return bytes + name;
+}
+
+// What a processor's state holds, as text (the chunk the host saves, decoded)
+std::string stateText (InsertProcessor& processor)
+{
+    std::vector<uint8_t> bytes;
+    processor.getState (bytes);
+    return textOf (bytes);
+}
+
+std::string savedChunk (const Json& savedState, const Json& bus, size_t insert = 0)
+{
+    for (auto& b : savedState["buses"].elements())
+        if (b["bus"] == bus)
+            return b["inserts"][insert]["state"].toString();
     return {};
 }
 
@@ -436,6 +495,54 @@ void testBusStatePersists()
         CHECK (what.find ("1 insert restored, 1 missing") != std::string::npos);
         reloaded.clearAllInserts();
     }
+
+    section ("Bus state: a plugin's own state (what no parameter sets) comes back after a restart");
+    {
+        HapAudioEngine engine4;
+        Mixer mixer4 (engine4);
+        PluginHost host (mixer4, loop, registry, dir / "state.json");
+        auto state = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "pluginId", "com.noprod.test.gain" } }));
+        auto gainId = masterInserts (state)[0]["slotId"].toString();
+        auto& processor = *mixer4.getMasterChain().getSlots().front().processor;
+        CHECK (processor.setState (lpiGainState (0.25f, 0.0f, "verse")));
+        CHECK_NEAR (processor.getParameterValue (0), 0.25f, 1e-6f); // the host's values follow the state
+        host.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", gainId }, { "parameterId", "mute" }, { "value", 1 } }));
+        loop.runFor (1200);
+        std::string text;
+        CHECK (readFile (dir / "state.json", text));
+        auto saved = Json::parse (text);
+        std::vector<uint8_t> chunk;
+        CHECK (saved && base64Decode (savedChunk (*saved, "master"), chunk) && chunk == lpiGainState (0.25f, 1.0f, "verse"));
+        host.clearAllInserts();
+    }
+    {
+        HapAudioEngine engine5;
+        Mixer mixer5 (engine5);
+        PluginHost reloaded (mixer5, loop, registry, dir / "state.json");
+        CHECK (reloaded.restoreState().find ("1 insert restored") != std::string::npos);
+        auto& processor = *mixer5.getMasterChain().getSlots().front().processor;
+        CHECK (stateText (processor).find ("verse") != std::string::npos);
+        CHECK_NEAR (processor.getParameterValue (0), 0.25f, 1e-6f);
+        CHECK_NEAR (processor.getParameterValue (1), 1.0f, 1e-6f);
+        reloaded.clearAllInserts();
+    }
+    {
+        // A chunk that isn't base64 (a damaged file) is reported; the insert
+        // still comes back, with its parameter values
+        std::string text;
+        CHECK (readFile (dir / "state.json", text));
+        auto saved = Json::parse (text);
+        saved->member ("buses").element (0).member ("inserts").element (0).set ("state", "***");
+        CHECK (writeFile (dir / "state.json", saved->dump (2)));
+        HapAudioEngine engine6;
+        Mixer mixer6 (engine6);
+        PluginHost reloaded (mixer6, loop, registry, dir / "state.json");
+        CHECK (reloaded.restoreState().find ("1 insert restored") != std::string::npos);
+        auto& processor = *mixer6.getMasterChain().getSlots().front().processor;
+        CHECK (stateText (processor).find ("verse") == std::string::npos);
+        CHECK_NEAR (processor.getParameterValue (0), 0.25f, 1e-6f);
+        reloaded.clearAllInserts();
+    }
     fs::remove_all (dir);
 }
 
@@ -590,6 +697,29 @@ void testTrackStreams()
     CHECK (! stream->processFrame (tooManyChannels.data(), tooManyChannels.size()));
     CHECK (errorAgainst (streamAudio (frame, 2, 256), signal, 1.0f) < 1e-6f);
 
+    section ("Track streams: a project's state chunk loads with the plugin and comes back for saving");
+    auto chunk = lpiGainState (0.25f, 0.0f, "verse");
+    state = host.handleStreamCommand (*stream, command ({ { "type", "LOAD" }, { "pluginId", "com.noprod.test.gain" },
+                                                           { "state", base64Encode (chunk.data(), chunk.size()) }, { "parameters", Json::object ({ { "mute", 1 } }) } }));
+    CHECK (state["type"].toString() == "STREAM_STATE");
+    CHECK_NEAR (static_cast<float> (state["insert"]["parameters"][0]["value"].toDouble()), 0.25f, 1e-6f); // from the state
+    CHECK_NEAR (static_cast<float> (state["insert"]["parameters"][1]["value"].toDouble()), 1.0f, 1e-6f);  // the values apply after it
+    auto got = host.handleStreamCommand (*stream, command ({ { "type", "GET_PLUGIN_STATE" } }));
+    std::vector<uint8_t> back;
+    CHECK (got["type"].toString() == "STREAM_PLUGIN_STATE" && got["streamId"].toString() == "device-1");
+    CHECK (base64Decode (got["state"].toString(), back) && back == lpiGainState (0.25f, 1.0f, "verse"));
+
+    // Refused, the loaded plugin kept: a chunk that isn't base64, isn't a
+    // string, or is more than the limit
+    for (auto& bad : { Json ("***"), Json (42), Json (std::string (3 * 1024 * 1024, 'A')) })
+    {
+        auto refused = host.handleStreamCommand (*stream, command ({ { "type", "LOAD" }, { "pluginId", "com.noprod.test.gain" }, { "state", bad } }));
+        CHECK (refused["type"].toString() == "AUDIO_CORE_ERROR" && refused["message"].toString().rfind ("state: ", 0) == 0);
+    }
+    CHECK (host.getState()["streams"][0]["inserts"].size() == 1);
+    got = host.handleStreamCommand (*stream, command ({ { "type", "GET_PLUGIN_STATE" } }));
+    CHECK (base64Decode (got["state"].toString(), back) && back == lpiGainState (0.25f, 1.0f, "verse"));
+
     section ("Track streams: state, errors, unload and close");
     auto all = host.getState();
     CHECK (all["streams"].size() == 1 && all["streams"][0]["streamId"].toString() == "device-1");
@@ -600,6 +730,8 @@ void testTrackStreams()
     CHECK (host.getState()["streams"][0]["inserts"].size() == 1); // a failed LOAD keeps the current plugin
     state = host.handleStreamCommand (*stream, command ({ { "type", "UNLOAD" } }));
     CHECK (state["insert"].isNull());
+    error = host.handleStreamCommand (*stream, command ({ { "type", "GET_PLUGIN_STATE" } }));
+    CHECK (error["type"].toString() == "AUDIO_CORE_ERROR");
     error = host.handleStreamCommand (*stream, command ({ { "type", "SET_PARAM" }, { "parameterIndex", 0 }, { "value", 1 } }));
     CHECK (error["type"].toString() == "AUDIO_CORE_ERROR");
 
@@ -1353,7 +1485,7 @@ void testVst3()
         // State round trip: the gain, as the component saves it, restored
         // in the controller and the processor both
         std::vector<uint8_t> state;
-        CHECK (insert->getState (state) && state.size() == sizeof (float));
+        CHECK (insert->getState (state) && state == vst3Chunk (floatBytes (0.5f)));
         CHECK (insert->setParameterValue (0, 0.25f));
         runProcessor (*insert, signal);
         CHECK (errorAgainst (runProcessor (*insert, signal), signal, 0.25f) < 1e-6f);
@@ -1381,10 +1513,7 @@ void testVst3()
             auto block = makeSignal (64);
             std::atomic<bool> stop { false };
             std::thread audio ([&] { while (! stop.load()) runProcessor (*insert, block); });
-            float storm = -1.0f;
-            std::vector<uint8_t> cue (sizeof (float));
-            std::memcpy (cue.data(), &storm, sizeof (float));
-            CHECK (insert->setState (cue));
+            CHECK (insert->setState (vst3Chunk (floatBytes (-1.0f))));
             auto allSet = true;
             for (int i = 0; i < 2000; ++i)
                 allSet = insert->setParameterValue (0, static_cast<float> (i % 10) / 10.0f) && allSet;
@@ -1485,6 +1614,14 @@ void testVst3()
             auto s = saver.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "pluginId", gainId } }));
             auto slotId = masterInserts (s)[0]["slotId"].toString();
             saver.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", slotId }, { "parameterId", "0" }, { "value", 0.75 } }));
+            // The plug-ins' own state too: the preset name the component keeps,
+            // and the separate controller's note
+            CHECK (mixer.getMasterChain().getSlots().front().processor->setState (vst3Chunk (floatBytes (0.75f) + "verse")));
+            s = saver.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "pluginId", separateId }, { "bus", 1 } }));
+            CHECK (busInserts (s, 1).size() == 1);
+            CHECK (mixer.getTrackChain (1).getSlots().front().processor->setState (vst3Chunk (floatBytes (0.5f) + "chorus", floatBytes (0.0f) + "dark")));
+            CHECK (stateText (*mixer.getTrackChain (1).getSlots().front().processor) == textOf (vst3Chunk (floatBytes (0.5f) + "chorus", floatBytes (0.0f) + "dark")));
+            saver.handleCommand (command ({ { "type", "SET_PLUGIN_BYPASS" }, { "slotId", busInserts (s, 1)[0]["slotId"].toString() }, { "bypassed", false } }));
             loop.runFor (1200);
             CHECK (fileExists (dir / "state.json"));
             saver.clearAllInserts();
@@ -1492,10 +1629,14 @@ void testVst3()
         HapAudioEngine engine2;
         Mixer mixer2 (engine2);
         PluginHost reloaded (mixer2, loop, registry, dir / "state.json");
-        CHECK (reloaded.restoreState().find ("1 insert restored") != std::string::npos);
+        CHECK (reloaded.restoreState().find ("2 inserts restored") != std::string::npos);
         auto s = reloaded.getState();
         CHECK (masterInserts (s).size() == 1 && masterInserts (s)[0]["pluginId"].toString() == gainId);
         CHECK_NEAR (static_cast<float> (findByName (masterInserts (s)[0]["parameters"], "Gain")["value"].toDouble()), 0.75f, 1e-6f);
+        CHECK (stateText (*mixer2.getMasterChain().getSlots().front().processor) == textOf (vst3Chunk (floatBytes (0.75f) + "verse")));
+        CHECK (busInserts (s, 1).size() == 1 && busInserts (s, 1)[0]["pluginId"].toString() == separateId);
+        CHECK (stateText (*mixer2.getTrackChain (1).getSlots().front().processor) == textOf (vst3Chunk (floatBytes (0.5f) + "chorus", floatBytes (0.0f) + "dark")));
+        CHECK_NEAR (static_cast<float> (findByName (busInserts (s, 1)[0]["parameters"], "Gain")["value"].toDouble()), 0.5f, 1e-6f);
         reloaded.clearAllInserts();
         fs::remove_all (dir);
     }
@@ -1548,6 +1689,48 @@ void testVst3()
 // ------------------------------------------------------------ Audio Units
 
 #if GHOSTDAW_MAC
+// The preset name in a unit's class info (its state as AuInsert saves it)
+std::string auPresetName (const std::vector<uint8_t>& plistBytes)
+{
+    auto* data = CFDataCreate (kCFAllocatorDefault, plistBytes.data(), static_cast<CFIndex> (plistBytes.size()));
+    auto plist = CFPropertyListCreateWithData (kCFAllocatorDefault, data, kCFPropertyListImmutable, nullptr, nullptr);
+    CFRelease (data);
+    std::string result;
+    if (plist != nullptr && CFGetTypeID (plist) == CFDictionaryGetTypeID())
+    {
+        auto name = static_cast<CFStringRef> (CFDictionaryGetValue (static_cast<CFDictionaryRef> (plist), CFSTR (kAUPresetNameKey)));
+        char text[64] = {};
+        if (name != nullptr && CFGetTypeID (name) == CFStringGetTypeID() && CFStringGetCString (name, text, sizeof (text), kCFStringEncodingUTF8))
+            result = text;
+    }
+    if (plist != nullptr)
+        CFRelease (plist);
+    return result;
+}
+
+// The same class info with another preset name
+std::vector<uint8_t> auWithPresetName (const std::vector<uint8_t>& plistBytes, const char* name)
+{
+    auto* data = CFDataCreate (kCFAllocatorDefault, plistBytes.data(), static_cast<CFIndex> (plistBytes.size()));
+    auto plist = CFPropertyListCreateWithData (kCFAllocatorDefault, data, kCFPropertyListMutableContainers, nullptr, nullptr);
+    CFRelease (data);
+    std::vector<uint8_t> result;
+    if (plist != nullptr && CFGetTypeID (plist) == CFDictionaryGetTypeID())
+    {
+        auto* text = CFStringCreateWithCString (kCFAllocatorDefault, name, kCFStringEncodingUTF8);
+        CFDictionarySetValue (static_cast<CFMutableDictionaryRef> (const_cast<void*> (plist)), CFSTR (kAUPresetNameKey), text);
+        CFRelease (text);
+        if (auto* out = CFPropertyListCreateData (kCFAllocatorDefault, plist, kCFPropertyListBinaryFormat_v1_0, 0, nullptr))
+        {
+            result.assign (CFDataGetBytePtr (out), CFDataGetBytePtr (out) + CFDataGetLength (out));
+            CFRelease (out);
+        }
+    }
+    if (plist != nullptr)
+        CFRelease (plist);
+    return result;
+}
+
 void testAudioUnits()
 {
     section ("AU: the system's units and the test unit registered in this process are listed");
@@ -1606,6 +1789,10 @@ void testAudioUnits()
     CHECK (insert->setState (state));
     CHECK_NEAR (insert->getParameterValue (0), 0.5f, 1e-6f);
     CHECK (errorAgainst (runProcessor (*insert, signal), signal, 0.5f) < 1e-6f);
+    // What no parameter sets: the preset name in the class info
+    CHECK (auPresetName (state) == "gain");
+    CHECK (insert->setState (auWithPresetName (state, "verse")));
+    CHECK (insert->getState (state) && auPresetName (state) == "verse");
 
     CHECK (insert->prepare (44100.0, 256, error));
     auto shorter = makeSignal (256);
@@ -1653,6 +1840,23 @@ void testAudioUnits()
         auto changed = host.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", slot["slotId"].toString() }, { "parameterId", "0" }, { "value", 0.5 } }));
         CHECK (changed["type"].toString() == "PLUGIN_PARAMETER_CHANGED" && startsWith (changed["text"].toString(), "0.50"));
         CHECK (errorAgainst (runChain (chain, signal), signal, 0.5f) < 1e-6f);
+
+        // The unit's state, preset name included, comes back after a restart
+        std::vector<uint8_t> bytes;
+        auto& processor = *chain.getSlots().front().processor;
+        CHECK (processor.getState (bytes) && processor.setState (auWithPresetName (bytes, "verse")));
+        host.handleCommand (command ({ { "type", "SET_PLUGIN_BYPASS" }, { "slotId", slot["slotId"].toString() }, { "bypassed", false } }));
+        rig.loop.runFor (1200);
+        chain.audioStopped();
+        host.clearAllInserts();
+        HapAudioEngine engine2;
+        Mixer mixer2 (engine2);
+        PluginHost reloaded (mixer2, rig.loop, rig.registry, rig.dir / "state.json");
+        CHECK (reloaded.restoreState().find ("1 insert restored") != std::string::npos);
+        auto& restored = *mixer2.getMasterChain().getSlots().front().processor;
+        CHECK (restored.getState (bytes) && auPresetName (bytes) == "verse");
+        CHECK_NEAR (restored.getParameterValue (0), 0.5f, 1e-6f);
+        reloaded.clearAllInserts();
     }
     chain.audioStopped();
 

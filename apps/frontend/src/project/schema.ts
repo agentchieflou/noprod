@@ -2,7 +2,13 @@
 // bring any earlier version up to the current one (see README.md).
 
 export const FORMAT = 'noprod-project';
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
+
+// The most a native device's plug-in state (`state`, base64) may hold:
+// GhostDAW's own cap on a chunk (PluginHost::maxStateBytes), as bytes and
+// as base64 characters
+export const NATIVE_STATE_LIMIT = 2 * 1024 * 1024;
+export const NATIVE_STATE_CHARS = Math.ceil(NATIVE_STATE_LIMIT / 3) * 4;
 
 export class ProjectFileError extends Error {
   constructor(message: string) { super(message); this.name = 'ProjectFileError'; }
@@ -56,7 +62,10 @@ const MIGRATIONS: Record<number, (doc: any, defaults: Record<string, unknown>) =
     const added: Record<string, unknown> = {};
     Object.keys(defaults).forEach((k) => { if (!V1_FIRST_KEYS.includes(k) && !(k in doc.project)) added[k] = defaults[k]; });
     return { ...doc, version: 2, project: { ...doc.project, ...added } };
-  }
+  },
+  // v3 lets a native device carry its plug-in's state (`state`, base64,
+  // GhostDAW's chunk); v2 files have none, so they are v3 as they are
+  2: (doc) => ({ ...doc, version: 3 })
 };
 
 // Any version's decoded project.json -> the current version (not yet checked)
@@ -111,8 +120,15 @@ const shape = (fields: Record<string, Check>): Check => (v, p) => {
   return null;
 };
 
+// A native device's plug-in state: base64, at most NATIVE_STATE_LIMIT bytes
+const nativeState: Check = (v, p) => {
+  if (typeof v !== 'string') return `${p}: expected text`;
+  if (v.length > NATIVE_STATE_CHARS) return `${p}: more than ${NATIVE_STATE_LIMIT} bytes of plug-in state`;
+  return v.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(v) ? null : `${p}: not base64`;
+};
+
 const device: Check = (v, p) => shape({
-  'id?': str, name: str, 'type?': str, 'kind?': str, 'parameters?': nullable(record(any)),
+  'id?': str, name: str, 'type?': str, 'kind?': str, 'parameters?': nullable(record(any)), 'state?': nullable(nativeState),
   'devices?': list(device, 0, COUNT_LIMITS.devices),'macros?': list(shape({ id: str, 'name?': str, 'value?': num, 'mappings?': list(any) }))
 })(v, p);
 

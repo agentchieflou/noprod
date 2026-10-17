@@ -115,6 +115,13 @@ store until the whole file has passed. In order, it:
 v1 → v2 adds `scenes`, `launchQuantization` and `midiMappings`, which v1 files
 written before those existed don't have, from the store's defaults.
 
+v2 → v3 lets a native device (one GhostDAW hosts, `native/trackBridge.ts`)
+carry `state`: its plug-in's whole state as GhostDAW gives it, base64, so
+what no parameter sets survives a save. It is capped at GhostDAW's own limit
+on a chunk (`NATIVE_STATE_LIMIT`, 2 MiB decoded); a bigger or malformed one
+is refused, naming the device. v2 files have none, so the migration only
+bumps the version.
+
 ## Autosave and recovery
 
 - **One slot per tab and project.** Slots are keyed `${tabId}:${projectId}`.

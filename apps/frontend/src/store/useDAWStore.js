@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { createDevice } from '../audio/devices';
 import { clipTimelineLength } from '../audio/clipPlayback';
-import { mapDeviceAnywhere } from './deviceTree';
+import { mapDeviceAnywhere, findDevice } from './deviceTree';
 import { resolveTarget, splitMappings, targetKey } from '../audio/midiTargets';
 import { sliceClip, cutRange, overlapping } from '../project/comping';
 import { reportStorageError } from '../project/storage';
@@ -745,6 +745,14 @@ export const useDAWStore = create((set, get) => ({
     if (gesture?.end) pluginGestures.delete(deviceId);
     lastPluginValues.set(key, val);
     set((state) => mapDeviceAnywhere(state, deviceId, p => ({ ...p, parameters: { ...p.parameters, [paramName]: val } })));
+  },
+
+  // A hosted plug-in's own state, as GhostDAW reports it (native/trackBridge):
+  // the device carries it, so the project does. Not an edit: no undo step,
+  // and the chunk the device already holds changes nothing.
+  setNativeDeviceState: (deviceId, chunk) => {
+    if (findDevice(get(), deviceId)?.state === chunk) return;
+    set((state) => mapDeviceAnywhere(state, deviceId, p => ({ ...p, state: chunk })));
   },
 
   // Audio Effect Rack Actions
