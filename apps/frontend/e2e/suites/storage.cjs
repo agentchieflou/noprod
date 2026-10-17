@@ -265,11 +265,12 @@ module.exports = async (page, ctx) => {
   const exported = await page.evaluate(async () => { const d = await window.__downloads[0]; return { name: d.name, doc: JSON.parse(d.text) }; });
   check('My Sounds export as a versioned file', exported.name.endsWith('.json') && exported.doc.format === 'noprod-sounds' && exported.doc.version === 1 && exported.doc.sounds.some((s) => s.id === 'my-imported'), exported.name);
 
-  const alerts = ctx.logs.filter((l) => l.startsWith('[dialog]') && !/Discard unsaved changes/.test(l));
+  // confirm() before discarding work, and the empty leave-page prompt on reload, are expected
+  const alerts = ctx.logs.filter((l) => l.startsWith('[dialog]') && l.trim() !== '[dialog]' && !/Discard unsaved changes/.test(l));
   check('Nothing used an alert', alerts.length === 0, alerts.join(' | '));
-  await ctx.shot('project');
-  const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
-  check('No page errors', errors.length === 0, errors.join(' / '));
+  await ctx.shot('storage');
+  const pageErrors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));
+  check('No page errors', pageErrors.length === 0, pageErrors.join(' / '));
 
   console.log(`${results.filter((r) => r.startsWith('PASS')).length}/${results.length} passed`);
 };
