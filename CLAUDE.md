@@ -82,7 +82,7 @@ envelopes, determinism (`packages/sound/src/analysis.ts`).
 
 - Write code that reads like the code around it. Comments are short and say
   why; names and idioms match the file you're in. Don't add dependencies
-  without a reason.
+  without a reason (and see "Dependencies" below).
 - A user's edits go through store actions (`updateInstrumentParameter`,
   `setTrackInstrument`, …) so they can be undone and are saved with the
   project.
@@ -90,10 +90,31 @@ envelopes, determinism (`packages/sound/src/analysis.ts`).
 - Pull requests are squash-merged. The body lists what changed and the
   evidence: test counts, suites run.
 
+## Dependencies: we own what we ship
+
+noprod is open source under Apache-2.0 (`LICENSE`), so everything in it must
+be compatible with that.
+
+- Nothing restricted by its license goes into what we ship or run for users:
+  the apps, the packages, GhostDAW and the plugins. That means copyleft
+  (GPL, AGPL, LGPL, MPL, EPL, SSPL and the like), source-available (BUSL,
+  Commons Clause, non-commercial) and paid licenses (JUCE's, for one). What
+  such a dependency does is rebuilt natively in this repo, so we own it.
+- Permissive licenses are fine: MIT, BSD, Apache-2.0, ISC, Zlib, MIT-0,
+  CC0 and public domain. That includes the VST3 SDK, which is MIT.
+- A rebuild is clean-room. Work from documentation, specifications and
+  observed behavior; never read or copy the restricted project's source.
+- Before adding a dependency, check its license and those of everything it
+  pulls in, and name them in the PR. Dev tooling that never ships (the e2e
+  runner, linters) may use any license that allows our use of it.
+- Still to rebuild: Strudel (AGPL; the sequencer and AI dictation) and
+  JUCE (GhostDAW).
+
 ## Work tiers
 
-Roadmap issues carry a tier label: `tier:haiku`, `tier:sonnet` or
-`tier:opus` (see #90). Keep to the issue's scope. If it turns
-out to need more, comment on the issue and stop rather than widening the
-change. "More" means a design decision, a change to a package's public API,
+Roadmap issues carry a tier label: `tier:haiku`, `tier:sonnet`,
+`tier:opus` or `tier:fable` (see #90). Fable issues are whole subsystems,
+built or rebuilt end to end over several PRs. Keep to the issue's scope. If
+it turns out to need more, comment on the issue and stop rather than
+widening the change. "More" means a design decision, a change to a package's public API,
 or files well beyond those the issue names.
