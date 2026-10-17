@@ -87,6 +87,17 @@ relative to that; `.cps(x)` is a control, as in the published language.
 nested at most 64 deep, 256 arguments per call, plus the mini-notation's
 limits and the query budget below.
 
+## Dictation
+
+What every host of AI dictation shares, with no network code of its own:
+`dictationSystemPrompt({ drums, synths })` is the system prompt that teaches
+the model the language above (the orchestrator passes the names the sound
+library plays); `generateDictation(text, ask)` asks the model through the
+`ask` function the caller brings, checks the answer with `checkDictation`
+(parse and play one cycle, within `DICTATION_LIMITS`), and asks once more
+with the error when it doesn't parse. The orchestrator uses them today; a
+browser calling the model with the user's own key uses the same ones.
+
 ## Time and events
 
 - Time is measured in **cycles**, as exact fractions (`Fraction`): `1/3 +

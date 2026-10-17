@@ -23,3 +23,5 @@ export { evaluate, evaluateCycle, METHODS, CONTROL_NAMES, DEFAULT_CPS, MIN_BPM, 
 export type { Evaluation, CycleEvent } from './evaluate.ts';
 export { noteToMidi, parseScale, scaleDegree, SCALE_NAMES, soundControls, addControls } from './controls.ts';
 export type { Controls, Scale } from './controls.ts';
+export { dictationSystemPrompt, stripFences, checkDictation, generateDictation, DICTATION_LIMITS } from './dictation.ts';
+export type { DictationNames, DictationTurn, Dictation } from './dictation.ts';

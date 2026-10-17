@@ -1,4 +1,4 @@
-// #68: dictation → real Sequencer (Strudel) → library tracks
+// #68, #133: dictation → code → our pattern engine in the browser → library tracks
 module.exports = async (page, ctx) => {
   const results = [];
   const check = (name, ok, detail = '') => { const line = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`; results.push(line); console.log(line); };
@@ -85,7 +85,20 @@ module.exports = async (page, ctx) => {
   await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Dictate').click());
   await ctx.sleep(2500);
   const second = await page.evaluate(() => { const st = window.__dawStore.getState(); const t = st.tracks.at(-1); return { bpm: st.bpm, sound: t.instrument.parameters.Library?.sound?.id, name: t.name }; });
-  check('A melody with no sound name plays Strudel\'s triangle, tempo unchanged', second.sound === 'lead-triangle' && second.bpm === 124, JSON.stringify(second));
+  check('A melody with no sound name plays the triangle, tempo unchanged', second.sound === 'lead-triangle' && second.bpm === 124, JSON.stringify(second));
+
+  // Code that doesn't parse is an error shown to the user, not a crash
+  await page.evaluate(() => {
+    const input = [...document.querySelectorAll('input')].find((i) => (i.placeholder || '').toLowerCase().includes('beat') || (i.placeholder || '').toLowerCase().includes('dictat') || (i.placeholder || '').toLowerCase().includes('describe'));
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, 's("bd").foo()');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const tracksBefore = await page.evaluate(() => window.__dawStore.getState().tracks.length);
+  await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Dictate').click());
+  await ctx.sleep(1500);
+  const after = await page.evaluate(() => ({ tracks: window.__dawStore.getState().tracks.length, text: document.querySelector('.vst-paths-view')?.textContent || '' }));
+  check('Bad code is reported, and makes no tracks', after.tracks === tracksBefore && /unknown method "\.foo"/.test(after.text), after.text.slice(-120));
 
   await ctx.shot('dictation');
   const errors = ctx.logs.filter((l) => (l.startsWith('[pageerror]') || l.startsWith('[error]')) && !l.includes('ws://localhost:8080'));

@@ -1,8 +1,10 @@
-// AI dictation, played with library sounds (#68). The Sequencer evaluates
-// one cycle of the dictated Strudel pattern; each of its parts (the drums,
-// each melodic sound) becomes a MIDI track playing a library kit or sound,
-// with a clip that loops that bar.
+// AI dictation, played with library sounds (#68). The orchestrator returns
+// the code Gemini wrote; our own pattern engine (@noprod/pattern, #133)
+// parses it here, no eval, and plays one cycle. Each of its parts (the
+// drums, each melodic sound) becomes a MIDI track playing a library kit or
+// sound, with a clip that loops that bar.
 
+import { evaluateCycle, DICTATION_LIMITS } from '@noprod/pattern';
 import { findKit, findSound, strudelParts, type StrudelHap } from '@noprod/sound';
 import { v4 as uuidv4 } from 'uuid';
 import { createLibraryInstrument, createLibraryKit } from './library';
@@ -18,14 +20,29 @@ const BARS = 4; // each clip plays its bar this many times
 
 interface Store { getState: () => any }
 
-export function applyDictation(store: Store, message: { haps?: StrudelHap[]; cps?: number; code?: string }): DictationResult {
-  const { parts, unmapped } = strudelParts(message.haps ?? []);
+// One cycle of the code as the parts mapper reads it. Throws a PatternError
+// (with a message for the user) when the code doesn't parse or run.
+export function dictationHaps(code: string): { haps: StrudelHap[]; cps: number; setsTempo: boolean } {
+  const { cps, setsTempo, events } = evaluateCycle(code, DICTATION_LIMITS);
+  const haps = events.map(({ time, duration, value }) => ({
+    time, duration,
+    s: value.s === undefined ? undefined : String(value.s),
+    pitch: value.note as string | number | undefined,
+    bank: value.bank === undefined ? undefined : String(value.bank),
+    gain: typeof value.gain === 'number' ? value.gain : undefined,
+    velocity: typeof value.velocity === 'number' ? value.velocity : undefined
+  }));
+  return { haps, cps, setsTempo };
+}
+
+export function applyDictation(store: Store, code: string): DictationResult {
+  const { haps, cps, setsTempo } = dictationHaps(code);
+  const { parts, unmapped } = strudelParts(haps);
 
   // One cycle is a bar of four beats; follow the pattern's tempo if it set one
-  const code = message.code ?? (message.haps?.[0] as any)?.sourceCode ?? '';
   let bpm: number | undefined;
-  if (/set(cpm|cps)\s*\(|\.(cpm|cps)\s*\(/.test(code) && message.cps && Number.isFinite(message.cps)) {
-    bpm = Math.round(message.cps * 240 * 100) / 100;
+  if (setsTempo) {
+    bpm = Math.round(cps * 240 * 100) / 100;
     if (bpm >= 20 && bpm <= 400) store.getState().setBpm(bpm);
     else bpm = undefined;
   }
