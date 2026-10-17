@@ -68,7 +68,7 @@ const BRASS: SoundRecipe[] = [
     type: 'model', exciter: { kind: 'lips', tension: 1 },
     resonator: { kind: 'bore', end: 'flared', loss: 0.6 },
     radiators: [{ kind: 'bell', cutoff: 300, mix: 0.35 }, { kind: 'damping', a: 0.5 }],
-    vibrato: vibrato(4, 4.8), env: { attack: 0.08, sustain: 1, release: 0.15 }
+    vibrato: vibrato(4, 4.8), env: { attack: 0.02, sustain: 1, release: 0.15 }
   }]),
   // a harmon mute: a nasal band, with the lows and highs taken out
   sound('trumpet-muted', 'Muted Trumpet', 'brass', ['trumpet', 'brass', 'muted', 'harmon', 'solo'], 67, 3, [{
