@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
+import { Fragment, lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
   Layers, CheckSquare, Square as SquareIcon, Sliders, Wand2,
@@ -18,14 +18,11 @@ import { createLibraryInstrument, soundAsBuffer, whenRendered, libraryStats } fr
 import { startLibraryWarmup } from './audio/libraryWarmup';
 import { findAnySound, loadUserSounds } from './audio/userSounds';
 import { applyDictation, type DictationResult } from './audio/dictation';
-import SoundDesigner from './components/SoundDesigner';
-import DspMap from './components/DspMap';
 import type { SoundRecipe } from '@noprod/sound';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
 import { initMidi } from './audio/inputs';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
-import KeyboardPanel from './components/KeyboardPanel';
-import { subscribeCoach, getCoachState, setCoachOpen } from './audio/coach';
+import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from './audio/coachLoader';
 import AudioCorePanel from './components/AudioCorePanel';
 import PluginEditorWindow from './components/PluginEditorWindow';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
@@ -43,15 +40,21 @@ import { DEVICE_DEFS, createDevice } from './audio/devices';
 import { MIDI_EFFECT_DEFS, createMidiEffect } from './audio/midiEffects';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
 import { liveModelStats } from './audio/liveModels';
-import { accompanyDebug } from './audio/accompany';
 import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
 import './App.css';
+
+// Panels that aren't on screen at first load arrive when opened (#137)
+const SoundDesigner = lazy(() => import('./components/SoundDesigner'));
+const DspMap = lazy(() => import('./components/DspMap'));
+const KeyboardPanel = lazy(() => import('./components/KeyboardPanel'));
 
 
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
   (window as any).__dawStore = useDAWStore;
-  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, libraryStats, accompany: accompanyDebug };
+  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, libraryStats,
+    // the coach's band, once it has loaded (coachLoader.ts)
+    get accompany() { return accompanyDebug(); } };
 }
 const ORCHESTRATOR_WS_URL = 'ws://localhost:8080';
 
@@ -179,7 +182,7 @@ function App() {
   const [newDeviceIdx, setNewDeviceIdx] = useState('audio:0');
   const [showIO, setShowIO] = useState(false);
   const keyboardMidi = useSyncExternalStore(subscribeKeyboard, () => getKeyboardState().enabled);
-  const coachOpen = useSyncExternalStore(subscribeCoach, () => getCoachState().open);
+  const coachOpen = useSyncExternalStore(subscribeCoachOpen, getCoachOpen);
   // Capture lights up when there is uncaptured playing for an armed MIDI track
   const capturable = useSyncExternalStore(onCaptureBufferChange, () => hasCapturable(useDAWStore.getState())) && tracks.length > 0;
 
@@ -1246,7 +1249,7 @@ function App() {
         </div>
       </div>
 
-      {(keyboardMidi || coachOpen) && <KeyboardPanel />}
+      {(keyboardMidi || coachOpen) && <Suspense fallback={null}><KeyboardPanel /></Suspense>}
       <PluginEditorWindow />
 
       {/* Bottom Detail panel */}
@@ -1391,10 +1394,10 @@ function App() {
           )}
           
           {activeTab === 'sound' && (
-            <SoundDesigner track={selectedTrack?.type === 'midi' ? selectedTrack : null} />
+            <Suspense fallback={null}><SoundDesigner track={selectedTrack?.type === 'midi' ? selectedTrack : null} /></Suspense>
           )}
 
-          {activeTab === 'dspmap' && <DspMap />}
+          {activeTab === 'dspmap' && <Suspense fallback={null}><DspMap /></Suspense>}
 
           {activeTab === 'vst-paths' && (
             <div className="plugin-tab-columns">
