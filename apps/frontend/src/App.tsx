@@ -50,6 +50,7 @@ import './App.css';
 // Panels that aren't on screen at first load arrive when opened (#137)
 const SoundDesigner = lazy(() => import('./components/SoundDesigner'));
 const DspMap = lazy(() => import('./components/DspMap'));
+const Mixer = lazy(() => import('./components/Mixer'));
 const KeyboardPanel = lazy(() => import('./components/KeyboardPanel'));
 const DeviceChain = lazy(() => import('./components/DeviceChain'));
 const PluginFolders = lazy(() => import('./components/PluginFolders'));
@@ -182,7 +183,7 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggedOverTrack, setDraggedOverTrack] = useState<string | null>(null);
-  const [chosenTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'dspmap' | 'vst-paths' | 'dictation'>('devices');
+  const [chosenTab, setActiveTab] = useState<'devices' | 'clip' | 'sound' | 'dspmap' | 'mixer' | 'vst-paths' | 'dictation'>('devices');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [activeColorPickerTrackId, setActiveColorPickerTrackId] = useState<string | null>(null);
   const [showIO, setShowIO] = useState(false);
@@ -1099,12 +1100,13 @@ function App() {
       {pluginEditor && <Panel name="plugin-editor"><Suspense fallback={null}><PluginEditorWindow /></Suspense></Panel>}
 
       {/* Bottom Detail panel */}
-      <div className={`bottom-detail-panel ${(activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi') || activeTab === 'sound' || activeTab === 'dspmap' ? 'tall' : ''}`}>
+      <div className={`bottom-detail-panel ${(activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi') || activeTab === 'sound' || activeTab === 'dspmap' || activeTab === 'mixer' ? 'tall' : ''}`}>
         <div className="detail-tabs">
           <button className={`detail-tab ${activeTab === 'devices' ? 'active' : ''}`} onClick={() => setActiveTab('devices')}>Device Chain</button>
           <button className={`detail-tab ${activeTab === 'clip' ? 'active' : ''}`} onClick={() => setActiveTab('clip')}>Clip View</button>
           <button className={`detail-tab ${activeTab === 'sound' ? 'active' : ''}`} onClick={() => setActiveTab('sound')}>Sound Designer</button>
           <button className={`detail-tab ${activeTab === 'dspmap' ? 'active' : ''}`} onClick={() => setActiveTab('dspmap')}>DSP Map</button>
+          <button className={`detail-tab ${activeTab === 'mixer' ? 'active' : ''}`} onClick={() => setActiveTab('mixer')}>Mixer</button>
           {ghostdawOn && <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>}
           {dictationOn && <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>}
         <span className="app-version" title={`noprod ${APP_VERSION}, build ${APP_COMMIT}`}>v{APP_VERSION} · {APP_COMMIT}</span>
@@ -1156,6 +1158,8 @@ function App() {
           )}
 
           {activeTab === 'dspmap' && <Suspense fallback={null}><DspMap onOpenDesigner={() => setActiveTab('sound')} /></Suspense>}
+
+          {activeTab === 'mixer' && <Suspense fallback={null}><Mixer onOpenDevices={() => setActiveTab('devices')} /></Suspense>}
 
           {activeTab === 'vst-paths' && ghostdawOn && (
             <Suspense fallback={null}><PluginFolders selectedTrack={selectedTrack} /></Suspense>

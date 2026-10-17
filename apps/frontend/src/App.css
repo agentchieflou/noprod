@@ -3101,6 +3101,42 @@ body {
   font-weight: 600;
 }
 
+/* Mixer */
+.mixer-view { display: flex; gap: 4px; height: 100%; overflow-x: auto; align-items: stretch; }
+.mx-master-col { display: flex; gap: 4px; margin-left: auto; }
+.mx-strip { width: 104px; flex-shrink: 0; display: flex; flex-direction: column; gap: 3px; padding: 3px; background: #1d1d1d; border: 1px solid var(--border-color); border-top: 3px solid var(--border-color); }
+.mx-name { font-size: 0.7rem; font-weight: bold; border-bottom: 3px solid; padding-bottom: 2px; display: flex; flex-direction: column; gap: 2px; }
+.mx-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mx-members { display: flex; gap: 2px; }
+.mx-members i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.mx-devices { display: flex; flex-direction: column; gap: 1px; min-height: 28px; max-height: 44px; overflow-y: auto; }
+.mx-device { background: #2a2a2a; border: none; color: var(--text-primary); font-size: 0.6rem; padding: 1px 3px; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mx-device:hover { background: #3a3a3a; }
+.mx-none { font-size: 0.6rem; color: var(--text-secondary); }
+.mx-sends { display: flex; flex-direction: column; gap: 1px; font-size: 0.6rem; }
+.mx-sends label { display: flex; align-items: center; gap: 3px; }
+.mx-send, .mx-pan { width: 100%; height: 8px; accent-color: var(--accent-blue); }
+.mx-buttons { display: flex; gap: 2px; min-height: 18px; }
+.mx-btn { flex: 1; background: #2a2a2a; border: none; color: var(--text-secondary); font-size: 0.65rem; cursor: pointer; padding: 1px 0; }
+.mx-btn.on.mx-mute { background: #eab308; color: #000; }
+.mx-btn.on.mx-solo { background: #3b82f6; color: #fff; }
+.mx-btn.on.mx-arm { background: #ef4444; color: #fff; }
+.mx-out { font-size: 0.65rem; width: 100%; }
+.mx-static { color: var(--text-secondary); padding: 2px 0; }
+.mx-fader-meter { flex: 1; min-height: 110px; display: flex; gap: 4px; }
+.mx-fader { writing-mode: vertical-lr; direction: rtl; width: 24px; accent-color: var(--accent-blue); }
+.mx-meter { flex: 1; min-width: 0; height: 100%; }
+.mx-foot { display: flex; align-items: center; justify-content: space-between; font-size: 0.65rem; gap: 3px; }
+.mx-peak { color: var(--text-secondary); }
+.mx-clip { width: 10px; height: 10px; border-radius: 2px; border: 1px solid #555; background: #2a2a2a; cursor: pointer; padding: 0; }
+.mx-clip.lit { background: #ef4444; border-color: #ef4444; }
+.mx-loudness { width: 110px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: #1d1d1d; border: 1px solid var(--border-color); font-size: 0.65rem; }
+.mx-lufs-cell { display: grid; grid-template-columns: 1fr auto; column-gap: 4px; align-items: baseline; }
+.mx-lufs-label { grid-column: 1 / -1; color: var(--text-secondary); }
+.mx-lufs-value { font-size: 1.1rem; font-variant-numeric: tabular-nums; text-align: right; }
+.mx-lufs-unit { color: var(--text-secondary); }
+.mx-reset { margin-top: auto; background: #2a2a2a; border: 1px solid var(--border-color); color: var(--text-primary); cursor: pointer; font-size: 0.7rem; padding: 3px; }
+
 /* MIDI learn */
 .midi-mappable { outline: 1px dashed var(--accent-blue); outline-offset: 2px; cursor: crosshair; }
 .midi-mapped { outline-style: solid; outline-color: var(--accent-green); }
