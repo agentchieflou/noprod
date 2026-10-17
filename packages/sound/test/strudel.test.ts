@@ -1,6 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import {
   KITS, STRUDEL_DRUM_NAMES, STRUDEL_SYNTHS, findSound, strudelKit, strudelNoteToMidi, strudelParts, strudelSound
 } from '../src/index.ts';
@@ -108,13 +107,4 @@ test('a cycle of haps becomes a kit part and a part per sound', () => {
   assert.deepEqual(parts.find((p) => p.id === 'lead-triangle')!.notes.map((n) => n.pitch), [64, 45]);
   assert.deepEqual(parts.find((p) => p.kind === 'kit' && p.id === 'kit-808')!.notes.map((n) => n.pitch), [39]);
   assert.deepEqual(unmapped, ['vinylnoise']);
-});
-
-// The orchestrator's dictation prompt lists the names it may use; they must
-// be the ones the library plays
-test('the dictation prompt names exactly the sounds the library plays', () => {
-  const source = readFileSync(new URL('../../../apps/orchestrator/index.js', import.meta.url), 'utf8');
-  const list = (name: string) => JSON.parse(new RegExp(`const ${name} = (\\[[^\\]]*\\])`).exec(source)![1].replace(/'/g, '"'));
-  assert.deepEqual(list('DRUM_NAMES'), STRUDEL_DRUM_NAMES);
-  assert.deepEqual(list('SYNTH_NAMES'), STRUDEL_SYNTHS);
 });

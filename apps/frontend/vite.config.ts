@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { cspPlugin } from './csp.ts'
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
 
@@ -19,7 +20,7 @@ function commit() {
 export default defineConfig({
   // The build works under any path: NOPROD_BASE=/noprod/ for GitHub Pages
   base: process.env.NOPROD_BASE || '/',
-  plugins: [react()],
+  plugins: [react(), cspPlugin()],
   define: {
     __APP_VERSION__: JSON.stringify(version),
     __APP_COMMIT__: JSON.stringify(commit()),
