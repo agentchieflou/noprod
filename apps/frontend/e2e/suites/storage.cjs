@@ -216,10 +216,18 @@ module.exports = async (page, ctx) => {
   const full = await tabC.evaluate(() => document.querySelector('.storage-banner')?.textContent || '');
   check('A quota error is shown to the user', /Autosave: browser storage is full/.test(full), full || JSON.stringify(await slots(tabC)));
   await tabC.screenshot({ path: join(ctx.shotDir, 'project-quota.png') });
-  await tabC.evaluate(() => { const st = window.__dawStore.getState(); st.removeRegion(st.regions[0].id); st.setBpm(140); });
-  await ctx.sleep(2500);
-  const cleared = { banner: await tabC.evaluate(() => !!document.querySelector('.storage-banner')), slots: await slots(tabC) };
-  check('The notice clears when autosave fits again', !cleared.banner && cleared.slots.some((s) => s.bpm === 140 && s.buffers === 0), JSON.stringify(cleared));
+  await tabC.evaluate(() => { const st = window.__dawStore.getState(); st.removeRegion(st.regions[0].id); });
+  // Chrome may count the aborted write against the quota for a moment, so
+  // edit again (each edit autosaves) until a write fits, up to a deadline
+  let cleared = null;
+  for (let i = 0; i < 6; i++) {
+    await tabC.evaluate((bpm) => window.__dawStore.getState().setBpm(bpm), 140 + i);
+    await ctx.sleep(2000);
+    cleared = { banner: await tabC.evaluate(() => !!document.querySelector('.storage-banner')), slots: await slots(tabC), tries: i + 1 };
+    if (!cleared.banner) break;
+  }
+  if (cleared.banner) cleared.estimate = await tabC.evaluate(() => navigator.storage.estimate());
+  check('The notice clears when autosave fits again', !cleared.banner && cleared.slots.some((s) => s.bpm >= 140 && s.buffers === 0), JSON.stringify(cleared));
   await fresh.close();
 
   // 7. My Sounds: stored with a schema version; export and import
