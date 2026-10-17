@@ -18,7 +18,9 @@ namespace ghostdaw
 // process (ghostdaw --scan-file FILE) with a time limit, so one that
 // crashes or hangs while loading is written down as skipped and reported,
 // and never touches GhostDAW itself. Binaries already known, and skipped
-// ones, are not loaded again until their file changes.
+// ones, are not loaded again until their file changes. On macOS the
+// Audio Units the system registers are listed too, by one more child
+// (ghostdaw --scan-au), fresh at every scan.
 //
 // The scan runs on its own thread (plugins can take seconds to load);
 // its result goes into the registry, and `onDone` runs on the loop.

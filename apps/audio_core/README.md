@@ -39,7 +39,7 @@ The new host lives beside the old one until the switch:
 | Path | What |
 | --- | --- |
 | `src/platform/` | Sockets (loopback only) and the WebSocket server, the message loop and timers, files, dynamic libraries, logging, JSON, pairing, the single-instance lock and the crash handler |
-| `src/host/` | The host: `InsertChain` (RCU, as before), `Mixer`, `HapAudioEngine`, `AudioDevice`, the `Watchdog`, `LpiPlugin` (the LPI loader and insert), `Vst3Plugin` (VST 3 modules and inserts), `PluginRegistry` (the scanned list, the skipped binaries, the settings), `PluginScanner` (a child process per binary), `PluginHost` (the commands, by id), `TrackStreams`, `editor/` (off-screen editors streamed to the browser) and `Control` (pairing and the control messages) |
+| `src/host/` | The host: `InsertChain` (RCU, as before), `Mixer`, `HapAudioEngine`, `AudioDevice`, the `Watchdog`, `LpiPlugin` (the LPI loader and insert), `Vst3Plugin` (VST 3 modules and inserts), `AuPlugin` (Audio Units, macOS), `PluginRegistry` (the scanned list, the skipped binaries, the settings), `PluginScanner` (a child process per binary), `PluginHost` (the commands, by id), `TrackStreams`, `editor/` (off-screen editors streamed to the browser) and `Control` (pairing and the control messages) |
 | `third_party/miniaudio/` | Device I/O: [miniaudio](https://github.com/mackron/miniaudio), public domain or MIT-0 (see its README there). Chosen over writing WASAPI, CoreAudio and ALSA backends ourselves: one well-tested file, no dependencies, a null backend for machines without a sound card and for CI |
 | `third_party/vst3/` | The VST 3 SDK's `pluginterfaces` (MIT), the interfaces alone: what a plug-in's binary exports and the COM-style objects host and plug-in exchange. The SDK's helper classes (its hosting library, `base/`, `public.sdk/`) are not used; the host-side objects are ours, in `Vst3Plugin.cpp` |
 | `src/ghostdaw_main.cpp` | The new entry point, `ghostdaw` |
@@ -85,6 +85,26 @@ back (`outputParameterChanges`) and what the plug-in edits itself
 (`performEdit`, `restartComponent`) go the other way, to the controller
 and the browser, on the control thread. The component's state
 (`getState`/`setState`) is what a preset holds.
+
+### Audio Units (macOS)
+
+`AuInsert` hosts the effect units (`aufx`, `aumf`) the system's component
+registry lists, through AudioToolbox's C API: an instance is set to
+stereo 32-bit float on its input and output, pulls its input from our
+render callback, renders into the chain's buffers, and gets the transport
+through the host callbacks (`beatAndTempo`, `musicalTimeLocation`,
+`transportState`). A unit's `pluginId` is `au:<type>:<subtype>:
+<manufacturer>`, its three four-character codes. Parameters are the
+unit's, normalized over their ranges, with the unit's strings where it
+has them (`ParameterStringFromValue`, indexed value strings) and its unit
+names otherwise; a change reaches the unit at once. State is the unit's
+`ClassInfo` as a binary property list. The scan worker lists the units
+(`ghostdaw --scan-au`; the listing runs no plug-in code, so there is no
+dead man's pedal for it), fresh at every scan. Units that only
+instantiate asynchronously (out-of-process version 3 extensions) are left
+out for now. The tests register their own unit in-process
+(`tests/plugins/au_test_gain.cpp`, written against the component API) and
+also run Apple's AUDelay.
 
 ### Reliable
 

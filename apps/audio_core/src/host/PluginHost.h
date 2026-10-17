@@ -10,6 +10,7 @@
 #include "Mixer.h"
 #include "PluginRegistry.h"
 #include "TrackStreams.h"
+#include "AuPlugin.h"
 #include "Vst3Plugin.h"
 #include "editor/LpiEditor.h"
 
@@ -631,7 +632,12 @@ private:
             return insert;
         }
 
-        error = "This build can't host " + known.format + " plugins yet";
+       #if GHOSTDAW_MAC
+        if (equalsIgnoreCase (known.format, "AU"))
+            return AuInsert::create (pluginId, error);
+       #endif
+
+        error = "This build can't host " + known.format + " plugins";
         return nullptr;
     }
 
