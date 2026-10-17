@@ -1,9 +1,8 @@
 // Ableton Live Set (.als) import: its tempo, tracks (name, colour, mixer,
-// plug-in names) and arrangement clips (as placeholder audio). Loaded when
+// plug-in names) and arrangement MIDI clips, with their notes. Loaded when
 // a set is opened.
 
 import { createDefaultInstrument } from './store/useDAWStore';
-import { audioContext } from './audio/engine';
 
 export async function parseAbletonSet(file: File, returns: any[], colors: string[]) {
   // Decompress using modern native browser DecompressionStream (GZIP)
@@ -26,6 +25,7 @@ export async function parseAbletonSet(file: File, returns: any[], colors: string
   // 2. Extract Tracks & Placed clips
   const tracksList: any[] = [];
   const regionsList: any[] = [];
+  let skippedAudioClips = 0;
 
   // Query both audio and midi tracks
   const trackNodes = xmlDoc.querySelectorAll('Tracks AudioTrack, Tracks MidiTrack');
@@ -103,25 +103,37 @@ export async function parseAbletonSet(file: File, returns: any[], colors: string
       const endTime = endNode ? parseFloat(endNode.getAttribute('Value') || '10') : 10;
       const duration = Math.max(0.1, endTime - startTime);
 
-      // Create a faint playable 440Hz sine buffer for visual rendering and audio feedback
-      const sampleRate = audioContext.sampleRate;
-      const dummyBuffer = audioContext.createBuffer(1, Math.floor(sampleRate * duration), sampleRate);
-      const channelData = dummyBuffer.getChannelData(0);
-      for (let i = 0; i < channelData.length; i++) {
-        channelData[i] = Math.sin(2 * Math.PI * 440 * (i / sampleRate)) * 0.05; // 5% amplitude
-      }
+      // Ableton counts in beats. An audio clip's recording isn't in the set,
+      // so only MIDI clips come across; the others are counted.
+      const secondsPerBeat = 60 / tempo;
+      if (clipNode.nodeName !== 'MidiClip') { skippedAudioClips++; return; }
+
+      const notes: any[] = [];
+      clipNode.querySelectorAll('Notes KeyTrack').forEach((keyTrack, k) => {
+        const pitch = parseInt(keyTrack.querySelector('MidiKey')?.getAttribute('Value') || '', 10);
+        if (!Number.isFinite(pitch)) return;
+        keyTrack.querySelectorAll('MidiNoteEvent').forEach((ev, n) => {
+          if (ev.getAttribute('IsEnabled') === 'false') return;
+          const start = parseFloat(ev.getAttribute('Time') || '0') * secondsPerBeat;
+          const length = parseFloat(ev.getAttribute('Duration') || '0') * secondsPerBeat;
+          if (!(length > 0) || start < 0) return;
+          notes.push({ id: `als-note-${index}-${clipIdx}-${k}-${n}`, pitch, start, duration: length, velocity: Math.min(1, Math.max(0.01, parseFloat(ev.getAttribute('Velocity') || '100') / 127)) });
+        });
+      });
 
       regionsList.push({
         id: `als-region-${index}-${clipIdx}-${Math.random().toString(36).substr(2, 9)}`,
         trackId: id,
+        type: 'midi',
         file: clipName,
-        audioBuffer: dummyBuffer,
-        startTime,
-        duration,
-        startOffset: 0
+        audioBuffer: null,
+        startTime: startTime * secondsPerBeat,
+        duration: duration * secondsPerBeat,
+        startOffset: 0,
+        notes
       });
     });
   });
 
-  return { tempo, tracksList, regionsList };
+  return { tempo, tracksList, regionsList, skippedAudioClips };
 }
