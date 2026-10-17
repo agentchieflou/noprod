@@ -189,6 +189,12 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
   // Each "Play all" takes a number, and Stop moves it on: a sequence waiting
   // between columns sees its number is no longer the current one, and ends
   const playRun = useRef(0);
+  const sounding = useRef<AudioBufferSourceNode | null>(null);
+  // Leaving the tab unmounts the map, and with it Stop: end the sequence and its sound here
+  useEffect(() => () => {
+    playRun.current++;
+    sounding.current?.stop();
+  }, []);
 
   // Escape clears the inspector, unless someone is typing or choosing in a field
   useEffect(() => {
@@ -249,13 +255,15 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
     s.chains.forEach((i) => edit(shown[i], setKindOn(shown[i].recipe, s.kind, on)));
   };
 
-  const play = async (c: Column) => {
+  // A sequence passes its run number: a column still rendering when Stop or the unmount comes stays silent
+  const play = async (c: Column, run?: number) => {
     setPlaying(c.key);
     const recipe = c.changed && heardA[c.key] ? c.original : c.recipe;
     notePlayed(c.key, recipe);
     const pitched = recipe.pitched && !c.pad; // a kit's pad plays unpitched, as the Sound Designer does
     const sound = await renderSound(recipe, { note: pitched ? note : undefined, velocity: 0.9, gate: pitched ? 1.2 : undefined });
-    playRendered(toAudioBuffer(sound), c.track ? getStripInput(c.track.id) : undefined);
+    if (run !== undefined && playRun.current !== run) return;
+    sounding.current = playRendered(toAudioBuffer(sound), c.track ? getStripInput(c.track.id) : undefined);
     setTimeout(() => setPlaying((p) => (p === c.key ? null : p)), 1400);
   };
   const playAll = async () => {
@@ -263,7 +271,7 @@ export default function DspMap({ onOpenDesigner }: { onOpenDesigner?: () => void
     setPlayingAll(true);
     for (const c of shown) {
       if (playRun.current !== run) return;
-      await play(c);
+      await play(c, run);
       await new Promise((r) => setTimeout(r, 1500));
     }
     if (playRun.current === run) setPlayingAll(false);

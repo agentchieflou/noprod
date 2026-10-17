@@ -848,6 +848,42 @@ body {
   min-height: 0;
 }
 
+.pr-chords {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  height: 18px;
+  background-color: #1d1d1d;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 10px;
+  line-height: 18px;
+}
+
+.pr-chords-key {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 44px;
+  height: 18px;
+  overflow: hidden;
+  white-space: nowrap;
+  background-color: #1d1d1d;
+  color: var(--text-secondary);
+}
+
+.pr-chord {
+  position: absolute;
+  top: 1px;
+  height: 16px;
+  line-height: 16px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+  border-radius: 3px;
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
 .pr-body {
   display: flex;
   position: relative;
@@ -2228,6 +2264,8 @@ body {
 .coach-select { flex: 1; max-width: none; font-size: 10px; padding: 1px 2px; }
 .coach-restart { font-size: 10px; padding: 1px 6px; gap: 3px; }
 .coach-accompany { font-size: 10px; padding: 1px 6px; gap: 3px; }
+.coach-clip { font-size: 10px; padding: 1px 6px; gap: 3px; }
+.coach-bass { font-size: 10px; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
 .coach-readout {
   flex: 1;
   min-height: 0;
@@ -3049,4 +3087,32 @@ body {
 .dsp-stage-help b {
   color: var(--text-primary);
   font-weight: 600;
+}
+
+/* MIDI learn */
+.midi-mappable { outline: 1px dashed var(--accent-blue); outline-offset: 2px; cursor: crosshair; }
+.midi-mapped { outline-style: solid; outline-color: var(--accent-green); }
+.midi-pending { outline: 2px solid #ffb300; animation: midi-pulse 0.8s ease-in-out infinite alternate; }
+@keyframes midi-pulse { to { outline-color: transparent; } }
+.midi-dropped { font-size: 0.7rem; color: #ffb300; cursor: pointer; white-space: nowrap; }
+.midi-map-dialog {
+  position: fixed; top: 52px; right: 12px; z-index: 50; width: 640px; max-height: 60vh; overflow: auto;
+  background: var(--bg-panel, #1f1f1f); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); font-size: 0.75rem;
+}
+.midi-map-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.midi-map-empty { opacity: 0.7; padding: 6px; }
+.midi-map-row { display: flex; gap: 8px; align-items: center; padding: 3px 0; border-top: 1px solid var(--border-color); }
+.midi-map-target { flex: 1; min-width: 120px; }
+.midi-map-source { opacity: 0.7; min-width: 120px; }
+.midi-map-row input[type=number] { width: 44px; }
+
+.app-version {
+  margin-left: auto;
+  align-self: center;
+  padding-right: 12px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  user-select: text;
 }

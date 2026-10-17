@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LESSONS, LessonRunner, chordNameInKey, findLesson, movement, recognizeChord, type Lesson
+  LESSONS, LessonRunner, chordNameInKey, findLesson, lessonFromNotes, movement, recognizeChord, type Lesson
 } from '../src/index.ts';
 
 test('every lesson has steps, in range, with labels', () => {
   assert.equal(new Set(LESSONS.map(l => l.id)).size, LESSONS.length);
-  assert.equal(LESSONS.filter(l => l.kind === 'chords').length, 5);
-  assert.equal(LESSONS.filter(l => l.kind === 'melody').length, 6);
+  assert.equal(LESSONS.filter(l => l.kind === 'chords').length, 8);
+  assert.equal(LESSONS.filter(l => l.kind === 'melody').length, 8);
   for (const lesson of LESSONS) {
     assert.ok(lesson.steps.length > 0 && lesson.description.length > 0, lesson.id);
     for (const step of lesson.steps) {
@@ -33,6 +33,9 @@ test('chord lessons play the chords they name, with smooth voice leading around 
   assert.equal(findLesson('blues-a')!.steps.length, 12);
   assert.ok(findLesson('blues-a')!.steps.every(s => s.label.includes('7')));
   assert.deepEqual(findLesson('minor-am')!.steps.map(s => s.label), ['Am (i)', 'F (VI)', 'C (III)', 'G (VII)']);
+  assert.deepEqual(findLesson('country-g')!.steps.map(s => s.label), ['G (I)', 'C (IV)', 'D (V)', 'G (I)']);
+  assert.deepEqual(findLesson('fifties-f')!.steps.map(s => s.label), ['F (I)', 'Dm (vi)', 'Bb (IV)', 'C (V)']);
+  assert.deepEqual(findLesson('minor-cadence-d')!.steps.map(s => s.label), ['Dm (i)', 'Gm (iv)', 'A (V)', 'Dm (i)']);
 });
 
 test('melody lessons are single notes labeled with their names', () => {
@@ -69,6 +72,19 @@ test('a chord step passes with its notes in any voicing or octave', () => {
   assert.deepEqual(runner.current(), findLesson('pop-c')!.steps[0]);
 });
 
+test('the Jingle Bells and Saints lessons stay in C major and a runner fed their notes in order finishes', () => {
+  const inKey = new Set([0, 2, 4, 5, 7, 9, 11]);
+  for (const id of ['jingle-bells', 'saints']) {
+    const lesson = findLesson(id)!;
+    assert.ok(lesson.steps.every(s => inKey.has(s.pitches[0] % 12)), id);
+    const runner = new LessonRunner(lesson);
+    const results = lesson.steps.map(step => runner.press(step.pitches));
+    assert.ok(results.slice(0, -1).every(r => r === 'advance'), id);
+    assert.equal(results.at(-1), 'done', id);
+    assert.equal(runner.done(), true, id);
+  }
+});
+
 test('a melody step passes on its note, in any octave unless the step says not', () => {
   const runner = new LessonRunner(findLesson('mary')!);
   assert.equal(runner.press([64]), 'advance');
@@ -84,4 +100,39 @@ test('a melody step passes on its note, in any octave unless the step says not',
   assert.equal(strict.press([72]), 'wrong');
   assert.equal(strict.press([60]), 'advance');
   assert.equal(strict.press([62]), 'done');
+});
+
+test('a clip of single notes is a melody lesson', () => {
+  const pitches = [60, 64, 67, 64, 60, 62, 64, 60];
+  const notes = pitches.map((pitch, i) => ({ pitch, start: i * 0.5, duration: 0.5 }));
+  const lesson = lessonFromNotes(notes, 'Scale');
+  assert.equal(lesson.kind, 'melody');
+  assert.equal(lesson.name, 'Scale');
+  assert.deepEqual(lesson.key, { tonic: 0, mode: 'major' });
+  assert.deepEqual(lesson.steps.map(s => s.label), ['C4', 'E4', 'G4', 'E4', 'C4', 'D4', 'E4', 'C4']);
+  assert.deepEqual(lesson.steps.map(s => s.pitches), pitches.map(p => [p]));
+});
+
+test('a clip of block chords is a chord lesson, with a lone note between a melody step', () => {
+  const chords = [[60, 64, 67], [55, 59, 62], [57, 60, 64], [53, 57, 60]];
+  const notes = chords.flatMap((c, i) => c.map(pitch => ({ pitch, start: i * 2 + (pitch % 3) * 0.01, duration: 2 })));
+  const lesson = lessonFromNotes(notes, 'Pop');
+  assert.equal(lesson.kind, 'chords');
+  assert.deepEqual(lesson.steps.map(s => s.label), ['C (I)', 'G (V)', 'Am (vi)', 'F (IV)']);
+  for (const [i, step] of lesson.steps.entries()) {
+    const chord = recognizeChord(step.pitches, lesson.key)!;
+    assert.ok(step.label.startsWith(chordNameInKey(chord.root, chord.quality, lesson.key)));
+    assert.deepEqual(step.pitches, chords[i]);
+  }
+  const mixed = lessonFromNotes([...notes, { pitch: 72, start: 8.5, duration: 0.5 }], 'Mixed');
+  assert.deepEqual(mixed.steps.at(-1)!.pitches, [72]);
+  assert.equal(mixed.steps.at(-1)!.label, 'C5');
+  assert.equal(mixed.steps.length, 5);
+});
+
+test('lessonFromNotes is deterministic and runs', () => {
+  const notes = [60, 64, 67].map(pitch => ({ pitch, start: 0, duration: 1 }));
+  assert.deepEqual(lessonFromNotes(notes, 'x'), lessonFromNotes([...notes].reverse(), 'x'));
+  const runner = new LessonRunner(lessonFromNotes(notes, 'x'));
+  assert.equal(runner.press([60, 64, 67]), 'done');
 });

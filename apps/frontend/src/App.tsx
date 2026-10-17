@@ -4,6 +4,7 @@ import {
   Layers, CheckSquare, Square as SquareIcon, Sliders, Wand2,
   Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic, GraduationCap
 } from 'lucide-react';
+import { APP_VERSION, APP_COMMIT } from './buildInfo';
 import { useDAWStore, createDefaultInstrument, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { triggerNote } from './audio/synth';
 import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
@@ -35,6 +36,8 @@ import RackDevice from './components/RackDevice';
 import DeviceCard from './components/DeviceCard';
 import ArrangementRuler from './components/ArrangementRuler';
 import TempoControls from './components/TempoControls';
+import MidiLearnControls from './components/MidiLearnControls';
+import { useMidiLearn } from './components/useMidiLearn';
 import FileMenu from './components/FileMenu';
 import AutomationLane from './components/AutomationLane';
 import { automationParams } from './audio/automation';
@@ -147,11 +150,12 @@ const MasterMeter = ({ limiterEnabled }: { limiterEnabled: boolean }) => {
 };
 
 function App() {
+  const learn = useMidiLearn();
   const { 
     tracks, regions, isPlaying, isRecording, isMetronomeEnabled, viewMode,
     selectedTrackId, selectedRegionId, masterVolume, returns, masterPlugins, sessionClips, vstScanPaths, bpm,
     togglePlayback, toggleMetronome, setViewMode, setSelectedTrackId, setSelectedRegionId,
-    addTrack, removeTrack, addRegion, updateTrackColor, toggleArmTrack,
+    addTrack, removeTrack, addRegion, removeRegion, updateTrackColor, toggleArmTrack,
     updateTrackVolume, updateTrackPan, updateTrackSend, toggleMuteTrack, toggleSoloTrack,
     setMasterVolume, addReturn, removeReturn, updateReturn, addDeviceToTrack, removeDeviceFromTrack, updateDeviceParameter,
     setSessionClip, groupTracks, addVstScanPath, removeVstScanPath, loadAbletonSet,
@@ -366,6 +370,13 @@ function App() {
         e.preventDefault();
         togglePlayback();
       }
+      // Delete / Backspace removes the selected arrangement clip (Ctrl+Z restores
+      // it). A note selected in the Clip View's piano roll takes the key first.
+      const isTyping = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable || !!target.closest?.('[data-keyboard-capture]');
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !isTyping && selectedRegionId && !selectedSessionClip) {
+        e.preventDefault();
+        removeRegion(selectedRegionId);
+      }
       // Undo/Redo: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y (skip while typing in text fields)
       if ((e.ctrlKey || e.metaKey) && !isInput) {
         const key = e.key.toLowerCase();
@@ -380,7 +391,7 @@ function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlayback, undo, redo]);
+  }, [togglePlayback, undo, redo, removeRegion, selectedRegionId, selectedSessionClip]);
 
   // Find selected track and region
   // The device chain view edits whichever strip is selected: a track or a return
@@ -767,6 +778,7 @@ function App() {
         </div>
 
         <TempoControls position={localPlaybackPosition} />
+        <MidiLearnControls />
         {countingIn && <span className="count-in-badge">COUNT-IN</span>}
 
         {/* Keyboard Coach: opens the keyboard panel, computer keyboard on or off */}
@@ -831,7 +843,7 @@ function App() {
             type="range" min="0" max="1" step="0.01"
             value={masterVolume}
             onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
-            className="fader-input"
+            {...learn({ kind: 'master', param: 'volume' }, 'fader-input')}
           />
           <MasterMeter limiterEnabled={isLimiterEnabled} />
           <button
@@ -1080,8 +1092,8 @@ function App() {
                       <button className={`btn-arm ${track.isArmed ? 'armed' : ''}`}
                         onClick={() => { if (track.type === 'midi') initMidi(); toggleArmTrack(track.id); }}
                         title="Arm recording (an armed track also monitors its input)"><Mic size={12} /></button>
-                      <button className={`btn-mute ${track.isMuted ? 'muted' : ''}`} onClick={() => toggleMuteTrack(track.id)} title="Mute Track">M</button>
-                      <button className={`btn-solo ${track.isSoloed ? 'soloed' : ''}`} onClick={() => toggleSoloTrack(track.id)} title="Solo Track">S</button>
+                      <button {...learn({ kind: 'track', trackId: track.id, param: 'mute' }, `btn-mute ${track.isMuted ? 'muted' : ''}`)} onClick={() => toggleMuteTrack(track.id)} title="Mute Track">M</button>
+                      <button {...learn({ kind: 'track', trackId: track.id, param: 'solo' }, `btn-solo ${track.isSoloed ? 'soloed' : ''}`)} onClick={() => toggleSoloTrack(track.id)} title="Solo Track">S</button>
                       
                       <div className="strip-val">
                         <span style={{ fontSize: '9px' }}>PAN</span>
@@ -1089,7 +1101,7 @@ function App() {
                           type="range" min="-1" max="1" step="0.1" 
                           value={track.pan} 
                           onChange={(e) => updateTrackPan(track.id, parseFloat(e.target.value))}
-                          className="mixer-dial"
+                          {...learn({ kind: 'track', trackId: track.id, param: 'pan' }, 'mixer-dial')}
                         />
                       </div>
                       
@@ -1102,7 +1114,7 @@ function App() {
                               type="range" min="0" max="1" step="0.01"
                               value={track.sends?.[r.id] ?? 0}
                               onChange={(e) => updateTrackSend(track.id, r.id, parseFloat(e.target.value))}
-                              className="mixer-dial"
+                              {...learn({ kind: 'send', trackId: track.id, returnId: r.id }, 'mixer-dial')}
                             />
                           </div>
                         ))}
@@ -1116,7 +1128,7 @@ function App() {
                         type="range" min="0" max="1" step="0.01" 
                         value={track.volume} 
                         onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
-                        className="mixer-fader"
+                        {...learn({ kind: 'track', trackId: track.id, param: 'volume' }, 'mixer-fader')}
                       />
                     </div>
                     {showIO && <TrackIO track={track} tracks={tracks} returns={returns} />}
@@ -1223,7 +1235,7 @@ function App() {
                       value={masterVolume}
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
-                      className="mixer-fader"
+                      {...learn({ kind: 'master', param: 'volume' }, 'mixer-fader')}
                     />
                   </div>
                 </div>
@@ -1254,6 +1266,7 @@ function App() {
           <button className={`detail-tab ${activeTab === 'dspmap' ? 'active' : ''}`} onClick={() => setActiveTab('dspmap')}>DSP Map</button>
           <button className={`detail-tab ${activeTab === 'vst-paths' ? 'active' : ''}`} onClick={() => setActiveTab('vst-paths')}>VST Folders Scan</button>
           <button className={`detail-tab ${activeTab === 'dictation' ? 'active' : ''}`} onClick={() => setActiveTab('dictation')}>AI Dictation</button>
+        <span className="app-version" title={`noprod ${APP_VERSION}, build ${APP_COMMIT}`}>v{APP_VERSION} · {APP_COMMIT}</span>
         </div>
         
         <div className="detail-content">
@@ -1377,6 +1390,7 @@ function App() {
                   key={selectedRegion.id}
                   region={selectedRegion}
                   onChange={(patch: any) => updateClip(selectedRegion.id, patch)}
+                  onDelete={() => removeRegion(selectedRegion.id)}
                   trackColor={tracks.find((t: any) => t.id === selectedRegion.trackId)?.color || '#3b82f6'}
                   onAudition={(pitch: number) => auditionNote(tracks.find((t: any) => t.id === selectedRegion.trackId), pitch)}
                 />
