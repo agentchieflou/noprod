@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   packages:
-    name: Packages (sound, theory, pattern, time)
+    name: Packages (sound, theory, pattern, time, midi)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,6 +34,7 @@ jobs:
           (cd packages/theory && ../../node_modules/.bin/tsc -p .)
           (cd packages/pattern && ../../node_modules/.bin/tsc -p .)
           (cd packages/time && ../../node_modules/.bin/tsc -p .)
+          (cd packages/midi && ../../node_modules/.bin/tsc -p .)
 
   frontend:
     name: Frontend (types, lint, build)
