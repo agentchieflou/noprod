@@ -11,6 +11,7 @@ module.exports = async (page, ctx) => {
   await page.evaluate(async () => { window.__synth = await import('/src/audio/synth.ts'); return 1; });
   await page.evaluate(async () => { window.__transportModule = await import('/src/audio/transport.ts'); return 1; });
   await page.evaluate(async () => { window.__memory = await import('/src/audio/memory.ts'); return 1; });
+  await page.evaluate(async () => { window.__designing = await import('/src/audio/designing.ts'); return 1; });
 
   // 1. A project of library instruments plays from a cold cache: drums, bass
   // and keys, four bars at 120 BPM, started before the warmup could render
@@ -132,7 +133,7 @@ module.exports = async (page, ctx) => {
   // on the note workers and the Sound Designer's
   const errors = await page.evaluate(async () => {
     const lib = window.__lib, { findSound } = window.__sound, ac = window.__transport.audioContext;
-    const designing = await import('/src/audio/designing.ts');
+    const designing = window.__designing;
     const broken = { id: 'broken', name: 'Broken', category: 'fx', pitched: false, length: 1, layers: null };
     const sink = ac.createGain();
     const before = lib.libraryStats().failed;
@@ -194,8 +195,9 @@ module.exports = async (page, ctx) => {
 
   // 6. Undo history: audio that only past snapshots hold stays within its
   // budget, and the last edit can still be undone
+  await page.evaluate(async () => { window.__history = await import('/src/store/historyBudget.ts'); return 1; });
   const history = await page.evaluate(async () => {
-    const { historyBytes } = await import('/src/store/historyBudget.ts');
+    const { historyBytes } = window.__history;
     const { budgets } = window.__memory;
     const ac = window.__transport.audioContext;
     const s = () => window.__dawStore.getState();
