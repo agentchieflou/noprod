@@ -23,3 +23,4 @@ inline void section (const char* name) { std::cout << "- " << name << std::endl;
 // Each file's tests (`self` is the test executable's path)
 void platformTests (const char* self);
 void hostTests();
+void pluginTests();
