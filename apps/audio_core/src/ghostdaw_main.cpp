@@ -1,12 +1,12 @@
 // GhostDAW, the NoProd Audio Core: a headless host for VST3, AU and LPI
 // plugins that the web app drives over WebSockets on the loopback
 // interface. Being rebuilt without JUCE (#134); this build has the
-// platform layer, the servers and pairing. The mixer and plugin hosting
-// follow in later steps, and src/main.cpp (the JUCE host) keeps working
-// until the switch.
+// platform layer, the servers and pairing, the audio device, the hap
+// engine and the mixer. Plugin hosting follows in later steps, and
+// src/main.cpp (the JUCE host) keeps working until the switch.
 //
 //   ghostdaw [--port 8082] [--stream-port 8083] [--editor-port 8085]
-//            [--data-dir DIR] [--new-token] [--verbose] [--version]
+//            [--data-dir DIR] [--new-token] [--null-audio] [--verbose] [--version]
 //
 // Exit codes: 1 a bad argument or a port that is taken; 2 another
 // GhostDAW is already running.
@@ -20,6 +20,10 @@
 #include "platform/Process.h"
 #include "platform/Strings.h"
 #include "platform/WebSocketServer.h"
+#include "host/AudioDevice.h"
+#include "host/HapAudioEngine.h"
+#include "host/Mixer.h"
+#include "host/Watchdog.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -42,6 +46,7 @@ struct Arguments
     uint16_t editorPort = 8085;
     fs::path dataDir;
     bool newToken = false;
+    bool nullAudio = false;
     bool verbose = false;
     bool showVersion = false;
     bool help = false;
@@ -93,6 +98,7 @@ bool parseArguments (int argc, char** argv, Arguments& args, std::string& error)
             args.dataDir = pathFromUtf8 (text);
         }
         else if (arg == "--new-token") args.newToken = true;
+        else if (arg == "--null-audio") args.nullAudio = true;
         else if (arg == "--verbose") args.verbose = true;
         else if (arg == "--version") args.showVersion = true;
         else if (arg == "--help" || arg == "-h") args.help = true;
@@ -117,7 +123,18 @@ Json errorReply (const std::string& message, const std::string& request)
 class Control
 {
 public:
-    explicit Control (Pairing& pairingToUse) : pairing (pairingToUse) {}
+    Control (Pairing& pairingToUse, HapAudioEngine& engineToFeed, Mixer& mixerToReport, AudioDevice& deviceToReport)
+        : pairing (pairingToUse), engine (engineToFeed), mixer (mixerToReport), device (deviceToReport) {}
+
+    // The whole state, as AUDIO_CORE_STATE (the plugin host adds its buses in step 3)
+    Json state()
+    {
+        return Json::object ({ { "type", "AUDIO_CORE_STATE" }, { "protocolVersion", protocolVersion }, { "version", version },
+                               { "sampleRate", device.getSampleRate() }, { "blockSize", device.getBlockSize() },
+                               { "trackCount", Mixer::numTracks }, { "device", device.describe() }, { "outputPeak", mixer.takePeak() },
+                               { "buses", Json::array().push (Json::object ({ { "bus", "master" }, { "inserts", Json::array() } })) },
+                               { "availablePlugins", Json::array() }, { "scanFolders", Json::array() }, { "streams", Json::array() } });
+    }
 
     void onText (const WebSocketServer::ConnectionPtr& connection, const std::string& text)
     {
@@ -142,7 +159,10 @@ public:
             return;
         }
         if (type == "HAP_STREAM")
-            return; // the hap engine arrives with the mixer (step 2)
+        {
+            engine.scheduleHaps (message["haps"]);
+            return;
+        }
 
         if (type == "ROTATE_PAIRING_TOKEN")
         {
@@ -154,18 +174,18 @@ public:
 
         if (type == "GET_AUDIO_CORE_STATE")
         {
-            connection->sendText (Json::object ({ { "type", "AUDIO_CORE_STATE" }, { "protocolVersion", protocolVersion },
-                                                 { "version", version }, { "sampleRate", 0 }, { "blockSize", 0 }, { "trackCount", 0 },
-                                                 { "buses", Json::array() }, { "availablePlugins", Json::array() },
-                                                 { "scanFolders", Json::array() }, { "streams", Json::array() } }).dump());
+            connection->sendText (state().dump());
             return;
         }
 
-        connection->sendText (errorReply ("this GhostDAW build has no plugin host yet (#134, step 1)", type).dump());
+        connection->sendText (errorReply ("this GhostDAW build has no plugin host yet (#134, step 2)", type).dump());
     }
 
 private:
     Pairing& pairing;
+    HapAudioEngine& engine;
+    Mixer& mixer;
+    AudioDevice& device;
 
     void pair (const WebSocketServer::ConnectionPtr& connection, const std::string& code)
     {
@@ -197,6 +217,7 @@ void printUsage()
                  "  --editor-port N   plugin editor streams (8085)\n"
                  "  --data-dir DIR    where the token, settings and log live\n"
                  "  --new-token       rotate the pairing token (every browser must pair again)\n"
+                 "  --null-audio      no sound card: run the engine silently\n"
                  "  --verbose         debug logging\n"
                  "  --version\n";
 }
@@ -269,7 +290,58 @@ int main (int argc, char** argv)
                 extraOrigins.push_back (trim (origin));
 
     MessageLoop loop;
-    Control control (*pairing);
+
+    // The engine and mixer, on the audio device's thread; the watchdog
+    // says so if a callback or the control thread ever stops answering
+    HapAudioEngine engine;
+    Mixer mixer (engine);
+    std::unique_ptr<WebSocketServer> controlServerPtr; // set below; the watchdog's reports go out through it
+    Watchdog watchdog ([&controlServerPtr] (const Watchdog::Report& r)
+    {
+        auto where = r.bus == Mixer::masterBus ? std::string ("the master bus") : r.bus >= 0 ? "track " + std::to_string (r.bus) : std::string ("no bus");
+        auto message = r.what == "audio"
+            ? (r.stalled ? "the audio callback has been stuck for " + std::to_string (static_cast<int> (r.seconds)) + " s in " + where
+                               + (r.slot >= 0 ? ", insert #" + std::to_string (r.slot) : std::string()) + ": a plugin is hanging"
+                         : std::string ("the audio callback is running again"))
+            : (r.stalled ? "the control thread has not answered for " + std::to_string (static_cast<int> (r.seconds)) + " s: a plugin call is hanging"
+                         : std::string ("the control thread is answering again"));
+        if (r.stalled)
+            Log::error ("watchdog: " + message);
+        else
+            Log::info ("watchdog: " + message);
+        if (controlServerPtr != nullptr)
+            controlServerPtr->broadcastText (errorReply (message, "WATCHDOG").dump());
+    });
+    watchdog.getBus = [&mixer] { return mixer.getProcessingBus(); };
+    watchdog.getSlot = [&mixer]
+    {
+        auto bus = mixer.getProcessingBus();
+        return bus == Mixer::masterBus ? mixer.getMasterChain().getProcessingSlot() : bus >= 0 ? mixer.getTrackChain (bus).getProcessingSlot() : -1;
+    };
+    loop.addTimer (250, [&watchdog] { watchdog.beat(); });
+
+    AudioDevice device (mixer, &watchdog);
+    Control control (*pairing, engine, mixer, device);
+    device.onStarted = [&loop, &control, &controlServerPtr] (double sampleRate, int blockSize)
+    {
+        loop.post ([&control, &controlServerPtr, sampleRate, blockSize]
+        {
+            Log::info ("audio running at " + std::to_string (static_cast<int> (sampleRate)) + " Hz, blocks of " + std::to_string (blockSize));
+            if (controlServerPtr != nullptr)
+                controlServerPtr->broadcastText (control.state().dump());
+        });
+    };
+
+    device.onRerouted = [&loop, &device]
+    {
+        loop.post ([&device]
+        {
+            std::string why;
+            if (! device.restart (why))
+                Log::error ("audio: " + why);
+        });
+    };
+
     auto checkToken = [&pairing] (const std::string& token) { return pairing->checkToken (token); };
 
     // 8082: the web app's commands (and the Orchestrator's HAP_STREAM). A
@@ -284,7 +356,8 @@ int main (int argc, char** argv)
     controlOptions.extraOrigins = extraOrigins;
     WebSocketServer::Handlers controlHandlers;
     controlHandlers.onText = [&control] (const WebSocketServer::ConnectionPtr& c, const std::string& text) { control.onText (c, text); };
-    WebSocketServer controlServer (controlOptions, controlHandlers);
+    controlServerPtr = std::make_unique<WebSocketServer> (controlOptions, controlHandlers);
+    auto& controlServer = *controlServerPtr;
 
     // 8083: browser tracks' audio through their plugins (step 3)
     WebSocketServer::Options streamOptions;
@@ -326,6 +399,11 @@ int main (int argc, char** argv)
         }
     }
 
+    AudioDevice::Options audioOptions;
+    audioOptions.nullBackend = args.nullAudio;
+    if (! device.open (audioOptions, error))
+        Log::error ("audio: " + error);
+
     std::cout << "\n  GhostDAW is running. To pair the web app, enter this code in its Audio Core panel:\n\n"
                  "      " << pairing->getCode() << "\n\n"
                  "  Press Ctrl+C to quit.\n\n";
@@ -335,6 +413,7 @@ int main (int argc, char** argv)
     loop.run();
 
     Log::info ("shutting down");
+    device.close();
     editorServer.stop();
     streamServer.stop();
     controlServer.stop();

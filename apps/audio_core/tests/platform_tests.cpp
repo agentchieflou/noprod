@@ -1,12 +1,9 @@
 // Tests for the platform layer the new GhostDAW is built on (#134, step 1):
 // JSON, the message loop, files, pairing, the single-instance lock, the
 // crash handler, and the WebSocket server over real sockets: handshake,
-// framing, masking, fragmentation, limits and the token. Exits non-zero on
-// failure.
-//
-//   ghostdaw_tests              runs everything
-//   ghostdaw_tests --crash LOG  (used by the crash handler test) crashes
+// framing, masking, fragmentation, limits and the token.
 
+#include "Check.h"
 #include "TestWebSocketClient.h"
 #include "platform/Base64.h"
 #include "platform/DynamicLibrary.h"
@@ -23,10 +20,6 @@
 #include "platform/Strings.h"
 #include "platform/WebSocketServer.h"
 
-#if GHOSTDAW_WINDOWS
- #include <windows.h>
-#endif
-
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -37,18 +30,6 @@
 
 using namespace ghostdaw;
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                          \
-    do {                                                                                     \
-        ++checks;                                                                            \
-        if (! (cond)) {                                                                      \
-            ++failures;                                                                      \
-            std::cerr << "  FAILED line " << __LINE__ << ": " #cond << std::endl;            \
-        }                                                                                    \
-    } while (0)
-
-static void section (const char* name) { std::cout << "- " << name << std::endl; }
 
 static fs::path tempDir (const char* name)
 {
@@ -774,28 +755,15 @@ static void testExecutable (const fs::path& exe)
     fs::remove_all (dir);
 }
 
-int main (int argc, char** argv)
+void platformTests (const char* self)
 {
-    if (argc == 3 && std::string (argv[1]) == "--crash")
-    {
-       #if GHOSTDAW_WINDOWS
-        SetErrorMode (SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS); // no dialog in CI
-       #endif
-        installCrashHandler (pathFromUtf8 (argv[2]));
-        volatile int* nowhere = nullptr;
-        *nowhere = 1; // the crash
-        return 0;
-    }
-
-    Log::setLevel (Log::Level::error); // the tests provoke plenty of warnings on purpose
-
     testJson();
     testEncodings();
     testLoop();
     testFiles();
     testPairing();
     testInstanceLock();
-    testCrashHandler (argv[0]);
+    testCrashHandler (self);
     testSockets();
     testWebSocketHandshake();
     testWebSocketFraming();
@@ -804,7 +772,4 @@ int main (int argc, char** argv)
    #ifdef GHOSTDAW_EXE_PATH
     testExecutable (pathFromUtf8 (GHOSTDAW_EXE_PATH));
    #endif
-
-    std::cout << (failures == 0 ? "PASS" : "FAIL") << ": " << (checks - failures) << "/" << checks << " checks" << std::endl;
-    return failures == 0 ? 0 : 1;
 }
