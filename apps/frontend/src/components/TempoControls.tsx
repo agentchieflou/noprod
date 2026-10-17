@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useDAWStore } from '../store/useDAWStore';
 import { barAt } from '../audio/timeline';
 import { startFollowing, stopFollowing, subscribeFollower, getFollowerState } from '../audio/tempoFollower';
+import { useMidiLearn } from './useMidiLearn';
 import { getAudioInputDevices, refreshAudioDevices } from '../audio/inputs';
 
 // Tempo Following: while on, the project tempo tracks the tempo detected in
@@ -54,6 +55,7 @@ const VALID_DENOMINATORS = [1, 2, 4, 8, 16];
 // the playhead's bar (editing it inserts a change there), and count-in length.
 export default function TempoControls({ position }: { position: number }) {
   const { bpm, setBpm, timeSignatures, setTimeSignature, countInBars, setCountInBars } = useDAWStore();
+  const learn = useMidiLearn();
   const taps = useRef<number[]>([]);
   const [tapFlash, setTapFlash] = useState(false);
 
@@ -97,7 +99,7 @@ export default function TempoControls({ position }: { position: number }) {
   return (
     <div className="tempo-controls">
       <input
-        className="bpm-input"
+        {...learn({ kind: 'tempo' }, 'bpm-input')}
         value={bpmDraft}
         onChange={(e) => setBpmDraft(e.target.value)}
         onBlur={commitBpm}
