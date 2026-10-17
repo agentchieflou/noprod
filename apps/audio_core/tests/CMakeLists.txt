@@ -127,7 +127,9 @@ set(GHOSTDAW_TEST_PLUGIN_DEFINITIONS
     LPI_TEST_HANG_PATH="$<TARGET_FILE:lpi_test_hang>")
 set(GHOSTDAW_TEST_PLUGIN_TARGETS vst3_test_gain vst3_test_gain_separate lpi_test_gain_good lpi_test_gain_bad_major lpi_test_gain_no_export lpi_test_gui lpi_test_gui_polling lpi_test_gui_latency lpi_test_gui_transport lpi_test_crash lpi_test_hang)
 
-add_executable(ghostdaw_tests main.cpp platform_tests.cpp host_tests.cpp plugin_tests.cpp)
+# (plugins/au_test_gain.cpp is the Audio Unit test effect, registered in
+# the test process on macOS; empty elsewhere)
+add_executable(ghostdaw_tests main.cpp platform_tests.cpp host_tests.cpp plugin_tests.cpp plugins/au_test_gain.cpp)
 target_link_libraries(ghostdaw_tests PRIVATE ghostdaw_host)
 target_include_directories(ghostdaw_tests PRIVATE "${LPI_INCLUDE_DIR}")
 target_compile_definitions(ghostdaw_tests PRIVATE GHOSTDAW_EXE_PATH="$<TARGET_FILE:ghostdaw>" ${GHOSTDAW_TEST_PLUGIN_DEFINITIONS})

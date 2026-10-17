@@ -14,7 +14,9 @@
 #include "host/PluginRegistry.h"
 #include "host/PluginScanner.h"
 #include "host/TrackStreams.h"
+#include "host/AuPlugin.h"
 #include "host/Vst3Plugin.h"
+#include "plugins/au_test_gain.h"
 #include "host/editor/LpiEditor.h"
 #include "platform/ChildProcess.h"
 #include "platform/Files.h"
@@ -1168,6 +1170,7 @@ void testScanner()
     PluginScanner::Options options;
     options.worker = worker;
     options.timeoutMs = 3000;
+    options.audioUnits = false; // (the system's units would be counted on macOS)
     PluginScanner scanner (registry, loop, options);
     std::string summary;
     auto t0 = monotonicMs();
@@ -1251,6 +1254,9 @@ void testScanner()
     CHECK (result.started && result.timedOut && ! result.crashed);
     result = runChildProcess (dir / "no-such-program", {}, 1000);
     CHECK (! result.started && ! result.error.empty());
+    result = runChildProcess (worker, { "--scan-au" }, 20000);
+    auto auList = result.started && result.exitCode == 0 ? Json::parse (result.output) : std::nullopt;
+    CHECK (auList && (*auList)["plugins"].isArray());
 
     fs::remove_all (dir);
 }
@@ -1360,6 +1366,39 @@ void testVst3()
         auto shorter = makeSignal (256);
         runProcessor (*insert, shorter);
         CHECK (errorAgainst (runProcessor (*insert, shorter), shorter, 0.5f) < 1e-6f);
+    }
+
+    section ("VST3: a plug-in edits from its own thread while the control thread changes parameters");
+    {
+        // (the single-class test plug-in, told to by a state no parameter can
+        // produce, performEdits its gain 2000 times from a thread of its own
+        // and then reports 1.0 as the host tempo; the two producers must not
+        // share a ring, which TSan sees)
+        auto insert = Vst3Insert::create (module, module->getAudioEffects()[0].classId, error);
+        CHECK (insert != nullptr && insert->prepare (rate, 64, error));
+        if (insert != nullptr)
+        {
+            auto block = makeSignal (64);
+            std::atomic<bool> stop { false };
+            std::thread audio ([&] { while (! stop.load()) runProcessor (*insert, block); });
+            float storm = -1.0f;
+            std::vector<uint8_t> cue (sizeof (float));
+            std::memcpy (cue.data(), &storm, sizeof (float));
+            CHECK (insert->setState (cue));
+            auto allSet = true;
+            for (int i = 0; i < 2000; ++i)
+                allSet = insert->setParameterValue (0, static_cast<float> (i % 10) / 10.0f) && allSet;
+            CHECK (allSet);
+            for (int waited = 0; insert->getParameterValue (1) != 1.0f && waited < 500; ++waited)
+                sleepMs (10);
+            CHECK (insert->getParameterValue (1) == 1.0f);
+            stop = true;
+            audio.join();
+            runProcessor (*insert, block); // whatever either thread left is drained
+            CHECK (insert->setParameterValue (0, 0.75f));
+            runProcessor (*insert, block);
+            CHECK (errorAgainst (runProcessor (*insert, block), block, 0.75f) < 1e-6f);
+        }
     }
 
     section ("VST3: through the host, by id, in a chain with an LPI insert");
@@ -1486,6 +1525,7 @@ void testVst3()
         PluginScanner::Options options;
         options.worker = pathFromUtf8 (GHOSTDAW_EXE_PATH);
         options.timeoutMs = 20000;
+        options.audioUnits = false; // (the system's units would be counted on macOS)
         PluginScanner scanner (registry, loop, options);
         std::string summary;
         CHECK (scanner.start ([&] (const std::string& s) { summary = s; }));
@@ -1505,6 +1545,135 @@ void testVst3()
     }
 }
 
+// ------------------------------------------------------------ Audio Units
+
+#if GHOSTDAW_MAC
+void testAudioUnits()
+{
+    section ("AU: the system's units and the test unit registered in this process are listed");
+    registerAuTestGain();
+    auto units = listAudioUnits();
+    bool testFound = false, delayFound = false;
+    for (auto& u : units)
+    {
+        testFound = testFound || (u.pluginId == auTestGainPluginId && u.name == "Test Gain" && u.vendor == "NoProd");
+        delayFound = delayFound || (u.pluginId == "au:aufx:dely:appl" && u.vendor == "Apple");
+    }
+    CHECK (testFound);
+    CHECK (delayFound);
+    CHECK (describeAudioUnits()["plugins"].size() == units.size());
+
+    section ("AU: an insert processes audio, takes parameters, sees the transport, saves state");
+    std::string error;
+    CHECK (AuInsert::create ("au:aufx:nope:nope", error) == nullptr && error.find ("No Audio Unit") != std::string::npos);
+    CHECK (AuInsert::create ("com.noprod.nope", error) == nullptr && error.find ("not an Audio Unit id") != std::string::npos);
+    auto insert = AuInsert::create (auTestGainPluginId, error);
+    CHECK (insert != nullptr);
+    if (insert == nullptr)
+    {
+        std::cerr << "  " << error << std::endl;
+        return;
+    }
+    CHECK (insert->getName() == "Test Gain" && insert->getFormat() == "AU" && insert->getPluginId() == auTestGainPluginId);
+    auto params = insert->getParameters();
+    CHECK (params.size() == 2);
+    CHECK (params[0].name == "Gain" && params[0].id == "0" && ! params[0].readOnly && params[0].defaultValue == 1.0f);
+    CHECK (params[1].name == "Host tempo" && params[1].readOnly);
+    auto signal = makeSignal (512);
+    CHECK (insert->prepare (rate, 512, error));
+    CHECK (insert->getLatencySamples() == 0);
+    CHECK (errorAgainst (runProcessor (*insert, signal), signal, 1.0f) < 1e-6f);
+    CHECK (insert->setParameterValue (0, 0.5f)); // at once, the AU way
+    CHECK_NEAR (insert->getParameterValue (0), 0.5f, 1e-6f);
+    CHECK (startsWith (insert->getParameterText (0), "0.50"));
+    CHECK (errorAgainst (runProcessor (*insert, signal), signal, 0.5f) < 1e-6f);
+    CHECK (! insert->setParameterValue (1, 0.3f));
+    CHECK (! insert->setParameterValue (5, 0.3f));
+
+    TransportInfo transport;
+    transport.tempoBpm = 133.0;
+    transport.ppqPosition = 4.0;
+    transport.flags = TransportInfo::playing | TransportInfo::tempoValid | TransportInfo::ppqValid;
+    insert->setTransport (transport);
+    runProcessor (*insert, signal);
+    CHECK_NEAR (insert->getParameterValue (1), 0.133f, 1e-4f);
+    CHECK (startsWith (insert->getParameterText (1), "133") && insert->getParameterText (1).find ("bpm") != std::string::npos);
+
+    std::vector<uint8_t> state;
+    CHECK (insert->getState (state) && ! state.empty());
+    CHECK (insert->setParameterValue (0, 0.25f));
+    CHECK (errorAgainst (runProcessor (*insert, signal), signal, 0.25f) < 1e-6f);
+    CHECK (insert->setState (state));
+    CHECK_NEAR (insert->getParameterValue (0), 0.5f, 1e-6f);
+    CHECK (errorAgainst (runProcessor (*insert, signal), signal, 0.5f) < 1e-6f);
+
+    CHECK (insert->prepare (44100.0, 256, error));
+    auto shorter = makeSignal (256);
+    CHECK (errorAgainst (runProcessor (*insert, shorter), shorter, 0.5f) < 1e-6f);
+
+    section ("AU: Apple's AUDelay, fully dry, passes the signal through");
+    auto delay = AuInsert::create ("au:aufx:dely:appl", error);
+    CHECK (delay != nullptr);
+    if (delay != nullptr)
+    {
+        CHECK (delay->getName() == "AUDelay");
+        auto delayParams = delay->getParameters();
+        CHECK (delayParams.size() >= 4);
+        int mix = -1; // kDelayParam_WetDryMix, id 0, in percent
+        for (auto& p : delayParams)
+            if (p.id == "0")
+                mix = p.index;
+        CHECK (mix >= 0);
+        CHECK (delay->prepare (rate, 512, error));
+        if (mix >= 0)
+        {
+            CHECK (delay->setParameterValue (mix, 0.0f));
+            // (its own string if it has them, else "0 %": either starts with the value)
+            std::cout << "  AUDelay's mix at 0: \"" << delay->getParameterText (mix) << "\"" << std::endl;
+            CHECK (startsWith (delay->getParameterText (mix), "0"));
+            runProcessor (*delay, signal);
+            CHECK (errorAgainst (runProcessor (*delay, signal), signal, 1.0f) < 1e-3f);
+        }
+    }
+
+    section ("AU: through the host, by id, and in the scan worker");
+    Rig rig;
+    auto known = rig.registry.getPlugins();
+    known.push_back ({ auTestGainPluginId, "Test Gain", "NoProd", "AU", auTestGainPluginId, 0 });
+    rig.registry.replace (known, {});
+    auto& host = rig.host;
+    auto& chain = rig.mixer.getMasterChain();
+    chain.audioStarted (PluginHost::defaultSampleRate);
+    auto state2 = host.handleCommand (command ({ { "type", "LOAD_PLUGIN" }, { "pluginId", auTestGainPluginId } }));
+    CHECK (state2["type"].toString() == "AUDIO_CORE_STATE" && masterInserts (state2).size() == 1);
+    if (masterInserts (state2).size() == 1)
+    {
+        auto slot = masterInserts (state2)[0];
+        CHECK (slot["format"].toString() == "AU" && slot["name"].toString() == "Test Gain" && slot["pluginId"].toString() == auTestGainPluginId);
+        auto changed = host.handleCommand (command ({ { "type", "SET_PLUGIN_PARAMETER" }, { "slotId", slot["slotId"].toString() }, { "parameterId", "0" }, { "value", 0.5 } }));
+        CHECK (changed["type"].toString() == "PLUGIN_PARAMETER_CHANGED" && startsWith (changed["text"].toString(), "0.50"));
+        CHECK (errorAgainst (runChain (chain, signal), signal, 0.5f) < 1e-6f);
+    }
+    chain.audioStopped();
+
+    auto result = runChildProcess (pathFromUtf8 (GHOSTDAW_EXE_PATH), { "--scan-au" }, 20000);
+    CHECK (result.started && result.exitCode == 0 && result.output.find ("au:aufx:dely:appl") != std::string::npos);
+
+    auto dir = tempDir ("auscan");
+    MessageLoop loop;
+    PluginRegistry registry (dir);
+    PluginScanner::Options options;
+    options.worker = pathFromUtf8 (GHOSTDAW_EXE_PATH);
+    PluginScanner scanner (registry, loop, options);
+    std::string summary;
+    CHECK (scanner.start ([&] (const std::string& s) { summary = s; }));
+    CHECK (loop.runUntil ([&] { return ! summary.empty(); }, 120000));
+    KnownPlugin found;
+    CHECK (registry.find ("au:aufx:dely:appl", found) && found.format == "AU" && found.vendor == "Apple");
+    fs::remove_all (dir);
+}
+#endif
+
 } // namespace
 
 void pluginTests()
@@ -1520,4 +1689,7 @@ void pluginTests()
     testTransport();
     testScanner();
     testVst3();
+   #if GHOSTDAW_MAC
+    testAudioUnits();
+   #endif
 }
