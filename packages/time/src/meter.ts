@@ -39,7 +39,7 @@ export const DEFAULT_METER: MeterEvent = { bar: 0, numerator: 4, denominator: 4 
 export const beatsPerBar = (m: { numerator: number; denominator: number }) => (m.numerator * 4) / m.denominator;
 
 const valid = (e: MeterEvent) =>
-  Number.isInteger(e.bar) && Number.isInteger(e.numerator) && e.numerator >= 1 && e.numerator <= 64
+  !!e && typeof e === 'object' && Number.isInteger(e.bar) && Number.isInteger(e.numerator) && e.numerator >= 1 && e.numerator <= 64
   && Number.isInteger(e.denominator) && e.denominator >= 1 && e.denominator <= 64;
 
 function normalize(events: readonly MeterEvent[]): MeterEvent[] {

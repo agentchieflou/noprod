@@ -29,7 +29,7 @@ const clampBpm = (bpm: number) => Math.min(MAX_BPM, Math.max(MIN_BPM, Number.isF
 function normalize(events: readonly TempoEvent[]): TempoEvent[] {
   const byBeat = new Map<number, TempoEvent>();
   for (const e of events) {
-    if (!Number.isFinite(e.beat)) continue;
+    if (!e || typeof e !== 'object' || !Number.isFinite(e.beat)) continue;
     const beat = Math.max(0, e.beat);
     byBeat.set(beat, { beat, bpm: clampBpm(e.bpm), ...(e.ramp === 'linear' ? { ramp: 'linear' as const } : {}) });
   }
@@ -47,15 +47,15 @@ const slope = (e0: TempoEvent, e1: TempoEvent | undefined) =>
 function segmentSeconds(e0: TempoEvent, e1: TempoEvent | undefined, beat: number): number {
   const b = beat - e0.beat;
   const k = slope(e0, e1);
-  if (Math.abs(k) < 1e-12) return (60 * b) / e0.bpm;
-  return (60 / k) * Math.log((e0.bpm + k * b) / e0.bpm);
+  if (k === 0) return (60 * b) / e0.bpm;
+  return (60 / k) * Math.log1p((k * b) / e0.bpm);
 }
 
 // Beats from e0 after `seconds` within e0's segment
 function segmentBeats(e0: TempoEvent, e1: TempoEvent | undefined, seconds: number): number {
   const k = slope(e0, e1);
-  if (Math.abs(k) < 1e-12) return (seconds * e0.bpm) / 60;
-  return (e0.bpm / k) * (Math.exp((k * seconds) / 60) - 1);
+  if (k === 0) return (seconds * e0.bpm) / 60;
+  return (e0.bpm / k) * Math.expm1((k * seconds) / 60);
 }
 
 // Index of the last element <= x in a sorted array, or 0
@@ -104,11 +104,15 @@ export class TempoMap {
   }
 
   secondsAt(beat: number): number {
+    const first = this.events[0];
+    if (beat < first.beat) return (60 * (beat - first.beat)) / first.bpm; // before the song: no ramp yet
     const i = lastAtOrBefore(this.beats, beat);
     return this.starts[i] + segmentSeconds(this.events[i], this.events[i + 1], beat);
   }
 
   beatAt(seconds: number): number {
+    const first = this.events[0];
+    if (seconds < 0) return first.beat + (seconds * first.bpm) / 60;
     const i = lastAtOrBefore(this.starts, seconds);
     return this.events[i].beat + segmentBeats(this.events[i], this.events[i + 1], seconds - this.starts[i]);
   }

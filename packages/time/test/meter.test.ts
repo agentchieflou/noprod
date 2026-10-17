@@ -59,6 +59,8 @@ test('events are sorted, one per bar, valid, and bar 0 always has one', () => {
   assert.deepEqual(map.toJSON(), [{ bar: 0, numerator: 6, denominator: 8 }, { bar: 2, numerator: 6, denominator: 8 }, { bar: 4, numerator: 3, denominator: 4 }]);
   assert.deepEqual(new MeterMap([]).toJSON(), [{ bar: 0, numerator: 4, denominator: 4 }]);
   assert.deepEqual(MeterMap.from(null).toJSON(), [{ bar: 0, numerator: 4, denominator: 4 }]);
+  assert.deepEqual(MeterMap.from([null]).toJSON(), [{ bar: 0, numerator: 4, denominator: 4 }]);
+  assert.deepEqual(MeterMap.from([null, 'x', { bar: 2, numerator: 3, denominator: 4 }]).toJSON(), [{ bar: 0, numerator: 3, denominator: 4 }, { bar: 2, numerator: 3, denominator: 4 }]);
 });
 
 test('edits: a signature set or removed', () => {

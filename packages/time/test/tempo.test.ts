@@ -68,6 +68,31 @@ test('a ramp to the same tempo is constant', () => {
   assert.equal(map.beatAt(2.4), 4);
 });
 
+test('a ramp from beat 0 does not reach back before the song', () => {
+  const map = new TempoMap([{ beat: 0, bpm: 120, ramp: 'linear' }, { beat: 4, bpm: 240 }]);
+  assert.equal(map.bpmAt(-4), 120);
+  assert.equal(map.secondsAt(-4), -2);
+  assert.equal(map.secondsAt(-8), -4);
+  assert.equal(map.beatAt(-2), -4);
+  assert.equal(map.beatAt(-4), -8);
+  for (const b of [-100, -1, -1e-9, 0, 1e-9, 1]) close(map.beatAt(map.secondsAt(b)), b, 1e-9, `round trip at ${b}`);
+  // and the ramp itself still integrates from beat 0: 2·ln 2 seconds
+  close(map.secondsAt(4), 2 * Math.log(2), 1e-12, 'the ramp');
+  close(map.secondsAt(4), integrate(map, 0, 4), 1e-7, 'the ramp, numerically');
+  // ramping down as well
+  const down = new TempoMap([{ beat: 0, bpm: 240, ramp: 'linear' }, { beat: 4, bpm: 120 }]);
+  assert.equal(down.secondsAt(-4), -1);
+  assert.equal(down.beatAt(-1), -4);
+  assert.equal(down.bpmAt(-1), 240);
+  close(down.beatAt(down.secondsAt(-0.5)), -0.5, 1e-12, 'round trip before a downward ramp');
+});
+
+test('a tiny ramp is as exact as a flat one', () => {
+  const map = new TempoMap([{ beat: 0, bpm: 120, ramp: 'linear' }, { beat: 10000, bpm: 120.0001 }]);
+  close(map.secondsAt(5000), integrate(map, 0, 5000, 100000), 1e-9, 'a 0.0001 BPM ramp');
+  close(map.beatAt(map.secondsAt(5000)), 5000, 1e-9, 'its round trip');
+});
+
 test('a ramp on the last event holds its tempo', () => {
   const map = new TempoMap([{ beat: 0, bpm: 120, ramp: 'linear' }]);
   assert.equal(map.bpmAt(100), 120);
@@ -127,4 +152,6 @@ test('a map survives JSON', () => {
   assert.deepEqual(back.toJSON(), map.toJSON());
   assert.equal(back.secondsAt(8), map.secondsAt(8));
   assert.deepEqual(TempoMap.from('nonsense').toJSON(), [{ beat: 0, bpm: 120 }]);
+  assert.deepEqual(TempoMap.from([null]).toJSON(), [{ beat: 0, bpm: 120 }]);
+  assert.deepEqual(TempoMap.from([null, 'x', 7, { beat: 4, bpm: 100 }]).toJSON(), [{ beat: 0, bpm: 100 }, { beat: 4, bpm: 100 }]);
 });
