@@ -38,12 +38,12 @@ Each chunk is a 16-byte header and then its payload:
 | Offset | Size | Value |
 |---|---|---|
 | 0 | 4 | tag, 4 ASCII characters |
-| 4 | 4 | flags, u32: `0` |
+| 4 | 4 | flags, u32: `0`, except as below |
 | 8 | 8 | payload length in bytes, u64 |
 
 | Tag | Payload |
 |---|---|
-| `JSON` | project.json as gzip'd UTF-8. Exactly one, before any `PCM ` |
+| `JSON` | project.json as UTF-8: gzip'd when flag bit 0 is set, plain otherwise (browsers without `CompressionStream` write it plain). Exactly one, before any `PCM `. A reader refuses other flag bits, and says so if it can't decompress |
 | `PCM ` | u32 buffer index (into project.json's `buffers`), u32 channel, u64 first frame, then that many Float32 samples. Each chunk holds at most 2^22 frames; the writer uses 2^20 (4 MB) |
 | `END ` | Empty. Always last. A file without it is truncated |
 
@@ -74,7 +74,8 @@ in several places appear once. Entry *i* of `buffers` is the buffer whose
 samples are in the `PCM ` chunks with index *i*.
 
 `version` is the schema version, separate from the container's. v1 files are
-gzip'd JSON (they start `1F 8B`) with `version: 1` and
+JSON, gzip'd (they start `1F 8B`) or, from browsers without `CompressionStream`,
+plain (they start `{`), with `version: 1` and
 `buffers: { [id]: { sampleRate, length, channels: [base64 Float32] } }`. The
 reader turns them into the v2 shape and then migrates them like any other
 older doc.
@@ -90,7 +91,7 @@ store until the whole file has passed. In order, it:
    newer NoProd);
 2. reads chunk headers: no length past the end of the file, and the file must
    end with `END `;
-3. decompresses project.json, stopping at 256 MB (a gzip bomb);
+3. decompresses project.json if it is gzip'd, stopping at 256 MB (a gzip bomb);
 4. migrates it to the current schema version and checks it (`schema.ts`).
    Only the schema's keys go on to the store; anything else in `project` is
    dropped;
