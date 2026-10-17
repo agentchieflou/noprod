@@ -143,7 +143,8 @@ export function strudelNoteToMidi(note: string | number | undefined): number | u
   return (Number(m[3] ?? 3) + 1) * 12 + chroma + accidentals;
 }
 
-// One evaluated cycle of a pattern, as the Sequencer sends it
+// One evaluated cycle of a pattern, as the frontend's dictation.ts builds it
+// from @noprod/pattern's events
 export interface StrudelHap {
   time: number;          // cycles
   duration: number;      // cycles

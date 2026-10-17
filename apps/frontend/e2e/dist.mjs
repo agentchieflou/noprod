@@ -163,7 +163,9 @@ try {
   // The first press can land before the instrument's first render is ready:
   // press again until something is heard, inside the same 2.5 s window
   await sleep(200);
+  let presses = 0;
   for (let i = 0; i < 4; i++) {
+    presses++;
     await page.keyboard.down('KeyZ');
     await sleep(600);
     await page.keyboard.up('KeyZ');
@@ -171,7 +173,7 @@ try {
     await sleep(100);
   }
   const level = await peak;
-  check('A library note is audible at the master', level > 0.01, `peak ${level.toFixed(3)}`);
+  check('A library note is audible at the master', level > 0.01, `peak ${level.toFixed(3)} after ${presses} press${presses === 1 ? '' : 'es'}`);
   await page.screenshot({ path: join(shotDir, 'dist-noprod.png') });
 
   const unexpected = failedRequests.filter((r) => !r.includes('localhost:8080'));

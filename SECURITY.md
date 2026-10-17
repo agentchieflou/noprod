@@ -15,7 +15,7 @@ These parts of noprod are in scope:
 
 - the web app (`apps/frontend`);
 - the dictation service (`apps/orchestrator`, and whatever replaces it);
-- the sequencer (`apps/sequencer`), until #133 replaces it;
+- the pattern engine that runs dictated code (`packages/pattern`);
 - GhostDAW, the native audio host (`apps/audio_core`);
 - the plugins in [agentchieflou/v-loudio-t](https://github.com/agentchieflou/v-loudio-t).
 

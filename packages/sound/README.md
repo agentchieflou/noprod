@@ -189,12 +189,12 @@ the General MIDI drum notes, with hat chokes). So far:
 
 ## Strudel names
 
-AI dictation writes Strudel patterns; `src/library/strudel.ts` says what
-they play. Drum names (`bd sd rim cp hh oh lt mt ht cr rd cb sh tb perc`)
+AI dictation writes patterns in Strudel's language, which `@noprod/pattern`
+plays (#133); `src/library/strudel.ts` says what the names mean. Drum names (`bd sd rim cp hh oh lt mt ht cr rd cb sh tb perc`)
 are pads on a kit chosen by `.bank()` (808 by default, 909 for an
 electronic kit); synth and instrument names (`sawtooth`, `piano`,
 `gm_epiano1`, `strings`, …) are library sounds, and a note with no name
-plays Strudel's default triangle. `strudelParts(haps)` turns an evaluated
+plays the default triangle. `strudelParts(haps)` turns an evaluated
 cycle into parts (a kit, a sound per name) with their notes; names the
 library has nothing for are reported, not guessed. The orchestrator's
 dictation prompt lists exactly these names (a test keeps them in step).

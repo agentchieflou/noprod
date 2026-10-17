@@ -1,9 +1,11 @@
 // Shared IPC schemas for the NoProd DAW
 
+// What the Audio Core (GhostDAW) plays; nothing sends it since the headless
+// sequencer went (#133), until #134 rebuilds the Audio Core
 export interface HapEvent {
   type: 'HAP_STREAM';
-  cps?: number;          // cycles per second the pattern set (Strudel's default is 0.5)
-  code?: string;         // the evaluated Strudel code
+  cps?: number;          // cycles per second the pattern set (the default is 0.5)
+  code?: string;         // the evaluated pattern code
   haps: Array<{
     time: number;        // Start, in cycles (one cycle is one bar)
     note: string;        // The note, or else the sound name (e.g. 'c3', 'bd')
@@ -22,14 +24,16 @@ export interface HapEvent {
   }>;
 }
 
-export interface EvalCommand {
-  type: 'EVAL';
-  code: string; // The Strudel code to evaluate
-}
-
 export interface DictationCommand {
   type: 'DICTATION';
   text: string;
+}
+
+// The orchestrator's answer to a DICTATION: pattern code the frontend plays
+// with @noprod/pattern (packages/pattern); on a parse error it sends ERROR
+export interface GeneratedEvent {
+  type: 'GENERATED';
+  code: string;
 }
 
 // Addresses a plugin by name on an Audio Core track (trackIndex 0-15; a
@@ -154,4 +158,4 @@ export type AudioCoreCommand =
 export type AudioCoreEvent = AudioCoreStateEvent | PluginParameterChangedEvent | EditorOpenedEvent | EditorClosedEvent
   | AudioCoreErrorEvent | AudioCoreStatusEvent;
 
-export type IpcMessage = HapEvent | EvalCommand | DictationCommand | AudioCoreCommand | AudioCoreEvent;
+export type IpcMessage = HapEvent | DictationCommand | GeneratedEvent | AudioCoreCommand | AudioCoreEvent;
