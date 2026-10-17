@@ -7,7 +7,7 @@ import {
 test('every lesson has steps, in range, with labels', () => {
   assert.equal(new Set(LESSONS.map(l => l.id)).size, LESSONS.length);
   assert.equal(LESSONS.filter(l => l.kind === 'chords').length, 8);
-  assert.equal(LESSONS.filter(l => l.kind === 'melody').length, 7);
+  assert.equal(LESSONS.filter(l => l.kind === 'melody').length, 8);
   for (const lesson of LESSONS) {
     assert.ok(lesson.steps.length > 0 && lesson.description.length > 0, lesson.id);
     for (const step of lesson.steps) {
@@ -72,15 +72,17 @@ test('a chord step passes with its notes in any voicing or octave', () => {
   assert.deepEqual(runner.current(), findLesson('pop-c')!.steps[0]);
 });
 
-test('the Jingle Bells lesson stays in C major and a runner fed its notes in order finishes', () => {
-  const lesson = findLesson('jingle-bells')!;
+test('the Jingle Bells and Saints lessons stay in C major and a runner fed their notes in order finishes', () => {
   const inKey = new Set([0, 2, 4, 5, 7, 9, 11]);
-  assert.ok(lesson.steps.every(s => inKey.has(s.pitches[0] % 12)));
-  const runner = new LessonRunner(lesson);
-  const results = lesson.steps.map(step => runner.press(step.pitches));
-  assert.ok(results.slice(0, -1).every(r => r === 'advance'));
-  assert.equal(results.at(-1), 'done');
-  assert.equal(runner.done(), true);
+  for (const id of ['jingle-bells', 'saints']) {
+    const lesson = findLesson(id)!;
+    assert.ok(lesson.steps.every(s => inKey.has(s.pitches[0] % 12)), id);
+    const runner = new LessonRunner(lesson);
+    const results = lesson.steps.map(step => runner.press(step.pitches));
+    assert.ok(results.slice(0, -1).every(r => r === 'advance'), id);
+    assert.equal(results.at(-1), 'done', id);
+    assert.equal(runner.done(), true, id);
+  }
 });
 
 test('a melody step passes on its note, in any octave unless the step says not', () => {

@@ -72,7 +72,8 @@ export const LESSONS: Lesson[] = [
   melodyLesson('mary', 'Four notes in C: E, D, C and back, with a jump up to G.'),
   melodyLesson('amazing-grace', 'The hymn tune in G, in waltz time: wider leaps up to the high D.'),
   melodyLesson('greensleeves', 'The 16th-century tune in A minor, with the raised G# leading home to A.'),
-  melodyLesson('jingle-bells', "The chorus in C: a run of E's, a climb to G, and a fall home to C.")
+  melodyLesson('jingle-bells', "The chorus in C: a run of E's, a climb to G, and a fall home to C."),
+  melodyLesson('saints', 'The chorus in C: a rising C, E, F, G figure, repeated, then a run back down to C.')
 ];
 
 export const findLesson = (id: string) => LESSONS.find(lesson => lesson.id === id) ?? null;
