@@ -37,7 +37,8 @@
 #include <thread>
 
 #if GHOSTDAW_MAC
-#include <AudioToolbox/AudioToolbox.h>
+// (CoreFoundation only: AudioToolbox's headers put a global AudioBuffer
+// beside ghostdaw's)
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 
@@ -1689,7 +1690,8 @@ void testVst3()
 // ------------------------------------------------------------ Audio Units
 
 #if GHOSTDAW_MAC
-// The preset name in a unit's class info (its state as AuInsert saves it)
+// The preset name in a unit's class info (its state as AuInsert saves it;
+// "name" is AudioToolbox's kAUPresetNameKey)
 std::string auPresetName (const std::vector<uint8_t>& plistBytes)
 {
     auto* data = CFDataCreate (kCFAllocatorDefault, plistBytes.data(), static_cast<CFIndex> (plistBytes.size()));
@@ -1698,7 +1700,7 @@ std::string auPresetName (const std::vector<uint8_t>& plistBytes)
     std::string result;
     if (plist != nullptr && CFGetTypeID (plist) == CFDictionaryGetTypeID())
     {
-        auto name = static_cast<CFStringRef> (CFDictionaryGetValue (static_cast<CFDictionaryRef> (plist), CFSTR (kAUPresetNameKey)));
+        auto name = static_cast<CFStringRef> (CFDictionaryGetValue (static_cast<CFDictionaryRef> (plist), CFSTR ("name")));
         char text[64] = {};
         if (name != nullptr && CFGetTypeID (name) == CFStringGetTypeID() && CFStringGetCString (name, text, sizeof (text), kCFStringEncodingUTF8))
             result = text;
@@ -1718,7 +1720,7 @@ std::vector<uint8_t> auWithPresetName (const std::vector<uint8_t>& plistBytes, c
     if (plist != nullptr && CFGetTypeID (plist) == CFDictionaryGetTypeID())
     {
         auto* text = CFStringCreateWithCString (kCFAllocatorDefault, name, kCFStringEncodingUTF8);
-        CFDictionarySetValue (static_cast<CFMutableDictionaryRef> (const_cast<void*> (plist)), CFSTR (kAUPresetNameKey), text);
+        CFDictionarySetValue (static_cast<CFMutableDictionaryRef> (const_cast<void*> (plist)), CFSTR ("name"), text);
         CFRelease (text);
         if (auto* out = CFPropertyListCreateData (kCFAllocatorDefault, plist, kCFPropertyListBinaryFormat_v1_0, 0, nullptr))
         {
