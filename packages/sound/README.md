@@ -223,6 +223,50 @@ BS.1770, at -12 LUFS, with peaks at most -1 dBFS (short hits stop at their
 peak, a little quieter, as they sound). It's measured at the root note;
 `gain` trims a recipe from there.
 
+## Time-stretch and pitch-shift
+
+`stretch(channels, { sampleRate, ratio, semitones, formants, mode })`
+(`src/stretch.ts`) makes any audio `ratio` times as long without changing
+its pitch, or shifts its pitch by `semitones` without changing its length,
+or both. It's a phase vocoder, built from the papers:
+
+- **Identity phase locking** (Laroche & Dolson, 1999). Each spectral peak's
+  phase advances by its measured frequency; the bins around it keep their
+  analysed phase relative to it, so a partial's whole lobe turns as one and
+  tones stay clean. A sine stretched ×0.5 to ×2, or shifted an octave
+  either way, comes out at its pitch to a thousandth of a cent.
+- **Transients** (after Röbel). Onsets are found ahead of the frames by
+  spectral flux, and placed to a millisecond. The frames that see an onset
+  are read at the hop they're written at, with their analysed phases (a
+  phase reset), so they put the attack back sample for sample. The frames
+  before it are steered so the attack lands exactly where the ratio puts
+  it, and the time not stretched there is made up between onsets.
+- **Pitch shift** is a stretch by the pitch factor, then a windowed-sinc
+  resample. `formants: true` keeps the spectral envelope where it was: a
+  line through each frame's spectral peaks, smoothed by liftering its
+  cepstrum, moved back after the shift. A voice shifted up keeps its vowels.
+- **Stereo.** Every channel turns by the same rotation per bin, measured on
+  the channels' sum (or their difference, where they cancel), so the phase
+  and level differences between them, the image, are kept exactly.
+
+| Mode | Like Live's | Frame | Onsets |
+|---|---|---|---|
+| `complex` (default) | Complex Pro | 85 ms | found and kept |
+| `beats` | Beats | 43 ms | found more keenly |
+| `tones` | Tones | 170 ms | ignored |
+
+It's deterministic, and works block by block for an AudioWorklet:
+
+```ts
+const s = new Stretcher(2, { sampleRate: 48000, ratio: 1.25 });
+s.write([left, right]);           // any block size
+s.read([outLeft, outRight]);      // returns how many samples were ready
+s.end();                          // no more input: the rest comes out
+```
+
+`s.latency` is how much input must arrive before output starts. Stereo
+48 kHz runs at about 25× realtime in Node (the tests print the numbers).
+
 ## Tests
 
 ```sh
