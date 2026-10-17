@@ -133,29 +133,41 @@ try {
   await page.evaluate(() => [...document.querySelectorAll('.track-name')].find((e) => e.textContent === 'Grand Piano')?.click());
   await page.click('button[title^="Computer MIDI keyboard"]');
   await sleep(300);
-  const peak = page.evaluate(async () => {
+  // The first note on a fresh instrument sounds when its render arrives, if
+  // the key is still held (a cold worker on a slow runner takes seconds), and
+  // a window blur in a headless browser lets held keys go. So the key stays
+  // down until the master moves, up to 3 s, and is pressed again, up to 3 times.
+  const heard = (ms) => page.evaluate(async (ms) => {
     const an = window.__analysers[0];
     const buf = new Float32Array(an.fftSize);
-    let peak = 0;
-    const end = performance.now() + 2500;
-    while (performance.now() < end) {
+    const start = performance.now();
+    let peak = 0, heardAt = null;
+    while (performance.now() - start < ms && (heardAt === null || performance.now() - heardAt < 300)) {
       an.getFloatTimeDomainData(buf);
       for (const x of buf) peak = Math.max(peak, Math.abs(x));
+      if (peak > 0.01 && heardAt === null) heardAt = performance.now();
       await new Promise((r) => setTimeout(r, 10));
     }
     return peak;
-  });
-  await sleep(200);
-  await page.keyboard.down('KeyZ');
-  await sleep(600);
-  await page.keyboard.up('KeyZ');
-  const level = await peak;
+  }, ms);
+  const t0 = Date.now();
+  let level = 0, presses = 0;
+  while (presses < 3 && level < 0.01) {
+    presses++;
+    const listening = heard(3000);
+    await sleep(200);
+    await page.keyboard.down('KeyZ');
+    level = await listening;
+    await page.keyboard.up('KeyZ');
+    await sleep(100);
+  }
+  const after = ((Date.now() - t0) / 1000).toFixed(1);
   // A silent note says where it got stuck: the context, the track, the toggle, the logs
   const why = level > 0.01 ? '' : await page.evaluate(() => {
     const ctx = window.__analysers[0]?.context;
     return ` · ${ctx?.state} at ${ctx?.sampleRate} Hz, ${document.querySelectorAll('.track-name').length} tracks, ${document.querySelector('button[title^="Computer MIDI keyboard"]')?.title.split(':')[0]}`;
   }) + ` · console: ${messages.join(' | ') || 'quiet'}`;
-  check('A library note is audible at the master', level > 0.01, `peak ${level.toFixed(3)}${why}`);
+  check('A library note is audible at the master', level > 0.01, `peak ${level.toFixed(3)}, press ${presses}, ${after} s${why}`);
   await page.screenshot({ path: join(shotDir, 'dist-noprod.png') });
 
   const unexpected = failedRequests.filter((r) => !r.includes('localhost:8080'));
