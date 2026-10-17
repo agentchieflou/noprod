@@ -34,7 +34,7 @@ module.exports = async (page, ctx) => {
     await page.click('button[title="Arrangement View"]');
 
     // The Services dialog: Tab stays inside, Escape closes it and gives focus back
-    const servicesButton = '.btn-metronome[title^="Turn local services"]';
+    const servicesButton = '.btn-metronome[title^="Turn the local GhostDAW"]';
     await page.focus(servicesButton);
     await page.keyboard.press('Enter');
     await ctx.sleep(300);
@@ -49,6 +49,20 @@ module.exports = async (page, ctx) => {
     await ctx.sleep(200);
     check('Escape closes the dialog', !(await page.$('.services-dialog')));
     check('Focus returns to the button that opened it', await page.evaluate((sel) => document.activeElement === document.querySelector(sel), servicesButton));
+
+    // The dictation settings dialog, opened from the control bar
+    await page.focus('[data-dictation-key]');
+    await page.keyboard.press('Enter');
+    await ctx.sleep(300);
+    await view('Dictation settings dialog', async () => {}, '[data-dictation-settings]');
+    const inDictation = () => page.evaluate(() => !!document.activeElement?.closest('[data-dictation-settings]'));
+    let held = await inDictation();
+    for (let i = 0; i < 10; i++) { await page.keyboard.press('Tab'); held = held && await inDictation(); }
+    check('The dictation dialog takes focus and Tab stays inside it', held);
+    await page.keyboard.press('Escape');
+    await ctx.sleep(200);
+    check('Escape closes the dictation dialog and focus goes back to its button',
+      !(await page.$('[data-dictation-settings]')) && await page.evaluate(() => document.activeElement === document.querySelector('[data-dictation-key]')));
 
     // Focus is visible: a ring on whatever Tab lands on, and on the search box's frame
     await page.evaluate(() => document.activeElement?.blur());
@@ -75,7 +89,7 @@ module.exports = async (page, ctx) => {
       await ctx.sleep(300);
       return playing();
     };
-    check('Space on a focused button does not start the transport', !(await spaceOn('.btn-metronome[title^="Turn local services"]')));
+    check('Space on a focused button does not start the transport', !(await spaceOn('.btn-metronome[title^="Turn the local GhostDAW"]')));
     await page.keyboard.press('Escape');
     check('Space on a focused select does not start the transport', !(await spaceOn('.tempo-controls select')));
     check('Space on a focused slider does not start the transport', !(await spaceOn('.master-fader input[type=range]')));

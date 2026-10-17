@@ -1,16 +1,13 @@
 {
   "name": "@noprod/orchestrator",
   "version": "1.0.0",
-  "description": "Node.js IPC/WebSocket server & Agentic RAG",
+  "description": "WebSocket relay between the frontend and GhostDAW",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@google/genai": "^2.29.1",
-    "@noprod/pattern": "*",
-    "dotenv": "^18.0.7",
     "ws": "^8.22.0"
   },
   "keywords": [],

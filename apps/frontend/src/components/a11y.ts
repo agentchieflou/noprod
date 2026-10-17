@@ -14,10 +14,11 @@ const TABBABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([ty
 
 // A dialog keeps Tab inside itself while it is open, closes on Escape (when
 // it can close), and gives focus back to whatever had it before it opened.
-export function useDialogFocus<T extends HTMLElement>(onClose?: () => void, open = true) {
+export function useDialogFocus<T extends HTMLElement>(onClose?: () => void, open = true, returnTo?: () => HTMLElement | null) {
   const ref = useRef<T>(null);
   const close = useRef(onClose);
-  useEffect(() => { close.current = onClose; });
+  const back = useRef(returnTo);
+  useEffect(() => { close.current = onClose; back.current = returnTo; });
   useEffect(() => {
     const dialog = ref.current;
     if (!open || !dialog) return;
@@ -36,7 +37,7 @@ export function useDialogFocus<T extends HTMLElement>(onClose?: () => void, open
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (before?.isConnected) before.focus();
+      (before?.isConnected ? before : back.current?.())?.focus();
     };
   }, [open]);
   return ref;

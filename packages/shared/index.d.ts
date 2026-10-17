@@ -24,18 +24,6 @@ export interface HapEvent {
   }>;
 }
 
-export interface DictationCommand {
-  type: 'DICTATION';
-  text: string;
-}
-
-// The orchestrator's answer to a DICTATION: pattern code the frontend plays
-// with @noprod/pattern (packages/pattern); on a parse error it sends ERROR
-export interface GeneratedEvent {
-  type: 'GENERATED';
-  code: string;
-}
-
 // Addresses a plugin by name on an Audio Core track (trackIndex 0-15; a
 // negative or missing trackIndex means the master bus). See also
 // SetPluginParameterCommand, which addresses an insert by slotId.
@@ -158,4 +146,4 @@ export type AudioCoreCommand =
 export type AudioCoreEvent = AudioCoreStateEvent | PluginParameterChangedEvent | EditorOpenedEvent | EditorClosedEvent
   | AudioCoreErrorEvent | AudioCoreStatusEvent;
 
-export type IpcMessage = HapEvent | DictationCommand | GeneratedEvent | AudioCoreCommand | AudioCoreEvent;
+export type IpcMessage = HapEvent | AudioCoreCommand | AudioCoreEvent;

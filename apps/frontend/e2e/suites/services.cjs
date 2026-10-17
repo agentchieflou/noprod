@@ -19,6 +19,7 @@ module.exports = async (page, ctx) => {
   };
   const ui = () => page.evaluate(() => ({
     box: !![...document.querySelectorAll('input')].find((i) => (i.placeholder || '').includes('Describe')),
+    line: !![...document.querySelectorAll('button')].find((b) => b.textContent.includes('Add your API key to dictate')),
     tabs: [...document.querySelectorAll('.detail-tab')].map((b) => b.textContent.trim()),
     panel: !!document.querySelector('.native-host')
   }));
@@ -28,20 +29,19 @@ module.exports = async (page, ctx) => {
 
     // Production builds start with nothing on
     const prod = await page.evaluate(() => window.__services.defaults(false));
-    check('Production defaults: every service off', !prod.dictation.enabled && !prod.ghostdaw.enabled);
+    check('Production defaults: every service off', !prod.ghostdaw.enabled && Object.keys(prod).join() === 'ghostdaw');
 
     // Off: no connection, no UI for it
     await page.evaluate(() => {
       window.__sockets = [];
       const Real = window.WebSocket;
       window.WebSocket = new Proxy(Real, { construct(target, args) { window.__sockets.push(String(args[0])); return new target(...args); } });
-      window.__services.set('dictation', { enabled: false });
       window.__services.set('ghostdaw', { enabled: false });
     });
     await ctx.sleep(3000);
     check('With services off, no WebSocket is opened', (await page.evaluate(() => window.__sockets.length)) === 0, await page.evaluate(() => window.__sockets.join(',')));
     let state = await ui();
-    check('With services off, the dictation box and the dictation tab are hidden', !state.box && !state.tabs.includes('AI Dictation'), JSON.stringify(state.tabs));
+    check('Dictation is not a service: with no key its box is one line, and it opens no socket', state.line && !state.box && !state.tabs.includes('AI Dictation'), JSON.stringify(state));
     check('With services off, the Audio Core tab and panel are hidden', !state.tabs.includes('VST Folders Scan') && !state.panel);
     check('Default project has no placeholder devices', await page.evaluate(() => {
       const st = window.__dawStore.getState();
@@ -52,22 +52,18 @@ module.exports = async (page, ctx) => {
     await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Services').click());
     await waitFor(() => !!document.querySelector('.services-dialog'));
     await ctx.shot('services-off');
-    check('The Services dialog lists GhostDAW and AI dictation, both off',
-      await page.evaluate(() => [...document.querySelectorAll('.service-row')].map((r) => `${r.dataset.service}:${r.querySelector('[data-status]').dataset.status}`).join()) === 'ghostdaw:off,dictation:off');
+    check('The Services dialog lists GhostDAW, off',
+      await page.evaluate(() => [...document.querySelectorAll('.service-row')].map((r) => `${r.dataset.service}:${r.querySelector('[data-status]').dataset.status}`).join()) === 'ghostdaw:off');
 
-    // Turning dictation on connects, and reconnects after the service restarts
-    await page.evaluate(() => document.querySelector('[data-service=dictation] input[type=checkbox]').click());
-    const connected = await waitFor(() => document.querySelector('[data-service=dictation] [data-status]')?.dataset.status === 'connected');
-    check('Turning dictation on connects to the orchestrator', connected && (await page.evaluate(() => window.__sockets.includes('ws://localhost:8080'))));
-    state = await ui();
-    check('Dictation is back in the UI', state.box && state.tabs.includes('AI Dictation'));
+    // Turning GhostDAW on connects to the relay, and reconnects after it restarts
+    await page.evaluate(() => document.querySelector('[data-service=ghostdaw] input[type=checkbox]').click());
+    check('Turning GhostDAW on opens the relay connection', await waitFor(() => window.__sockets.includes('ws://localhost:8080')));
     await stopOrchestrator();
-    const trying = await waitFor(() => document.querySelector('[data-service=dictation] [data-status]')?.dataset.status === 'trying', null, 5000);
     await ctx.sleep(2500);
     await startOrchestrator();
-    const again = await waitFor(() => document.querySelector('[data-service=dictation] [data-status]')?.dataset.status === 'connected', null, 30000);
-    check('It shows "trying" when the orchestrator goes away, and reconnects when it returns', trying && again);
-    await page.evaluate(() => window.__services.set('dictation', { enabled: false }));
+    const again = await waitFor(() => window.__sockets.filter((s) => s === 'ws://localhost:8080').length > 1, null, 30000);
+    check('It reconnects when the relay returns', again);
+    await page.evaluate(() => window.__services.set('ghostdaw', { enabled: false }));
     await ctx.sleep(500);
     const after = await page.evaluate(() => window.__sockets.length);
     await ctx.sleep(3000);
@@ -80,15 +76,14 @@ module.exports = async (page, ctx) => {
       Object.assign(Throwing, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
       window.WebSocket = Throwing;
       let error = null;
-      try { window.__services.set('dictation', { enabled: true }); } catch (e) { error = String(e); }
+      try { window.__services.set('ghostdaw', { enabled: true }); } catch (e) { error = String(e); }
       await new Promise((r) => setTimeout(r, 1500));
-      const status = document.querySelector('[data-service=dictation] [data-status]')?.dataset.status;
+      const status = document.querySelector('[data-service=ghostdaw] [data-status]')?.dataset.status;
       window.WebSocket = spy;
-      return { error, status, enabled: window.__services.get().dictation.enabled };
+      return { error, status, enabled: window.__services.get().ghostdaw.enabled };
     });
     check('A WebSocket that throws on construction is a failed attempt, not an error', thrown.error === null && thrown.status === 'trying' && thrown.enabled, JSON.stringify(thrown));
-    check('It connects once the socket can be opened', await waitFor(() => document.querySelector('[data-service=dictation] [data-status]')?.dataset.status === 'connected', null, 30000));
-    await page.evaluate(() => window.__services.set('dictation', { enabled: false }));
+    check('It connects once the socket can be opened', await waitFor(() => window.__sockets.filter((s) => s === 'ws://localhost:8080').length > 2, null, 30000));
 
     // GhostDAW on shows the native UI; a project's native device asks first
     await page.evaluate(() => window.__services.set('ghostdaw', { enabled: true }));

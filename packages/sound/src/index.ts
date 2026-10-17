@@ -3,7 +3,8 @@
 
 export * from './types.ts';
 export { render, loudnessGain, withId } from './render.ts';
-export { midiToHz } from './dsp.ts';
+export { midiToHz, createRandom, waveTables, tableFor, readTable } from './dsp.ts';
+export type { WaveTables } from './dsp.ts';
 export { ModelVoice, modelTuning, closedLoop } from './model.ts';
 export { LiveNote, liveTunings } from './live.ts';
 export type { LiveNoteOptions } from './live.ts';

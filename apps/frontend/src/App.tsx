@@ -1,19 +1,22 @@
 import { Fragment, lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
 import {
   Play, Square, Plus, Trash2, Mic, Circle, Volume2,
-  Layers, CheckSquare, Square as SquareIcon, Sliders, Wand2,
+  Layers, CheckSquare, Square as SquareIcon, Sliders,
   Undo2, Redo2, ChevronDown, ChevronRight, Snowflake, ArrowDownToLine, Activity, Eraser, X, ListMusic, GraduationCap
 } from 'lucide-react';
 import { APP_VERSION, APP_COMMIT } from './buildInfo';
 import { useDAWStore, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { startVoice } from './audio/synth';
-import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
+import { clipTimelineLength } from './audio/clipPlayback';
 import BrowserSidebar, { SAMPLE_DRAG_TYPE, SOUND_DRAG_TYPE } from './components/BrowserSidebar';
 import { getFile } from './browser/library';
-import { createLibraryInstrument, soundAsBuffer, whenRendered, libraryStats } from './audio/library';
+import { createLibraryInstrument, soundAsBuffer, libraryStats } from './audio/library';
+import { renderArrangement } from './audio/scheduler';
 import { startLibraryWarmup } from './audio/libraryWarmup';
 import { findAnySound, loadUserSounds } from './audio/userSounds';
-import type { DictationResult } from './audio/dictation';
+import './native/orchestrator'; // follows the GhostDAW setting
+import DictationBox from './components/DictationBox';
+import { hasKey, subscribeKey } from './dictation/key';
 import type { SoundRecipe } from '@noprod/sound';
 import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/capture';
 import { initMidi } from './audio/inputs';
@@ -21,8 +24,6 @@ import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio
 import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from './audio/coachLoader';
 import { getPluginEditor, subscribePluginEditor } from './native/pluginEditor';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
-import { handleOrchestratorMessage } from './native/audioCore';
-import { getOrchestratorStatus, onOrchestratorMessage, sendOrchestrator, subscribeOrchestrator } from './native/orchestrator';
 import { getServices, subscribeServices, getServicesDialogOpen, subscribeServicesDialog, setServicesDialogOpen } from './native/services';
 import { watchNativeConsent } from './native/consent';
 import NativeConsentDialog from './components/NativeConsentDialog';
@@ -43,7 +44,7 @@ import AudioStatus from './components/AudioStatus';
 import Notices from './components/Notices';
 import { isControl, onEnter } from './components/a11y';
 import { liveModelStats } from './audio/liveModels';
-import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain } from './audio/transport';
+import { getPosition, isCountingIn, onTransportChange, onSegmentScheduled, getTransportSnapshot, setPosition as setTransportPosition, clickGain, engineStats, engineReady, getScheduler } from './audio/transport';
 // Not lazy with the DSP Map: it notes each track's sound as it's selected, for the map's A/B
 import './components/dspMapState';
 import './App.css';
@@ -69,7 +70,7 @@ const AudioRegionNode = lazy(() => import('./components/ClipNodes').then((m) => 
 // Dev-only handle for driving the store from the console / automated tests
 if (import.meta.env.DEV) {
   (window as any).__dawStore = useDAWStore;
-  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, libraryStats,
+  (window as any).__transport = { getPosition, setPosition: setTransportPosition, isCountingIn, clickGain, audioContext, masterAnalyser, getStripInput, liveModelStats, libraryStats, engineStats, engineReady, getScheduler,
     // the coach's band, once it has loaded (coachLoader.ts)
     get accompany() { return accompanyDebug(); } };
 }
@@ -194,55 +195,13 @@ function App() {
   // Capture lights up when there is uncaptured playing for an armed MIDI track
   const capturable = useSyncExternalStore(onCaptureBufferChange, () => hasCapturable(useDAWStore.getState())) && tracks.length > 0;
 
-  // AI Dictation (Orchestrator connection)
+  // AI Dictation: the user's own key (dictation/key.ts), no server
   const services = useSyncExternalStore(subscribeServices, getServices);
   const servicesOpen = useSyncExternalStore(subscribeServicesDialog, getServicesDialogOpen);
-  const orchestratorConnected = useSyncExternalStore(subscribeOrchestrator, getOrchestratorStatus) === 'connected';
-  const dictationOn = services.dictation.enabled;
+  const dictationOn = useSyncExternalStore(subscribeKey, hasKey);
   const ghostdawOn = services.ghostdaw.enabled;
-  // A tab for a service that is off isn't there to stay on
+  // A tab for something that is off isn't there to stay on
   const activeTab = (chosenTab === 'dictation' && !dictationOn) || (chosenTab === 'vst-paths' && !ghostdawOn) ? 'devices' : chosenTab;
-  const [dictationInput, setDictationInput] = useState('');
-  const [dictationStatus, setDictationStatus] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
-  const [dictationCode, setDictationCode] = useState<string | null>(null);
-  const [dictationError, setDictationError] = useState<string | null>(null);
-  const [dictationResult, setDictationResult] = useState<DictationResult | null>(null);
-  const awaitingCode = useRef(false); // only the window that dictated makes tracks from the result
-
-  useEffect(() => onOrchestratorMessage((msg) => {
-    if (handleOrchestratorMessage(msg)) return; // native plug-in host (Audio Core)
-    if (msg.type === 'GENERATED') {
-      // The code Gemini wrote: our pattern engine plays a cycle of it here,
-      // and its parts become tracks playing library sounds
-      setDictationCode(msg.code);
-      if (!awaitingCode.current) return;
-      awaitingCode.current = false;
-      import('./audio/dictation').then((d) => {
-        try {
-          setDictationResult(d.applyDictation(useDAWStore, msg.code));
-          setDictationStatus('done');
-        } catch (e) {
-          setDictationError(e instanceof Error ? e.message : String(e));
-          setDictationStatus('error');
-        }
-      });
-    } else if (msg.type === 'ERROR') {
-      awaitingCode.current = false;
-      setDictationError(msg.message);
-      setDictationStatus('error');
-    }
-  }), []);
-
-  const handleSendDictation = () => {
-    if (!dictationInput.trim() || !orchestratorConnected) return;
-
-    setDictationStatus('sending');
-    setDictationError(null);
-    setDictationCode(null);
-    setDictationResult(null);
-    awaitingCode.current = true;
-    sendOrchestrator({ type: 'DICTATION', text: dictationInput.trim() });
-  };
 
   // Playhead display: the transport owns position and scheduling; this just
   // follows it (rAF while playing) and runs punch-in/out at the punch points.
@@ -510,17 +469,8 @@ function App() {
       return;
     }
     const end = Math.max(...trackRegions.map((r: any) => r.startTime + clipTimelineLength(r, bpm))) + 0.5; // headroom for release tails
-    const sampleRate = audioContext.sampleRate;
-    const offline = new OfflineAudioContext(2, Math.ceil(sampleRate * end), sampleRate);
-
-    // Same clip renderer as playback, so gain/transpose/loop/warp are baked in
-    trackRegions.forEach((region: any) => {
-      scheduleClip(offline, region, track.instrument?.parameters, offline.destination,
-        region.startTime, 0, clipTimelineLength(region, bpm), bpm, { midiEffects: track.midiEffects });
-    });
-
-    await whenRendered(offline); // library notes render in workers first
-    const rendered = await offline.startRendering();
+    // The engine renders the track as playback plays it: gain, transpose, loop and warp baked in
+    const rendered = await renderArrangement({ state: useDAWStore.getState(), trackIds: [track.id], from: 0, to: end, sampleRate: audioContext.sampleRate });
     setTrackFrozen(track.id, rendered, end);
   });
 
@@ -642,34 +592,9 @@ function App() {
         <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border-color)', margin: '0 2px' }} />
 
         {/* AI Dictation */}
-        {dictationOn && <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <input aria-label="Describe a beat or melody"
-            type="text"
-            placeholder="Describe a beat or melody..."
-            value={dictationInput}
-            onChange={(e) => setDictationInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleSendDictation(); }}
-            className="vst-path-input"
-            style={{ width: '120px' }}
-          />
-          <button
-            className="btn-metronome"
-            onClick={() => { handleSendDictation(); setActiveTab('dictation'); }}
-            disabled={!orchestratorConnected || dictationStatus === 'sending'}
-            title={orchestratorConnected ? 'Generate a pattern from text via the Orchestrator' : 'Orchestrator offline'}
-          >
-            <Wand2 size={14} style={{ marginRight: '5px' }} />
-            {dictationStatus === 'sending' ? 'Generating...' : 'Dictate'}
-          </button>
-          <span
-            style={{ fontSize: '10px', color: orchestratorConnected ? 'var(--accent-green)' : 'var(--accent-red)' }}
-            title={orchestratorConnected ? 'Orchestrator connected' : 'Orchestrator offline'}
-          >
-            {orchestratorConnected ? '●' : '○'}
-          </span>
-        </div>}
+        <DictationBox onOpenTab={() => setActiveTab('dictation')} />
 
-        <button className="btn-metronome" onClick={() => setServicesDialogOpen(!servicesOpen)} title="Turn local services on or off: GhostDAW plug-in host, AI dictation">
+        <button className="btn-metronome" onClick={() => setServicesDialogOpen(!servicesOpen)} title="Turn the local GhostDAW plug-in host on or off">
           Services
         </button>
         {servicesOpen && <Suspense fallback={null}><ServicesDialog /></Suspense>}
@@ -1196,7 +1121,7 @@ function App() {
 
           {activeTab === 'dictation' && dictationOn && (
             <Suspense fallback={null}>
-              <DictationPanel status={dictationStatus} code={dictationCode} result={dictationResult} error={dictationError} />
+              <DictationPanel />
             </Suspense>
           )}
           </Panel>

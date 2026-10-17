@@ -2,7 +2,7 @@ import { useState, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
 import { useDialogFocus } from './a11y';
 import { getServices, subscribeServices, setService, isWebSocketUrl, setServicesDialogOpen, type ServiceName } from '../native/services';
-import { getOrchestratorStatus, subscribeOrchestrator, type ConnectionStatus } from '../native/orchestrator';
+import type { ConnectionStatus } from '../native/orchestrator';
 import { getAudioCore, subscribeAudioCore } from '../native/audioCore';
 
 const STATUS_TEXT: Record<ConnectionStatus, string> = { off: '○ off', trying: '◌ trying to connect…', connected: '● connected' };
@@ -42,7 +42,6 @@ function ServiceRow({ name, title, blurb, addressLabel, status }: {
 // Local services are opt-in: nothing connects until it is turned on here
 export default function ServicesDialog() {
   const services = useSyncExternalStore(subscribeServices, getServices);
-  const orchestrator = useSyncExternalStore(subscribeOrchestrator, getOrchestratorStatus);
   const audioCore = useSyncExternalStore(subscribeAudioCore, getAudioCore);
   const ghostdaw: ConnectionStatus = !services.ghostdaw.enabled ? 'off' : audioCore.connected ? 'connected' : 'trying';
 
@@ -57,11 +56,7 @@ export default function ServicesDialog() {
       <p className="native-hint">Programs running on this computer that noprod can use. They're off until you turn them on, and the choice is kept in this browser.</p>
       <ServiceRow
         name="ghostdaw" title="GhostDAW" status={ghostdaw} addressLabel="Audio stream address"
-        blurb="A companion app that runs VST3 and other native plug-ins for noprod. Its plug-in panel also connects through the AI dictation address below."
-      />
-      <ServiceRow
-        name="dictation" title="AI dictation" status={orchestrator === 'off' || !services.dictation.enabled ? 'off' : orchestrator} addressLabel="Orchestrator address"
-        blurb="Describe a beat or melody in words and get tracks. Needs the orchestrator and sequencer running."
+        blurb="A companion app that runs VST3 and other native plug-ins for noprod."
       />
     </div>
   );

@@ -9,7 +9,7 @@ coach teaches as you play.
 | Path | What |
 |---|---|
 | `apps/frontend` | The DAW: React 19, Vite, TypeScript. Zustand store in `src/store/useDAWStore.js`; Web Audio engine in `src/audio/`; UI in `src/components/` |
-| `apps/orchestrator` | WebSocket hub on 8080: AI dictation (Gemini → pattern code, checked with `@noprod/pattern`), relays to the audio core |
+| `apps/orchestrator` | WebSocket relay on 8080 between the frontend and the audio core (goes away with #134's paired connection) |
 | `apps/audio_core` | GhostDAW: C++/JUCE host for LPI and VST3 plugins on 8082 (see its README) |
 | `packages/sound` | `@noprod/sound`: sound recipes and their renderer, the library, physical models (`model.ts`), DSP chains (`chain.ts`), resynthesis. See its README |
 | `packages/theory` | `@noprod/theory`: keys, chords, voice leading, the Keyboard Coach. See its README |
@@ -25,7 +25,8 @@ Frontend landmarks: `App.tsx` (layout, bottom-panel tabs), `audio/engine.ts`
 (strips, master), `audio/library.ts` (library instruments, render workers),
 `audio/inputs.ts` (`onMidiEvent`: every note source), `audio/computerKeyboard.ts`,
 `audio/accompany.ts` (the coach's band), `audio/dictation.ts` (dictated code →
-tracks, through `@noprod/pattern`), `components/KeyboardPanel.tsx`,
+tracks, through `@noprod/pattern`), `dictation/` (the user's own key, the Gemini
+call with `fetch`, the box's state), `components/KeyboardPanel.tsx`,
 `SoundDesigner.tsx`, `DspMap.tsx`.
 
 ## Commands
