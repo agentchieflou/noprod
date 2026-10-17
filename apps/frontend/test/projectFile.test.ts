@@ -257,3 +257,15 @@ test('only known project keys reach the store, and deep nesting is refused', asy
   const dup = [{ id: 'b0', sampleRate: 48000, length: 1, channels: 1 }, { id: 'b0', sampleRate: 48000, length: 1, channels: 1 }];
   await refuses(await file(v2(defaults(), dup)), /share an id/);
 });
+
+test('lists past their count limit are refused, naming the list; files at the limits open', async () => {
+  const track = defaults().tracks[0];
+  const tracks = (n: number) => Array.from({ length: n }, (_, i) => ({ ...track, id: `t${i}` }));
+  await refuses(await file(v2({ ...defaults(), tracks: tracks(1001) })), /project\.tracks: more than 1000 items/);
+  const notes = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `n${i}`, pitch: 60, start: i, duration: 1, velocity: 0.8 }));
+  const clip = (n: number) => ({ id: 'r', trackId: 't1', startTime: 0, duration: 1, notes: notes(n) });
+  await refuses(await file(v2({ ...defaults(), regions: [clip(100001)] })), /project\.regions\[0\]\.notes: more than 100000 items/);
+  const { doc } = await readProjectFile(await file(v2({ ...defaults(), tracks: tracks(1000), regions: [clip(100000)] })), defaults());
+  assert.equal(doc.project.tracks.length, 1000);
+  assert.equal(doc.project.regions[0].notes.length, 100000);
+});
