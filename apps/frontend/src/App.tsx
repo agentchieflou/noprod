@@ -7,10 +7,6 @@ import {
 import { useDAWStore, RETURN_LETTERS, MASTER_STRIP_ID } from './store/useDAWStore';
 import { startVoice } from './audio/synth';
 import { scheduleClip, clipTimelineLength } from './audio/clipPlayback';
-import ClipView from './components/ClipView';
-import SessionView from './components/SessionView';
-import TrackIO from './components/TrackIO';
-import TakeLane from './components/TakeLane';
 import BrowserSidebar, { SAMPLE_DRAG_TYPE, SOUND_DRAG_TYPE } from './components/BrowserSidebar';
 import { getFile } from './browser/library';
 import { createLibraryInstrument, soundAsBuffer, whenRendered, libraryStats } from './audio/library';
@@ -22,16 +18,14 @@ import { captureMidi, hasCapturable, onCaptureBufferChange } from './audio/captu
 import { initMidi } from './audio/inputs';
 import { subscribeKeyboard, getKeyboardState, setKeyboardEnabled } from './audio/computerKeyboard';
 import { subscribeCoachOpen, getCoachOpen, setCoachOpen, accompanyDebug } from './audio/coachLoader';
-import PluginEditorWindow from './components/PluginEditorWindow';
+import { getPluginEditor, subscribePluginEditor } from './native/pluginEditor';
 import { onNativeEditorParameter, connectNativeTransport } from './native/trackBridge';
 import { attachOrchestrator, detachOrchestrator, handleOrchestratorMessage } from './native/audioCore';
-import { AudioRegionNode, MidiRegionNode } from './components/ClipNodes';
 import ArrangementRuler from './components/ArrangementRuler';
 import TempoControls from './components/TempoControls';
 import Playhead from './components/Playhead';
 import { setPlayhead } from './components/playhead';
 import FileMenu from './components/FileMenu';
-import AutomationLane from './components/AutomationLane';
 import { automationParams } from './audio/automation';
 import { PIXELS_PER_SECOND, barsUntil } from './audio/timeline';
 import { audioContext, masterAnalyser, masterLimiter, getStripInput } from './audio/engine';
@@ -45,6 +39,14 @@ const DspMap = lazy(() => import('./components/DspMap'));
 const KeyboardPanel = lazy(() => import('./components/KeyboardPanel'));
 const DeviceChain = lazy(() => import('./components/DeviceChain'));
 const PluginFolders = lazy(() => import('./components/PluginFolders'));
+const ClipView = lazy(() => import('./components/ClipView'));
+const SessionView = lazy(() => import('./components/SessionView'));
+const PluginEditorWindow = lazy(() => import('./components/PluginEditorWindow'));
+const TrackIO = lazy(() => import('./components/TrackIO'));
+const TakeLane = lazy(() => import('./components/TakeLane'));
+const AutomationLane = lazy(() => import('./components/AutomationLane'));
+const MidiRegionNode = lazy(() => import('./components/ClipNodes').then((m) => ({ default: m.MidiRegionNode })));
+const AudioRegionNode = lazy(() => import('./components/ClipNodes').then((m) => ({ default: m.AudioRegionNode })));
 
 
 // Dev-only handle for driving the store from the console / automated tests
@@ -167,6 +169,7 @@ function App() {
   const [showIO, setShowIO] = useState(false);
   const keyboardMidi = useSyncExternalStore(subscribeKeyboard, () => getKeyboardState().enabled);
   const coachOpen = useSyncExternalStore(subscribeCoachOpen, getCoachOpen);
+  const pluginEditor = useSyncExternalStore(subscribePluginEditor, getPluginEditor);
   // Capture lights up when there is uncaptured playing for an armed MIDI track
   const capturable = useSyncExternalStore(onCaptureBufferChange, () => hasCapturable(useDAWStore.getState())) && tracks.length > 0;
 
@@ -718,6 +721,7 @@ function App() {
                       handleCreateMidiClip(track.id, clickTime);
                     }}
                   >
+                    <Suspense fallback={null}>
                     {regions.filter((r: any) => r.trackId === track.id).map((region: any) => (
                       region.type === 'midi' ? (
                         <MidiRegionNode
@@ -739,19 +743,20 @@ function App() {
                         />
                       )
                     ))}
+                    </Suspense>
                   </div>
                   {/* Automation lanes under the track */}
                   {track.showAutomation && (track.automationLanes || []).map((key: string) => {
                     const param = automationParams(track, returns).find((p) => p.key === key);
                     return param ? (
                       <div key={key} className="automation-lane-row" style={{ width: timelineWidth }}>
-                        <AutomationLane track={track} param={param} width={timelineWidth} color={track.color} />
+                        <Suspense fallback={null}><AutomationLane track={track} param={param} width={timelineWidth} color={track.color} /></Suspense>
                       </div>
                     ) : <div key={key} className="automation-lane-row" style={{ width: timelineWidth }} />;
                   })}
                   {/* Take lanes (recorded passes) under the track */}
                   {track.showTakes && (track.takeLanes || []).map((lane: any) => (
-                    <TakeLane key={lane.id} track={track} lane={lane} width={timelineWidth} />
+                    <Suspense key={lane.id} fallback={null}><TakeLane track={track} lane={lane} width={timelineWidth} /></Suspense>
                   ))}
                   </Fragment>
                 ))}
@@ -941,7 +946,7 @@ function App() {
                         className="mixer-fader"
                       />
                     </div>
-                    {showIO && <TrackIO track={track} tracks={tracks} returns={returns} />}
+                    {showIO && <Suspense fallback={null}><TrackIO track={track} tracks={tracks} returns={returns} /></Suspense>}
                   </div>
                   {/* Automation lane headers: choose the parameter, clear, add/remove lanes */}
                   {track.showAutomation && (track.automationLanes || []).map((key: string, laneIdx: number) => {
@@ -1059,13 +1064,13 @@ function App() {
 
             </div>
           ) : (
-            <SessionView tracks={visibleTracks} onDropFile={handleDrop} onOpenClip={() => setActiveTab('clip')} />
+            <Suspense fallback={null}><SessionView tracks={visibleTracks} onDropFile={handleDrop} onOpenClip={() => setActiveTab('clip')} /></Suspense>
           )}
         </div>
       </div>
 
       {(keyboardMidi || coachOpen) && <Suspense fallback={null}><KeyboardPanel /></Suspense>}
-      <PluginEditorWindow />
+      {pluginEditor && <Suspense fallback={null}><PluginEditorWindow /></Suspense>}
 
       {/* Bottom Detail panel */}
       <div className={`bottom-detail-panel ${(activeTab === 'clip' && (selectedSessionClipData || selectedRegion)?.type === 'midi') || activeTab === 'sound' || activeTab === 'dspmap' ? 'tall' : ''}`}>
@@ -1093,6 +1098,7 @@ function App() {
           
           {activeTab === 'clip' && (
             <div className="clip-properties-view">
+              <Suspense fallback={null}>
               {selectedSessionClipData ? (
                 <ClipView
                   key={`${selectedSessionClip.trackId}-${selectedSessionClip.slot}`}
@@ -1112,6 +1118,7 @@ function App() {
               ) : (
                 <div className="detail-empty-message">No clip selected. Click a clip on the timeline (double-click opens it here).</div>
               )}
+              </Suspense>
             </div>
           )}
           
