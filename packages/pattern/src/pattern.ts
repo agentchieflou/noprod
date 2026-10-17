@@ -39,12 +39,20 @@ export class Budget {
   tick(): void {
     if ((++this.ticks & 255) === 0 && performance.now() > this.deadline) throw new PatternError(`the query took too long (more than ${this.maxMillis} ms)`);
   }
+  // A query over more cycles than the budget has events (fast(1000000) does
+  // that to the pattern inside) can't be answered within it
+  check(span: TimeSpan): void {
+    if (span.duration.gt(this.maxEvents)) throw new PatternError(`the pattern makes too many events (a query over ${span.duration} cycles, more than ${this.maxEvents})`);
+  }
 }
 
 export type QueryFn<T> = (span: TimeSpan, budget: Budget) => Hap<T>[];
 export type Transform<T> = (pat: Pattern<T>) => Pattern<T>;
 
 const mod = (a: number, n: number) => ((a % n) + n) % n;
+
+// What counts as "on" in a rhythm: anything but false, 0, "f", "false" and "0"
+export const truthy = (v: unknown): boolean => !(v === false || v === 0 || v === 'f' || v === 'false' || v === '0');
 
 // Mini-notation strings become patterns through this hook (set by mini.ts,
 // so the core doesn't depend on the parser)
@@ -64,7 +72,10 @@ export class Pattern<T = unknown> {
   readonly queryFn: QueryFn<T>;
   constructor(queryFn: QueryFn<T>) { this.queryFn = queryFn; }
 
-  query(span: TimeSpan, budget: Budget = new Budget()): Hap<T>[] { return this.queryFn(span, budget); }
+  query(span: TimeSpan, budget: Budget = new Budget()): Hap<T>[] {
+    budget.check(span);
+    return this.queryFn(span, budget);
+  }
 
   // The events of [begin, end), in time order. Answered cycle by cycle, so
   // no fragment crosses a cycle boundary and [0, 2) is exactly [0, 1) then
@@ -288,11 +299,11 @@ export class Pattern<T = unknown> {
 
   // The rhythm of `bools`, with this pattern's values where they are true
   struct(bools: Patternable<unknown>): Pattern<T> {
-    return reify(bools).filterValues(Boolean).appLeft(this, (_b, v) => v);
+    return reify(bools).filterValues(truthy).appLeft(this, (_b, v) => v);
   }
   // Only the events where `bools` is true (the rhythm stays this pattern's)
   mask(bools: Patternable<unknown>): Pattern<T> {
-    return this.appLeft(reify(bools), (v, keep) => (keep ? v : undefined))
+    return this.appLeft(reify(bools), (v, keep) => (truthy(keep) ? v : undefined))
       .filterValues((v) => v !== undefined) as Pattern<T>;
   }
 
@@ -342,12 +353,14 @@ export const silence: Pattern<never> = new Pattern(() => []);
 // One event per cycle
 export function pure<T>(value: T): Pattern<T> {
   return new Pattern((span, b) => {
-    const haps = span.spanCycles().flatMap((s) => {
-      const whole = new TimeSpan(s.begin.sam(), s.begin.nextSam());
-      const part = whole.intersection(s);
-      return part ? [new Hap(whole, part, value)] : [];
-    });
-    b.spend(haps.length);
+    const haps: Hap<T>[] = [];
+    // cycle by cycle, paying as it goes, so a huge span stops early
+    for (let begin = span.begin; begin.lt(span.end) || (begin.eq(span.begin) && begin.eq(span.end)); begin = begin.nextSam()) {
+      const whole = new TimeSpan(begin.sam(), begin.nextSam());
+      const part = whole.intersection(new TimeSpan(begin, span.end.min(begin.nextSam())));
+      if (part) { haps.push(new Hap(whole, part, value)); b.spend(1); }
+      if (begin.eq(span.end)) break;
+    }
     return haps;
   });
 }
@@ -444,8 +457,11 @@ export function patternify<A, T, U>(f: (arg: A, pat: Pattern<T>) => Pattern<U>):
 // ---- Euclidean rhythms
 
 // Bjorklund's algorithm: k hits over n steps, as evenly spread as they can be
+export const MAX_EUCLID_STEPS = 1024;
+
 export function bjorklund(hits: number, steps: number): boolean[] {
   if (!Number.isInteger(hits) || !Number.isInteger(steps) || steps < 0) throw new PatternError(`not a Euclidean rhythm: (${hits},${steps})`);
+  if (steps > MAX_EUCLID_STEPS) throw new PatternError(`a Euclidean rhythm of more than ${MAX_EUCLID_STEPS} steps`);
   if (steps === 0) return [];
   hits = Math.min(Math.abs(hits), steps);
   if (hits === 0) return new Array<boolean>(steps).fill(false);
