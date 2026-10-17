@@ -21,6 +21,8 @@ option(GHOSTDAW_JUCE_HOST "Build the JUCE host (being replaced)" ON)
 # loop, files, dynamic libraries, logging, JSON, pairing.
 add_library(ghostdaw_platform STATIC
     src/platform/Base64.cpp
+    src/platform/ChildProcess.cpp
+    src/platform/Deflate.cpp
     src/platform/DynamicLibrary.cpp
     src/platform/Files.cpp
     src/platform/Json.cpp
@@ -59,8 +61,10 @@ ghostdaw_warnings(ghostdaw_platform)
 # public domain or MIT-0; see its README)
 add_library(ghostdaw_host STATIC
     src/host/AudioDevice.cpp
+    src/host/PluginRegistry.cpp
+    src/host/PluginScanner.cpp
     third_party/miniaudio/miniaudio.c)
-target_include_directories(ghostdaw_host PUBLIC src third_party/miniaudio)
+target_include_directories(ghostdaw_host PUBLIC src third_party/miniaudio "${LPI_INCLUDE_DIR}")
 target_link_libraries(ghostdaw_host PUBLIC ghostdaw_platform)
 if(WIN32)
     # miniaudio links WASAPI and friends at run time

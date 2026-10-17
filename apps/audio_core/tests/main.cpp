@@ -34,6 +34,7 @@ int main (int argc, char** argv)
 
     platformTests (argv[0]);
     hostTests();
+    pluginTests();
 
     std::cout << (failures == 0 ? "PASS" : "FAIL") << ": " << (checks - failures) << "/" << checks << " checks" << std::endl;
     return failures == 0 ? 0 : 1;

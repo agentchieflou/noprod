@@ -256,6 +256,8 @@ void testConcurrentSwaps()
         if (i % 500 == 0)
             std::this_thread::yield();
     }
+    for (int waited = 0; callbacks.load() == 0 && waited < 200; ++waited)
+        sleepMs (10); // a loaded machine may not have run the audio thread yet
 
     stop = true;
     audio.join();
