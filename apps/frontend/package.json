@@ -17,22 +17,22 @@
     "@noprod/pattern": "*",
     "@noprod/sound": "*",
     "@noprod/theory": "*",
-    "lucide-react": "^1.56.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
+    "lucide-react": "^1.67.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "uuid": "^14.0.3",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.2",
+    "@vitejs/plugin-react": "^6.2.1",
     "axe-core": "^4.10.3",
-    "oxlint": "^1.88.0",
-    "playwright-core": "1.56",
-    "puppeteer": "^25.13.0",
+    "oxlint": "^1.91.0",
+    "playwright-core": "1.64",
+    "puppeteer": "^25.16.0",
     "typescript": "~7.0.2",
-    "vite": "^8.3.4"
+    "vite": "^8.3.5"
   }
 }
